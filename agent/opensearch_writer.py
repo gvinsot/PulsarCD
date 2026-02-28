@@ -176,30 +176,28 @@ class OpenSearchWriter:
         if isinstance(timestamp, datetime):
             doc["timestamp"] = timestamp.isoformat()
 
-        doc_id = f"{doc.get('host')}:{doc.get('container_id')}:{doc['timestamp']}"
-
         try:
             await self._client.index(
                 index=self.metrics_index,
-                id=hashlib.md5(doc_id.encode()).hexdigest(),
                 body=doc,
             )
         except Exception as e:
             logger.error("Failed to index container stats", error=str(e))
 
     async def index_host_metrics(self, metrics: Dict[str, Any]):
-        """Index host metrics."""
+        """Index host metrics.
+
+        Uses auto-generated IDs to avoid version conflicts when multiple
+        writers (agents, backend) index metrics for the same host concurrently.
+        """
         doc = metrics.copy()
         timestamp = doc.get("timestamp", datetime.utcnow())
         if isinstance(timestamp, datetime):
             doc["timestamp"] = timestamp.isoformat()
 
-        doc_id = f"{doc.get('host')}:{doc['timestamp']}"
-
         try:
             await self._client.index(
                 index=self.host_metrics_index,
-                id=hashlib.md5(doc_id.encode()).hexdigest(),
                 body=doc,
             )
         except Exception as e:

@@ -176,27 +176,27 @@ class OpenSearchClient:
         """Index container statistics."""
         doc = stats.model_dump()
         doc["timestamp"] = stats.timestamp.isoformat()
-        doc_id = f"{stats.host}:{stats.container_id}:{stats.timestamp.isoformat()}"
-        
+
         try:
             await self._client.index(
                 index=self.metrics_index,
-                id=hashlib.md5(doc_id.encode()).hexdigest(),
                 body=doc,
             )
         except Exception as e:
             logger.error("Failed to index container stats", error=str(e))
     
     async def index_host_metrics(self, metrics: HostMetrics):
-        """Index host metrics."""
+        """Index host metrics.
+
+        Uses auto-generated IDs to avoid version conflicts when multiple
+        writers (agents, backend) index metrics for the same host concurrently.
+        """
         doc = metrics.model_dump()
         doc["timestamp"] = metrics.timestamp.isoformat()
-        doc_id = f"{metrics.host}:{metrics.timestamp.isoformat()}"
-        
+
         try:
             await self._client.index(
                 index=self.host_metrics_index,
-                id=hashlib.md5(doc_id.encode()).hexdigest(),
                 body=doc,
             )
         except Exception as e:
