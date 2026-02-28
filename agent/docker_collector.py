@@ -487,16 +487,45 @@ class DockerCollector:
         return all_logs
 
     async def collect_all_stats(self) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
-        """Collect host metrics and all container stats."""
-        host_metrics = await self.get_host_metrics()
+        """Collect host metrics and all container stats.
 
-        containers = await self.get_containers()
-        running = [c for c in containers if c.get("status") == "running"]
+        Each part is collected independently so partial data is still returned.
+        """
+        # Host metrics - always return at least a skeleton
+        try:
+            host_metrics = await self.get_host_metrics()
+        except Exception as e:
+            logger.error("Failed to collect host metrics, using defaults", error=str(e))
+            host_metrics = {
+                "host": self.host_name,
+                "timestamp": datetime.utcnow(),
+                "cpu_percent": 0.0,
+                "memory_total_mb": 0.0,
+                "memory_used_mb": 0.0,
+                "memory_percent": 0.0,
+                "disk_total_gb": 0.0,
+                "disk_used_gb": 0.0,
+                "disk_percent": 0.0,
+                "gpu_percent": None,
+                "gpu_memory_used_mb": None,
+                "gpu_memory_total_mb": None,
+            }
 
+        # Container stats - skip individual failures
         container_stats = []
-        for container in running:
-            stats = await self.get_container_stats(container["id"], container["name"])
-            if stats:
-                container_stats.append(stats)
+        try:
+            containers = await self.get_containers()
+            running = [c for c in containers if c.get("status") == "running"]
+
+            for container in running:
+                try:
+                    stats = await self.get_container_stats(container["id"], container["name"])
+                    if stats:
+                        container_stats.append(stats)
+                except Exception as e:
+                    logger.warning("Failed to collect stats for container",
+                                  container=container.get("name"), error=str(e))
+        except Exception as e:
+            logger.error("Failed to list containers for stats", error=str(e))
 
         return host_metrics, container_stats

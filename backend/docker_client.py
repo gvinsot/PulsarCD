@@ -284,32 +284,46 @@ class DockerAPIClient:
             return None
     
     async def get_host_metrics(self) -> HostMetrics:
-        """Get host-level metrics (limited via Docker API)."""
-        # Docker API doesn't provide host metrics directly
-        # We'll get aggregated container stats
-        data, status = await self._request("GET", "/info")
-        
+        """Get host-level metrics (limited via Docker API).
+
+        Each metric source is collected independently so that a failure
+        in one (e.g. GPU not available) does not prevent the others.
+        """
         cpu_percent = 0.0
         memory_total_mb = 0.0
         memory_used_mb = 0.0
-        
-        if status == 200 and data:
-            memory_total_mb = data.get("MemTotal", 0) / (1024 * 1024)
-            # Memory used requires summing container usage
-            containers = await self.get_containers()
-            running = [c for c in containers if c.status == ContainerStatus.RUNNING]
-            
-            for container in running[:10]:  # Limit to avoid too many API calls
-                stats = await self.get_container_stats(container.id, container.name)
-                if stats:
-                    memory_used_mb += stats.memory_usage_mb
-                    cpu_percent += stats.cpu_percent
-        
+
+        # Docker API metrics
+        try:
+            data, status = await self._request("GET", "/info")
+            if status == 200 and data:
+                memory_total_mb = data.get("MemTotal", 0) / (1024 * 1024)
+                containers = await self.get_containers()
+                running = [c for c in containers if c.status == ContainerStatus.RUNNING]
+
+                for container in running[:10]:
+                    try:
+                        stats = await self.get_container_stats(container.id, container.name)
+                        if stats:
+                            memory_used_mb += stats.memory_usage_mb
+                            cpu_percent += stats.cpu_percent
+                    except Exception as e:
+                        logger.warning("Failed to get stats for container",
+                                      container=container.name, error=str(e))
+        except Exception as e:
+            logger.warning("Failed to collect Docker metrics", error=str(e))
+
         memory_percent = (memory_used_mb / memory_total_mb * 100) if memory_total_mb > 0 else 0
-        
-        # Try to get GPU metrics via nvidia-smi
-        gpu_percent, gpu_mem_used, gpu_mem_total = await self._get_gpu_metrics()
-        
+
+        # GPU metrics (independent)
+        gpu_percent = None
+        gpu_mem_used = None
+        gpu_mem_total = None
+        try:
+            gpu_percent, gpu_mem_used, gpu_mem_total = await self._get_gpu_metrics()
+        except Exception as e:
+            logger.warning("Failed to collect GPU metrics", error=str(e))
+
         return HostMetrics(
             host=self.config.name,
             timestamp=datetime.utcnow(),
