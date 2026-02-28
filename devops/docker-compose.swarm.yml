@@ -157,6 +157,7 @@ services:
     environment:
       # AMD GPU visibility
       - AMD_VISIBLE_DEVICES=all
+      - NVIDIA_VISIBLE_DEVICES=all
       # Agent ID: use node hostname (set by Swarm)
       - AGENT_AGENT_ID={{.Node.Hostname}}
 

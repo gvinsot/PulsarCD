@@ -193,28 +193,50 @@ class DockerCollector:
             return None
 
     async def get_host_metrics(self) -> Dict[str, Any]:
-        """Get host-level metrics."""
-        data, status = await self._request("GET", "/info")
+        """Get host-level metrics.
 
+        Each metric source (Docker API, GPU, disk) is collected independently
+        so that a failure in one does not prevent the others from being reported.
+        """
         cpu_percent = 0.0
         memory_total_mb = 0.0
         memory_used_mb = 0.0
 
-        if status == 200 and data:
-            memory_total_mb = data.get("MemTotal", 0) / (1024 * 1024)
-            containers = await self.get_containers()
-            running = [c for c in containers if c.get("status") == "running"]
+        # Docker API metrics (CPU + memory from container stats)
+        try:
+            data, status = await self._request("GET", "/info")
+            if status == 200 and data:
+                memory_total_mb = data.get("MemTotal", 0) / (1024 * 1024)
+                containers = await self.get_containers()
+                running = [c for c in containers if c.get("status") == "running"]
 
-            for container in running[:10]:
-                stats = await self.get_container_stats(container["id"], container["name"])
-                if stats:
-                    memory_used_mb += stats["memory_usage_mb"]
-                    cpu_percent += stats["cpu_percent"]
+                for container in running[:10]:
+                    stats = await self.get_container_stats(container["id"], container["name"])
+                    if stats:
+                        memory_used_mb += stats["memory_usage_mb"]
+                        cpu_percent += stats["cpu_percent"]
+        except Exception as e:
+            logger.warning("Failed to collect Docker metrics", error=str(e))
 
         memory_percent = (memory_used_mb / memory_total_mb * 100) if memory_total_mb > 0 else 0
 
-        gpu_percent, gpu_mem_used, gpu_mem_total = utils.get_gpu_metrics()
-        disk_total_gb, disk_used_gb, disk_percent = utils.get_disk_metrics()
+        # GPU metrics (independent - failure does not affect other metrics)
+        gpu_percent = None
+        gpu_mem_used = None
+        gpu_mem_total = None
+        try:
+            gpu_percent, gpu_mem_used, gpu_mem_total = utils.get_gpu_metrics()
+        except Exception as e:
+            logger.warning("Failed to collect GPU metrics", error=str(e))
+
+        # Disk metrics (independent)
+        disk_total_gb = 0.0
+        disk_used_gb = 0.0
+        disk_percent = 0.0
+        try:
+            disk_total_gb, disk_used_gb, disk_percent = utils.get_disk_metrics()
+        except Exception as e:
+            logger.warning("Failed to collect disk metrics", error=str(e))
 
         return {
             "host": self.host_name,
