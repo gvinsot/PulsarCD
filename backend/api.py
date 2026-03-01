@@ -24,8 +24,12 @@ from .models import (
 from .opensearch_client import OpenSearchClient
 from .github_service import GitHubService, StackDeployer
 from .actions_queue import actions_queue, ActionType, ActionStatus
-from .mcp_server import mcp as mcp_server, get_mcp_app
-from .mcp_auth import MCPAuthMiddleware
+try:
+    from .mcp_server import mcp as mcp_server, get_mcp_app
+    from .mcp_auth import MCPAuthMiddleware
+    _mcp_available = True
+except Exception as _mcp_err:
+    _mcp_available = False
 
 logger = structlog.get_logger()
 
@@ -99,11 +103,13 @@ async def lifespan(app: FastAPI):
     github_service = GitHubService(settings.github)
 
     # Log MCP API key for configuration
-    if settings.mcp.enabled:
+    if _mcp_available and settings.mcp.enabled:
         logger.info("MCP server enabled", mcp_api_key=settings.mcp.api_key)
-
-    # Start MCP session manager alongside the app
-    async with mcp_server.session_manager.run():
+        async with mcp_server.session_manager.run():
+            yield
+    else:
+        if not _mcp_available:
+            logger.warning("MCP server not available", error=str(_mcp_err))
         yield
 
     # Shutdown
@@ -122,7 +128,8 @@ app = FastAPI(
 
 # Mount MCP server at /ai with its own authentication middleware
 # The SDK serves internally on /mcp, so the full endpoint is /ai/mcp
-app.mount("/ai", MCPAuthMiddleware(get_mcp_app()))
+if _mcp_available:
+    app.mount("/ai", MCPAuthMiddleware(get_mcp_app()))
 
 # CORS middleware - restricted to same-origin; only needed for dev/proxy setups
 app.add_middleware(
@@ -199,7 +206,11 @@ async def auth_middleware(request: Request, call_next):
     try:
         payload = decode_token(token, settings.auth.jwt_secret)
         request.state.user = payload.get("sub", "")
-    except jwt.PyJWTError:
+    except jwt.PyJWTError as e:
+        logger.warning("JWT decode failed", path=path, error=str(e), token_len=len(token))
+        return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
+    except Exception as e:
+        logger.error("Unexpected auth error", path=path, error=str(e), error_type=type(e).__name__)
         return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
 
     return await call_next(request)
