@@ -3,7 +3,6 @@
 import asyncio
 import json
 import re
-import subprocess
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -252,79 +251,6 @@ class DockerCollector:
             "gpu_memory_used_mb": gpu_mem_used,
             "gpu_memory_total_mb": gpu_mem_total,
         }
-
-    def _get_gpu_metrics(self) -> Tuple[Optional[float], Optional[float], Optional[float]]:
-        """Try to get GPU metrics using nvidia-smi or rocm-smi."""
-        # Try AMD GPU first
-        try:
-            result = subprocess.run(
-                ["rocm-smi", "--showuse", "--showmeminfo", "vram", "--csv"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                lines = result.stdout.strip().split("\n")
-                for line in lines:
-                    if line.startswith("card") or line.startswith("GPU"):
-                        continue
-                    parts = [p.strip() for p in line.split(",")]
-                    if len(parts) >= 2:
-                        try:
-                            gpu_use = float(parts[1].replace('%', '').strip())
-                            mem_used, mem_total = self._get_rocm_memory()
-                            return gpu_use, mem_used, mem_total
-                        except (ValueError, IndexError):
-                            pass
-        except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
-            pass
-
-        # Fallback to NVIDIA GPU
-        try:
-            result = subprocess.run(
-                ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                parts = result.stdout.strip().split(", ")
-                if len(parts) >= 3:
-                    return float(parts[0]), float(parts[1]), float(parts[2])
-        except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
-            pass
-
-        return None, None, None
-
-    def _get_rocm_memory(self) -> Tuple[Optional[float], Optional[float]]:
-        """Get AMD GPU memory usage via rocm-smi."""
-        try:
-            result = subprocess.run(
-                ["rocm-smi", "--showmeminfo", "vram"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                total_mb = None
-                used_mb = None
-                for line in result.stdout.split("\n"):
-                    if "VRAM Total" in line:
-                        try:
-                            bytes_val = int(line.split(":")[-1].strip())
-                            total_mb = bytes_val / (1024 * 1024)
-                        except ValueError:
-                            pass
-                    elif "VRAM Used" in line:
-                        try:
-                            bytes_val = int(line.split(":")[-1].strip())
-                            used_mb = bytes_val / (1024 * 1024)
-                        except ValueError:
-                            pass
-                return used_mb, total_mb
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-        return None, None
 
     async def get_container_logs(
         self,
