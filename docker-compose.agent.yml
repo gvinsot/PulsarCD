@@ -33,16 +33,7 @@ services:
       - AMD_VISIBLE_DEVICES=all
       # NVIDIA GPU visibility (requires NVIDIA Container Toolkit on host)
       - NVIDIA_VISIBLE_DEVICES=all
-    # NVIDIA Container Toolkit runtime (comment out if no NVIDIA GPU)
-    # Requires: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-      
+
       # Unique agent ID (use hostname or custom name)
       - AGENT_AGENT_ID=${AGENT_ID:-$(hostname)}
 
@@ -62,6 +53,15 @@ services:
       - AGENT_LOG_INTERVAL=${LOG_INTERVAL:-30}
       - AGENT_METRICS_INTERVAL=${METRICS_INTERVAL:-15}
       - AGENT_ACTION_POLL_INTERVAL=${ACTION_POLL_INTERVAL:-2}
+    # NVIDIA Container Toolkit runtime (comment out if no NVIDIA GPU)
+    # Requires: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     networks:
       - logscrawler
 
