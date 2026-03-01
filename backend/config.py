@@ -112,6 +112,12 @@ class AuthConfig(BaseModel):
     agent_key: str = ""
 
 
+class MCPConfig(BaseModel):
+    """MCP (Model Context Protocol) server configuration."""
+    enabled: bool = True
+    api_key: str = ""  # Dedicated MCP API key (auto-generated if empty)
+
+
 class Settings(BaseSettings):
     """Application settings."""
     app_name: str = "LogsCrawler"
@@ -138,6 +144,9 @@ class Settings(BaseSettings):
 
     # Auth
     auth: AuthConfig = AuthConfig()
+
+    # MCP
+    mcp: MCPConfig = MCPConfig()
 
     # Hosts (configured via LOGSCRAWLER_HOSTS env var)
     hosts: List[HostConfig] = []
@@ -236,6 +245,14 @@ def load_config() -> Settings:
     # Auto-generate agent key if not provided
     if not settings.auth.agent_key:
         settings.auth.agent_key = uuid.uuid4().hex
+
+    # MCP settings
+    load_env(settings.mcp, "api_key", "LOGSCRAWLER_MCP__API_KEY")
+    mcp_enabled_env = os.environ.get("LOGSCRAWLER_MCP__ENABLED", "").lower()
+    if mcp_enabled_env in ("false", "0", "no"):
+        settings.mcp.enabled = False
+    if not settings.mcp.api_key:
+        settings.mcp.api_key = uuid.uuid4().hex
 
     # Run user
     load_env(settings, "run_user", "LOGSCRAWLER_RUN_USER")

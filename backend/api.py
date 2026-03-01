@@ -24,6 +24,8 @@ from .models import (
 from .opensearch_client import OpenSearchClient
 from .github_service import GitHubService, StackDeployer
 from .actions_queue import actions_queue, ActionType, ActionStatus
+from .mcp_server import mcp as mcp_server, get_mcp_app
+from .mcp_auth import MCPAuthMiddleware
 
 logger = structlog.get_logger()
 
@@ -95,9 +97,15 @@ async def lifespan(app: FastAPI):
     
     # Initialize GitHub service
     github_service = GitHubService(settings.github)
-    
-    yield
-    
+
+    # Log MCP API key for configuration
+    if settings.mcp.enabled:
+        logger.info("MCP server enabled", mcp_api_key=settings.mcp.api_key)
+
+    # Start MCP session manager alongside the app
+    async with mcp_server.session_manager.run():
+        yield
+
     # Shutdown
     logger.info("Shutting down LogsCrawler API")
     await collector.stop()
@@ -111,6 +119,9 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# Mount MCP server at /mcp with its own authentication middleware
+app.mount("/mcp", MCPAuthMiddleware(get_mcp_app()))
 
 # CORS middleware - restricted to same-origin; only needed for dev/proxy setups
 app.add_middleware(
@@ -129,6 +140,7 @@ _AUTH_EXEMPT_PREFIXES = (
     "/api/auth/login",
     "/api/health",
     "/static/",
+    "/mcp",  # MCP has its own auth middleware
 )
 _AUTH_EXEMPT_EXACT = ("/", "/api/health")
 
