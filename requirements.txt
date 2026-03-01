@@ -1,32 +1,31 @@
 # Web Framework
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-python-multipart==0.0.6
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
 
 # SSH & System
-paramiko==3.4.0
-asyncssh==2.14.2
+paramiko>=3.4.0
+asyncssh>=2.14.2
 
 # OpenSearch
-opensearch-py==2.4.2
+opensearch-py>=2.4.2
 
 # Data & Async
 pydantic>=2.5.3
 pydantic-settings>=2.5.2
-aiohttp==3.9.1
-asyncio==3.4.3
+aiohttp>=3.9.1
 
 # Scheduling
-apscheduler==3.10.4
+apscheduler>=3.10.4
 
 # Authentication
-PyJWT==2.8.0
-passlib[bcrypt]==1.7.4
+PyJWT>=2.8.0
+passlib[bcrypt]>=1.7.4
 
 # MCP (Model Context Protocol)
 mcp>=1.9.0
 
 # Utilities
-python-dateutil==2.8.2
-pyyaml==6.0.1
-structlog==24.1.0
+python-dateutil>=2.8.2
+pyyaml>=6.0.1
+structlog>=24.1.0
