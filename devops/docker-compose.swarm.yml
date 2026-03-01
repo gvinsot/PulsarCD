@@ -128,7 +128,7 @@ services:
         - "traefik.http.routers.logscrawler.rule=Host(`${TRAEFIK_HOST}`)"
         - "traefik.http.routers.logscrawler.entrypoints=websecure"
         - "traefik.http.routers.logscrawler.tls.certresolver=letsencrypt"
-        - "traefik.http.routers.logscrawler.middlewares=global@file,dashboard-auth@file"
+        - "traefik.http.routers.logscrawler.middlewares=global@file"
         - "traefik.http.routers.logscrawler.service=logscrawler"
         - "traefik.http.routers.logscrawler.priority=1"
 
@@ -136,7 +136,7 @@ services:
         - "traefik.http.routers.logscrawler-ws.rule=Host(`${TRAEFIK_HOST}`) && PathPrefix(`/api/terminal/ws`)"
         - "traefik.http.routers.logscrawler-ws.entrypoints=websecure"
         - "traefik.http.routers.logscrawler-ws.tls.certresolver=letsencrypt"
-        - "traefik.http.routers.logscrawler-ws.middlewares=security-headers@file,dashboard-auth@file"
+        - "traefik.http.routers.logscrawler-ws.middlewares=security-headers@file"
         - "traefik.http.routers.logscrawler-ws.service=logscrawler"
         - "traefik.http.routers.logscrawler-ws.priority=100"
 
