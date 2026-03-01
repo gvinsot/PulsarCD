@@ -96,6 +96,12 @@ services:
       - LOGSCRAWLER_GITHUB__REGISTRY_USERNAME=${DOCKER_REGISTRY_USERNAME}
       - LOGSCRAWLER_GITHUB__REGISTRY_PASSWORD=${DOCKER_REGISTRY_PASSWORD}
 
+      # Authentication
+      - LOGSCRAWLER_AUTH__USERNAME=${LOGSCRAWLER_AUTH__USERNAME:-admin}
+      - LOGSCRAWLER_AUTH__PASSWORD=${LOGSCRAWLER_AUTH__PASSWORD}
+      - LOGSCRAWLER_AUTH__JWT_SECRET=${LOGSCRAWLER_AUTH__JWT_SECRET}
+      - LOGSCRAWLER_AUTH__JWT_EXPIRY_HOURS=${LOGSCRAWLER_AUTH__JWT_EXPIRY_HOURS:-24}
+
       # Swarm manager config - queries Swarm API to list all containers/services
       # Collection is disabled (agents_only=true), this is only for listing
       - LOGSCRAWLER_HOSTS=[{"name":"swarm-manager","mode":"docker","docker_url":"unix:///var/run/docker.sock","swarm_manager":true,"swarm_autodiscover":true}]

@@ -13,6 +13,7 @@ Environment variables:
 
 import json
 import os
+import uuid
 from typing import List, Optional
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
@@ -101,6 +102,14 @@ class GitHubConfig(BaseModel):
     registry_password: Optional[str] = None
 
 
+class AuthConfig(BaseModel):
+    """Authentication configuration."""
+    username: str = "admin"
+    password: str = "changeme"
+    jwt_secret: str = ""
+    jwt_expiry_hours: int = 24
+
+
 class Settings(BaseSettings):
     """Application settings."""
     app_name: str = "LogsCrawler"
@@ -121,6 +130,9 @@ class Settings(BaseSettings):
 
     # GitHub
     github: GitHubConfig = GitHubConfig()
+
+    # Auth
+    auth: AuthConfig = AuthConfig()
 
     # Hosts (configured via LOGSCRAWLER_HOSTS env var)
     hosts: List[HostConfig] = []
@@ -206,6 +218,15 @@ def load_config() -> Settings:
 
     # AI settings
     load_env(settings.ai, "model", "LOGSCRAWLER_AI__MODEL")
+
+    # Auth settings
+    load_env(settings.auth, "username", "LOGSCRAWLER_AUTH__USERNAME")
+    load_env(settings.auth, "password", "LOGSCRAWLER_AUTH__PASSWORD")
+    load_env(settings.auth, "jwt_secret", "LOGSCRAWLER_AUTH__JWT_SECRET")
+    load_env(settings.auth, "jwt_expiry_hours", "LOGSCRAWLER_AUTH__JWT_EXPIRY_HOURS", int)
+    # Auto-generate JWT secret if not provided
+    if not settings.auth.jwt_secret:
+        settings.auth.jwt_secret = uuid.uuid4().hex
 
     # GitHub settings
     load_env(settings.github, "token", "LOGSCRAWLER_GITHUB__TOKEN")

@@ -7,12 +7,14 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+import jwt
 import structlog
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
+from .auth import create_token, decode_token
 from .collector import Collector
 from .config import load_config, Settings
 from .models import (
@@ -118,6 +120,68 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ============== Auth Middleware ==============
+
+# Paths that don't require authentication
+_AUTH_EXEMPT_PREFIXES = (
+    "/api/auth/login",
+    "/api/health",
+    "/api/agent/",
+    "/static/",
+)
+_AUTH_EXEMPT_EXACT = ("/", "/api/health")
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """Verify JWT token on all /api/ endpoints (except exempt paths)."""
+    path = request.url.path
+
+    # Skip auth for exempt paths
+    if path in _AUTH_EXEMPT_EXACT or any(path.startswith(p) for p in _AUTH_EXEMPT_PREFIXES):
+        return await call_next(request)
+
+    # Only enforce auth on /api/ paths
+    if not path.startswith("/api/"):
+        return await call_next(request)
+
+    # Extract Bearer token
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+
+    token = auth_header[7:]
+    try:
+        payload = decode_token(token, settings.auth.jwt_secret)
+        request.state.user = payload.get("sub", "")
+    except jwt.PyJWTError:
+        return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
+
+    return await call_next(request)
+
+
+# ============== Auth Endpoints ==============
+
+@app.post("/api/auth/login")
+async def auth_login(request: Request):
+    """Authenticate and return a JWT token."""
+    body = await request.json()
+    username = body.get("username", "")
+    password = body.get("password", "")
+
+    if username == settings.auth.username and password == settings.auth.password:
+        token = create_token(username, settings.auth.jwt_secret, settings.auth.jwt_expiry_hours)
+        return {"token": token}
+
+    raise HTTPException(status_code=401, detail="Invalid credentials")
+
+
+@app.get("/api/auth/me")
+async def auth_me(request: Request):
+    """Return the current authenticated user."""
+    return {"username": getattr(request.state, "user", None)}
 
 
 # ============== Dashboard ==============
@@ -1537,8 +1601,19 @@ async def terminal_websocket(
     websocket: WebSocket,
     cols: int = Query(default=80),
     rows: int = Query(default=24),
+    token: str = Query(default=""),
 ):
     """Interactive terminal session on the swarm manager host."""
+    # Validate JWT token before accepting the WebSocket
+    try:
+        if not token:
+            await websocket.close(code=4001, reason="Missing token")
+            return
+        decode_token(token, settings.auth.jwt_secret)
+    except jwt.PyJWTError:
+        await websocket.close(code=4001, reason="Invalid token")
+        return
+
     await websocket.accept()
 
     manager_config = _find_swarm_manager_config()

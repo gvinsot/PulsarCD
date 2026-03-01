@@ -15,7 +15,31 @@
     <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
 </head>
 <body>
-    <div class="app">
+    <!-- Login Overlay -->
+    <div id="login-overlay" class="login-overlay">
+        <div class="login-card">
+            <div class="login-header">
+                <div class="login-logo">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                    </svg>
+                </div>
+                <h2>LogsCrawler</h2>
+            </div>
+            <form id="login-form">
+                <div class="login-field">
+                    <input type="text" id="login-username" placeholder="Username" required autofocus autocomplete="username" />
+                </div>
+                <div class="login-field">
+                    <input type="password" id="login-password" placeholder="Password" required autocomplete="current-password" />
+                </div>
+                <button type="submit" class="login-btn">Sign in</button>
+                <div id="login-error" class="login-error"></div>
+            </form>
+        </div>
+    </div>
+
+    <div class="app" style="display:none">
         <!-- Mobile Menu Toggle -->
         <button class="mobile-menu-toggle" onclick="toggleMobileMenu()" aria-label="Toggle menu">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -87,6 +111,14 @@
                     <span class="status-dot"></span>
                     <span class="status-text">Connected</span>
                 </div>
+                <a href="#" class="nav-item logout-btn" onclick="logout(); return false;">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                        <polyline points="16 17 21 12 16 7"/>
+                        <line x1="21" y1="12" x2="9" y2="12"/>
+                    </svg>
+                    <span>Logout</span>
+                </a>
             </div>
         </aside>
 

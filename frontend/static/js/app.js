@@ -14,12 +14,90 @@ let logsPage = 0;
 let logsPageSize = 100;
 let totalLogs = 0;
 
+// ============== Authentication ==============
+
+function getAuthToken() { return localStorage.getItem('logscrawler_token'); }
+function setAuthToken(token) { localStorage.setItem('logscrawler_token', token); }
+function clearAuthToken() { localStorage.removeItem('logscrawler_token'); }
+
+function authHeaders() {
+    const t = getAuthToken();
+    return t ? { 'Authorization': `Bearer ${t}` } : {};
+}
+
+function showLogin() {
+    document.getElementById('login-overlay').style.display = 'flex';
+    document.querySelector('.app').style.display = 'none';
+    document.getElementById('login-error').textContent = '';
+    document.getElementById('login-error').style.display = 'none';
+}
+
+function hideLogin() {
+    document.getElementById('login-overlay').style.display = 'none';
+    document.querySelector('.app').style.display = '';
+}
+
+function logout() {
+    clearAuthToken();
+    showLogin();
+}
+
+async function checkAuth() {
+    const token = getAuthToken();
+    if (!token) {
+        showLogin();
+        return;
+    }
+    try {
+        const response = await fetch(`${API_BASE}/auth/me`, { headers: authHeaders() });
+        if (response.status === 401) {
+            showLogin();
+            return;
+        }
+        hideLogin();
+        loadDashboard();
+    } catch {
+        showLogin();
+    }
+}
+
+function initLoginForm() {
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const username = document.getElementById('login-username').value;
+        const password = document.getElementById('login-password').value;
+        const errorEl = document.getElementById('login-error');
+
+        try {
+            const response = await fetch(`${API_BASE}/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            if (response.ok) {
+                const data = await response.json();
+                setAuthToken(data.token);
+                errorEl.style.display = 'none';
+                hideLogin();
+                loadDashboard();
+            } else {
+                errorEl.textContent = 'Invalid username or password';
+                errorEl.style.display = 'block';
+            }
+        } catch {
+            errorEl.textContent = 'Connection error';
+            errorEl.style.display = 'block';
+        }
+    });
+}
+
 // ============== Initialization ==============
 
 document.addEventListener('DOMContentLoaded', () => {
+    initLoginForm();
     initNavigation();
     initModalTabs();
-    loadDashboard();
+    checkAuth();
 });
 
 // ============== Mobile Menu ==============
@@ -577,7 +655,8 @@ function initModalTabs() {
 
 async function apiGet(endpoint) {
     try {
-        const response = await fetch(`${API_BASE}${endpoint}`);
+        const response = await fetch(`${API_BASE}${endpoint}`, { headers: authHeaders() });
+        if (response.status === 401) { showLogin(); return null; }
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return await response.json();
     } catch (error) {
@@ -592,12 +671,13 @@ async function apiGet(endpoint) {
  */
 async function apiGetWithRetry(endpoint, retryCallback = null) {
     try {
-        const response = await fetch(`${API_BASE}${endpoint}`);
+        const response = await fetch(`${API_BASE}${endpoint}`, { headers: authHeaders() });
+        if (response.status === 401) { showLogin(); return null; }
         if (response.status === 404 && retryCallback) {
             console.log(`Container not found (404), refreshing and retrying...`);
             await retryCallback();
             // Retry once after refresh
-            const retryResponse = await fetch(`${API_BASE}${endpoint}`);
+            const retryResponse = await fetch(`${API_BASE}${endpoint}`, { headers: authHeaders() });
             if (!retryResponse.ok) throw new Error(`HTTP ${retryResponse.status}`);
             return await retryResponse.json();
         }
@@ -611,12 +691,13 @@ async function apiGetWithRetry(endpoint, retryCallback = null) {
 
 async function apiPost(endpoint, data) {
     try {
-        const opts = { method: 'POST' };
+        const opts = { method: 'POST', headers: { ...authHeaders() } };
         if (data !== undefined) {
-            opts.headers = { 'Content-Type': 'application/json' };
+            opts.headers['Content-Type'] = 'application/json';
             opts.body = JSON.stringify(data);
         }
         const response = await fetch(`${API_BASE}${endpoint}`, opts);
+        if (response.status === 401) { showLogin(); return null; }
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
             throw new Error(errorData.detail || `HTTP ${response.status}`);
@@ -632,9 +713,10 @@ async function apiPut(endpoint, data) {
     try {
         const response = await fetch(`${API_BASE}${endpoint}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify(data)
         });
+        if (response.status === 401) { showLogin(); return null; }
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
             throw new Error(errorData.detail || `HTTP ${response.status}`);
@@ -1839,7 +1921,7 @@ async function removeStack(stackName, host) {
         const url = `/api/stacks/${encodeURIComponent(stackName)}/remove${host ? `?host=${encodeURIComponent(host)}` : ''}`;
         const response = await fetch(`${API_BASE}${url}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
+            headers: { 'Content-Type': 'application/json', ...authHeaders() }
         });
         
         if (!response.ok) {
@@ -1874,7 +1956,7 @@ async function removeDeployedStack(stackName) {
         const url = `/stacks/${encodeURIComponent(stackName)}/remove`;
         const response = await fetch(`${API_BASE}${url}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
+            headers: { 'Content-Type': 'application/json', ...authHeaders() }
         });
         
         if (!response.ok) {
@@ -1907,7 +1989,7 @@ async function removeService(serviceName) {
     
     try {
         const url = `/services/${encodeURIComponent(serviceName)}/remove`;
-        const response = await fetch(`${API_BASE}${url}`, { method: 'POST' });
+        const response = await fetch(`${API_BASE}${url}`, { method: 'POST', headers: authHeaders() });
         
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({ detail: response.statusText }));
@@ -3050,7 +3132,7 @@ async function submitBuild() {
         }
         
         const repoName = currentBuildRepo;
-        const response = await fetch(`${API_BASE}${url}`, { method: 'POST' });
+        const response = await fetch(`${API_BASE}${url}`, { method: 'POST', headers: authHeaders() });
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
             throw new Error(errorData.detail || `HTTP ${response.status}`);
@@ -3422,9 +3504,9 @@ async function submitServiceDeploy() {
         console.log('Deploying service:', currentDeployServiceName, 'with tag:', tag, 'URL:', `${API_BASE}${url}`);
         const response = await fetch(`${API_BASE}${url}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
+            headers: { 'Content-Type': 'application/json', ...authHeaders() }
         });
-        
+
         console.log('Deploy response status:', response.status);
         
         if (!response.ok) {
@@ -3496,7 +3578,7 @@ async function submitDeploy() {
         }
         
         const repoName = currentDeployRepo;
-        const response = await fetch(`${API_BASE}${url}`, { method: 'POST' });
+        const response = await fetch(`${API_BASE}${url}`, { method: 'POST', headers: authHeaders() });
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
             throw new Error(errorData.detail || `HTTP ${response.status}`);
@@ -4044,8 +4126,9 @@ function connectTerminal() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const cols = terminalInstance ? terminalInstance.cols : 80;
     const rows = terminalInstance ? terminalInstance.rows : 24;
+    const token = getAuthToken() || '';
     terminalSocket = new WebSocket(
-        `${protocol}//${window.location.host}/api/terminal/ws?cols=${cols}&rows=${rows}`
+        `${protocol}//${window.location.host}/api/terminal/ws?cols=${cols}&rows=${rows}&token=${encodeURIComponent(token)}`
     );
 
     terminalSocket.binaryType = 'arraybuffer';
