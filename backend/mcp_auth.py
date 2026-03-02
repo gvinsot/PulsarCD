@@ -54,13 +54,11 @@ class MCPAuthMiddleware:
         except Exception:
             pass
 
+        expected = settings.mcp.api_key or ""
         logger.warning(
             "MCP auth failed",
-            token_prefix=token[:8] if token else "",
-            expected_key_prefix=settings.mcp.api_key[:8] if settings.mcp.api_key else "",
-            key_len=len(settings.mcp.api_key) if settings.mcp.api_key else 0,
-            token_len=len(token),
-            is_jwt=token.startswith("eyJ"),
+            received=repr(token),
+            expected=repr(expected),
         )
         response = JSONResponse(
             status_code=401,
