@@ -41,7 +41,7 @@ class MCPAuthMiddleware:
         settings = _api.settings
 
         # Check 1: dedicated MCP API key
-        if settings.mcp.api_key and token == settings.mcp.api_key:
+        if settings.mcp.api_key and token.strip() == settings.mcp.api_key.strip():
             await self.app(scope, receive, send)
             return
 
@@ -54,6 +54,14 @@ class MCPAuthMiddleware:
         except Exception:
             pass
 
+        logger.warning(
+            "MCP auth failed",
+            token_prefix=token[:8] if token else "",
+            expected_key_prefix=settings.mcp.api_key[:8] if settings.mcp.api_key else "",
+            key_len=len(settings.mcp.api_key) if settings.mcp.api_key else 0,
+            token_len=len(token),
+            is_jwt=token.startswith("eyJ"),
+        )
         response = JSONResponse(
             status_code=401,
             content={"error": "Invalid or expired token"},
