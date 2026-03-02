@@ -177,65 +177,39 @@ def _record_login_attempt(client_ip: str):
     _login_attempts[client_ip].append(time.time())
 
 
-class AuthMiddleware:
-    """Pure ASGI auth middleware (avoids BaseHTTPMiddleware concurrency bugs)."""
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """Verify authentication on all /api/ endpoints."""
+    path = request.url.path
 
-    def __init__(self, app):
-        self.app = app
+    # Skip auth for exempt paths
+    if path in _AUTH_EXEMPT_EXACT or any(path.startswith(p) for p in _AUTH_EXEMPT_PREFIXES):
+        return await call_next(request)
 
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
+    # Only enforce auth on /api/ paths
+    if not path.startswith("/api/"):
+        return await call_next(request)
 
-        path = scope["path"]
+    auth_header = request.headers.get("Authorization", "")
 
-        # Skip auth for exempt paths
-        if path in _AUTH_EXEMPT_EXACT or any(path.startswith(p) for p in _AUTH_EXEMPT_PREFIXES):
-            await self.app(scope, receive, send)
-            return
+    # Agent endpoints: validate shared agent key
+    if path.startswith("/api/agent/"):
+        if not auth_header.startswith("Bearer ") or auth_header[7:] != settings.auth.agent_key:
+            return JSONResponse(status_code=401, content={"detail": "Invalid agent key"})
+        return await call_next(request)
 
-        # Only enforce auth on /api/ paths
-        if not path.startswith("/api/"):
-            await self.app(scope, receive, send)
-            return
+    # All other /api/ endpoints: validate JWT Bearer token
+    if not auth_header.startswith("Bearer "):
+        return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
 
-        # Extract Authorization header from raw ASGI headers
-        headers = dict(scope.get("headers", []))
-        auth_header = headers.get(b"authorization", b"").decode("utf-8", errors="ignore")
+    token = auth_header[7:]
+    try:
+        payload = decode_token(token, settings.auth.jwt_secret)
+        request.state.user = payload.get("sub", "")
+    except jwt.PyJWTError:
+        return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
 
-        # Agent endpoints: validate shared agent key
-        if path.startswith("/api/agent/"):
-            if not auth_header.startswith("Bearer ") or auth_header[7:] != settings.auth.agent_key:
-                response = JSONResponse(status_code=401, content={"detail": "Invalid agent key"})
-                await response(scope, receive, send)
-                return
-            await self.app(scope, receive, send)
-            return
-
-        # All other /api/ endpoints: validate JWT Bearer token
-        if not auth_header.startswith("Bearer "):
-            response = JSONResponse(status_code=401, content={"detail": "Not authenticated"})
-            await response(scope, receive, send)
-            return
-
-        token = auth_header[7:]
-        try:
-            payload = decode_token(token, settings.auth.jwt_secret)
-            # Store user in ASGI scope state (accessible via request.state.user)
-            from starlette.datastructures import State
-            if "state" not in scope:
-                scope["state"] = State()
-            scope["state"].user = payload.get("sub", "")
-        except Exception:
-            response = JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
-            await response(scope, receive, send)
-            return
-
-        await self.app(scope, receive, send)
-
-
-app.add_middleware(AuthMiddleware)
+    return await call_next(request)
 
 
 # ============== Auth Endpoints ==============
