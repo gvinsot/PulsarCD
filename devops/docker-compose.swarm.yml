@@ -103,6 +103,7 @@ services:
       - LOGSCRAWLER_AUTH__JWT_EXPIRY_HOURS=${LOGSCRAWLER_AUTH__JWT_EXPIRY_HOURS:-24}
       - LOGSCRAWLER_AUTH__AGENT_KEY=${LOGSCRAWLER_AUTH__AGENT_KEY:-}
 
+      - LOGSCRAWLER_MCP__API_KEY=${LOGSCRAWLER_MCP__API_KEY:-}
       # Swarm manager config - queries Swarm API to list all containers/services
       # Collection is disabled (agents_only=true), this is only for listing
       - LOGSCRAWLER_HOSTS=[{"name":"swarm-manager","mode":"docker","docker_url":"unix:///var/run/docker.sock","swarm_manager":true,"swarm_autodiscover":true}]
