@@ -329,6 +329,22 @@ class GitHubService:
             logger.error("Failed to fetch tags", repo=f"{owner}/{repo}", error=str(e))
             return {"tags": [], "branches": []}
 
+    async def get_latest_tag(self, owner: str, repo: str) -> Optional[str]:
+        """Get the most recent tag name for a repo (= latest built version).
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+
+        Returns:
+            Tag name string or None
+        """
+        tags_data = await self.get_repo_tags(owner, repo, limit=1)
+        tags = tags_data.get("tags", [])
+        if tags:
+            return tags[0]["name"]
+        return None
+
     async def get_repo_commits(self, owner: str, repo: str, branch: str = None, per_page: int = 50, page: int = 1) -> Dict[str, Any]:
         """Get commit history for a repository branch.
 
@@ -991,6 +1007,9 @@ class StackDeployer:
     async def get_deployed_stack_tag(self, repo_name: str) -> tuple[bool, Optional[str]]:
         """Get the deployed image tag for a stack from Docker Swarm.
 
+        Filters to only consider images from our registry (skips third-party
+        images like redis, postgres, etc.).
+
         Args:
             repo_name: Name of the repository (stack name = repo_name.lower())
 
@@ -999,19 +1018,23 @@ class StackDeployer:
         """
         stack_name = repo_name.lower()
 
-        # Get the image of the first service in the stack
-        # Format: docker service ls --filter name=stackname_ --format '{{.Image}}' | head -1
-        cmd = f"docker service ls --filter 'name={stack_name}_' --format '{{{{.Image}}}}' | head -1"
+        # Get ALL service images in the stack
+        cmd = f"docker service ls --filter 'name={stack_name}_' --format '{{{{.Image}}}}'"
         success, output = await self._run_command(cmd)
 
         if not success or not output.strip():
             return False, None
 
-        image = output.strip()
-        # Extract tag from image (e.g., "registry.example.com/app:1.2.3" -> "1.2.3")
-        if ':' in image:
-            tag = image.split(':')[-1]
-        else:
-            tag = "latest"
+        registry = self.config.registry_url or ""
+        for image in output.strip().split('\n'):
+            image = image.strip()
+            if not image:
+                continue
+            # Only consider our images (from our registry)
+            if registry and not image.startswith(registry):
+                continue
+            if ':' in image:
+                return True, image.split(':')[-1]
+            return True, "latest"
 
-        return True, tag
+        return False, None

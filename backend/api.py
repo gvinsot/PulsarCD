@@ -102,6 +102,12 @@ async def lifespan(app: FastAPI):
     # Initialize GitHub service
     github_service = GitHubService(settings.github)
 
+    # Start auto-build poller
+    global _auto_build_task
+    if github_service.is_configured():
+        _auto_build_task = asyncio.create_task(auto_build_poller())
+        logger.info("Auto-build poller started", interval=f"{AUTO_BUILD_POLL_INTERVAL}s")
+
     # Log MCP API key for configuration
     if _mcp_available and settings.mcp.enabled:
         logger.info("MCP server enabled", mcp_api_key=settings.mcp.api_key)
@@ -114,6 +120,12 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down LogsCrawler API")
+    if _auto_build_task:
+        _auto_build_task.cancel()
+        try:
+            await _auto_build_task
+        except asyncio.CancelledError:
+            pass
     await collector.stop()
     await opensearch.close()
     await github_service.close()
@@ -1554,24 +1566,123 @@ async def save_stack_env(repo_name: str, request: Request):
 
 @app.get("/api/stacks/deployed-tags")
 async def get_stacks_deployed_tags():
-    """Get deployed image tags for all stacks from Docker Swarm."""
+    """Get deployed image tags and latest built tags for all stacks."""
     if not github_service.is_configured():
         raise HTTPException(status_code=400, detail="GitHub integration not configured")
-    
-    # Get list of starred repos
+
     repos = await github_service.get_starred_repos()
-    
     deployer = StackDeployer(settings.github, None)
-    tags = {}
-    
-    # Query tag for each repo
-    for repo in repos:
-        repo_name = repo["name"]
-        success, tag = await deployer.get_deployed_stack_tag(repo_name)
-        if success and tag:
-            tags[repo_name] = tag
-    
-    return {"tags": tags}
+
+    async def get_info(repo):
+        name = repo["name"]
+        owner = repo["owner"]
+        success, deployed = await deployer.get_deployed_stack_tag(name)
+        latest = await github_service.get_latest_tag(owner, name)
+        return name, deployed if success else None, latest
+
+    results = await asyncio.gather(*[get_info(r) for r in repos])
+
+    deployed_tags = {}
+    latest_built = {}
+    for name, deployed, latest in results:
+        if deployed:
+            deployed_tags[name] = deployed
+        if latest:
+            latest_built[name] = latest
+
+    return {"tags": deployed_tags, "latest_built": latest_built}
+
+
+# ============== Auto-Build Poller ==============
+
+_auto_build_state = {}  # {repo_name: {"last_sha": str, "building": bool}}
+_auto_build_task = None
+AUTO_BUILD_POLL_INTERVAL = 20  # seconds
+
+
+async def _trigger_auto_build(repo_name: str, ssh_url: str):
+    """Trigger an auto-build for a repo. Reuses the same BackgroundAction pattern."""
+    try:
+        deployer, host_name = _get_deployer_and_host()
+    except Exception as e:
+        logger.error("Auto-build: no host available", repo=repo_name, error=str(e))
+        _auto_build_state[repo_name]["building"] = False
+        return
+
+    action_id = str(uuid.uuid4())[:8]
+    action = BackgroundAction(action_id, "build", repo_name)
+    _background_actions[action_id] = action
+
+    async def _run():
+        try:
+            result = await deployer.build(
+                repo_name, ssh_url, version="1.0",
+                output_callback=action.append_output,
+                cancel_event=action.cancel_event,
+            )
+            result["host"] = host_name
+            result["auto_triggered"] = True
+            action.result = result
+            action.status = "completed" if result.get("success") else "failed"
+        except Exception as e:
+            logger.exception("Auto-build failed", repo=repo_name, error=str(e))
+            action.status = "failed"
+            action.result = {"success": False, "output": str(e), "action": "build", "repo": repo_name}
+        finally:
+            if repo_name in _auto_build_state:
+                _auto_build_state[repo_name]["building"] = False
+
+    action.task = asyncio.create_task(_run())
+    logger.info("Auto-build triggered", repo=repo_name, action_id=action_id)
+
+
+async def auto_build_poller():
+    """Periodically check starred repos for new commits on default branch and trigger builds."""
+    # Wait for initial startup
+    await asyncio.sleep(10)
+
+    while True:
+        try:
+            if github_service and github_service.is_configured():
+                repos = await github_service.get_starred_repos()
+
+                for repo in repos:
+                    owner, name, ssh_url = repo["owner"], repo["name"], repo["ssh_url"]
+
+                    # Get latest commit on default branch (1 commit only)
+                    commits_data = await github_service.get_repo_commits(owner, name, per_page=1)
+                    commits = commits_data.get("commits", [])
+                    if not commits:
+                        continue
+
+                    latest_sha = commits[0]["sha"]
+                    state = _auto_build_state.get(name)
+
+                    # First run: record current SHA, don't build
+                    if state is None:
+                        _auto_build_state[name] = {"last_sha": latest_sha, "building": False}
+                        continue
+
+                    # New commit detected and not already building
+                    if latest_sha != state["last_sha"] and not state.get("building"):
+                        logger.info("New commit detected, triggering auto-build",
+                                    repo=name,
+                                    old_sha=state["last_sha"][:7],
+                                    new_sha=latest_sha[:7])
+                        _auto_build_state[name]["building"] = True
+                        _auto_build_state[name]["last_sha"] = latest_sha
+                        await _trigger_auto_build(name, ssh_url)
+
+        except Exception as e:
+            logger.error("Auto-build poller error", error=str(e))
+
+        await asyncio.sleep(AUTO_BUILD_POLL_INTERVAL)
+
+
+@app.get("/api/stacks/auto-build/status")
+async def get_auto_build_status():
+    """Get auto-build state for all repos."""
+    return {"state": _auto_build_state}
 
 
 # ============== Agent API ==

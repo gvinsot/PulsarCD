@@ -2262,6 +2262,7 @@ function exportLogs() {
 
 let stacksRepos = [];
 let stacksDeployedTags = {};
+let stacksLatestBuilt = {};
 
 async function loadStacks() {
     // Check GitHub status
@@ -2316,6 +2317,7 @@ async function refreshStacks() {
     
     stacksRepos = reposData.repos;
     stacksDeployedTags = (tagsData && tagsData.tags) ? tagsData.tags : {};
+    stacksLatestBuilt = (tagsData && tagsData.latest_built) ? tagsData.latest_built : {};
     stacksContainers = containersData || {};
     stacksHostMetrics = hostMetrics || {};
     
@@ -2335,6 +2337,8 @@ let stacksHostMetrics = {};
 
 let stacksPollingInterval = null;
 const STACKS_POLL_INTERVAL = 5000; // 5 seconds
+let _versionPollCounter = 0;
+const VERSION_POLL_EVERY = 6; // Re-fetch versions every 6th poll (~30s)
 
 function startStacksPolling() {
     stopStacksPolling();
@@ -2379,13 +2383,36 @@ async function updateStacksContainerStates() {
     if (!stacksRepos || stacksRepos.length === 0) return;
 
     try {
-        const [statesData, hostMetrics] = await Promise.all([
+        // Periodically re-fetch version info to detect new builds
+        _versionPollCounter++;
+        const fetchVersions = (_versionPollCounter % VERSION_POLL_EVERY === 0);
+
+        const promises = [
             apiGet('/containers/states'),
-            apiGet('/hosts/metrics')
-        ]);
+            apiGet('/hosts/metrics'),
+        ];
+        if (fetchVersions) promises.push(apiGet('/stacks/deployed-tags'));
+
+        const results = await Promise.all(promises);
+        const statesData = results[0];
+        const hostMetrics = results[1];
+        const tagsData = fetchVersions ? results[2] : null;
 
         if (!statesData) return;
         if (hostMetrics) stacksHostMetrics = hostMetrics;
+
+        // Update version data if fetched
+        if (tagsData) {
+            const oldDeployed = JSON.stringify(stacksDeployedTags);
+            const oldBuilt = JSON.stringify(stacksLatestBuilt);
+            stacksDeployedTags = (tagsData.tags) ? tagsData.tags : {};
+            stacksLatestBuilt = (tagsData.latest_built) ? tagsData.latest_built : {};
+            // If versions changed, re-render to show/hide update buttons
+            if (JSON.stringify(stacksDeployedTags) !== oldDeployed || JSON.stringify(stacksLatestBuilt) !== oldBuilt) {
+                renderStacksList();
+                return;
+            }
+        }
 
         // Build a map: stackName -> serviceName -> containers
         const newContainersByStack = {};
@@ -2741,6 +2768,8 @@ function renderStacksList() {
     
     listEl.innerHTML = stacksRepos.map(repo => {
         const deployedTag = stacksDeployedTags[repo.name];
+        const latestBuilt = stacksLatestBuilt[repo.name];
+        const hasUpdate = deployedTag && latestBuilt && normalizeVersion(latestBuilt) !== normalizeVersion(deployedTag);
         const isDeployed = !!deployedTag;
         // Docker stack names are lowercase versions of repo names
         const stackName = repo.name.toLowerCase();
@@ -2967,6 +2996,7 @@ function renderStacksList() {
                     ${stackIcon}
                     ${escapeHtml(repo.name)}
                     ${deployedTag ? `<span class="stack-badge deployed" title="Deployed version">${escapeHtml(deployedTag)}</span>` : '<span class="stack-badge" style="background: var(--bg-tertiary); color: var(--text-muted);">Not deployed</span>'}
+                    ${hasUpdate ? `<span class="stack-badge update-available" title="New version available">${escapeHtml(latestBuilt)}</span>` : ''}
                     ${isDeployed ? `<span class="group-count">${Object.keys(stackContainers).length} services, ${containerCount} containers</span>` : ''}
                     ${stackMemoryDisplay ? `<span class="group-stat group-memory" title="RAM - Total memory usage">💾 ${stackMemoryDisplay}</span>` : ''}
                     ${stackCpuDisplay ? `<span class="group-stat group-cpu ${stackCpuClass}" title="CPU - Max usage">⚡ ${stackCpuDisplay}</span>` : ''}
@@ -3002,6 +3032,15 @@ function renderStacksList() {
                         </svg>
                         <span>Build</span>
                     </button>
+                    ${hasUpdate ? `
+                    <button class="btn btn-sm btn-update" onclick="deployStack('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}')" title="Update to ${escapeHtml(latestBuilt)}">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
+                            <path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+                        </svg>
+                        <span>Update</span>
+                    </button>
+                    ` : ''}
                     <button class="btn btn-sm btn-primary" onclick="deployStack('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}')" id="deploy-${escapeHtml(repo.name)}" title="Deploy stack">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
@@ -4299,6 +4338,11 @@ function formatRelativeTime(isoString) {
 }
 
 // ============== Utilities ==============
+
+function normalizeVersion(v) {
+    if (!v) return '';
+    return v.replace(/^v/, '');
+}
 
 function escapeHtml(str) {
     if (!str) return '';

@@ -2908,6 +2908,31 @@ a.btn {
     display: block;
 }
 
+/* ============== Update Badge/Button ============== */
+
+.stack-badge.update-available {
+    background: rgba(14, 165, 233, 0.15);
+    color: var(--accent-secondary);
+    border: 1px solid rgba(14, 165, 233, 0.3);
+    animation: pulse-subtle 2s infinite;
+}
+
+.btn-update {
+    background: var(--accent-secondary) !important;
+    color: white !important;
+    border: none !important;
+    font-weight: 600;
+}
+
+.btn-update:hover {
+    filter: brightness(1.15);
+}
+
+@keyframes pulse-subtle {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+}
+
 /* ============== Activity Modal ============== */
 
 .activity-modal-body {
