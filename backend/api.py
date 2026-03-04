@@ -1254,6 +1254,70 @@ async def get_repo_tags(
     return tags_data
 
 
+@app.get("/api/stacks/{owner}/{repo}/activity")
+async def get_repo_activity(
+    owner: str,
+    repo: str,
+    per_page: int = Query(default=30, ge=1, le=100, description="Commits per branch"),
+):
+    """Get activity data (commits from all branches, tags) for a repository."""
+    if not github_service.is_configured():
+        raise HTTPException(status_code=400, detail="GitHub integration not configured")
+
+    # Fetch branches and tags first
+    branches, tags_data = await asyncio.gather(
+        github_service.get_repo_branches(owner, repo),
+        github_service.get_repo_tags(owner, repo, limit=50),
+    )
+
+    # Fetch commits from all branches in parallel
+    commit_tasks = [
+        github_service.get_repo_commits(owner, repo, branch=b["name"], per_page=per_page)
+        for b in branches
+    ]
+    all_results = await asyncio.gather(*commit_tasks)
+
+    # Deduplicate commits by SHA across all branches, track which branches contain each commit
+    seen = {}
+    commit_branches = {}  # sha -> list of branch names that contain this commit
+    for branch, result in zip(branches, all_results):
+        for c in result["commits"]:
+            if c["sha"] not in seen:
+                seen[c["sha"]] = c
+            commit_branches.setdefault(c["sha"], []).append(branch["name"])
+
+    # Sort by date descending
+    commits = sorted(seen.values(), key=lambda c: c["date"], reverse=True)
+
+    # Build maps: SHA -> branch/tag names
+    branch_tip_map = {}
+    for b in branches:
+        branch_tip_map.setdefault(b["sha"], []).append(b["name"])
+
+    tag_map = {}
+    for t in tags_data.get("tags", []):
+        tag_map.setdefault(t["sha"], []).append(t["name"])
+
+    return {
+        "branches": branches,
+        "tags": tags_data.get("tags", []),
+        "commits": commits,
+        "branch_tip_map": branch_tip_map,
+        "tag_map": tag_map,
+        "commit_branches": commit_branches,
+        "default_branch": tags_data.get("default_branch", "main"),
+    }
+
+
+@app.get("/api/stacks/{owner}/{repo}/commits/{sha}/diff")
+async def get_commit_diff(owner: str, repo: str, sha: str):
+    """Get the diff for a specific commit."""
+    if not github_service.is_configured():
+        raise HTTPException(status_code=400, detail="GitHub integration not configured")
+
+    return await github_service.get_commit_diff(owner, repo, sha)
+
+
 import re
 
 def _get_deployer_and_host():

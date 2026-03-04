@@ -329,6 +329,108 @@ class GitHubService:
             logger.error("Failed to fetch tags", repo=f"{owner}/{repo}", error=str(e))
             return {"tags": [], "branches": []}
 
+    async def get_repo_commits(self, owner: str, repo: str, branch: str = None, per_page: int = 50, page: int = 1) -> Dict[str, Any]:
+        """Get commit history for a repository branch.
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            branch: Branch name (defaults to repo default branch)
+            per_page: Number of commits per page (max 100)
+            page: Page number for pagination
+
+        Returns:
+            Dict with commits list and pagination info
+        """
+        if not self.config.token:
+            logger.warning("GitHub token not configured")
+            return {"commits": [], "has_more": False}
+
+        session = await self._get_session()
+        url = f"https://api.github.com/repos/{owner}/{repo}/commits"
+        params = {"per_page": min(per_page, 100), "page": page}
+        if branch:
+            params["sha"] = branch
+
+        try:
+            async with session.get(url, params=params) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.error("GitHub API error getting commits", status=response.status, error=error_text)
+                    return {"commits": [], "has_more": False}
+
+                data = await response.json()
+                commits = []
+                for c in data:
+                    commits.append({
+                        "sha": c["sha"],
+                        "short_sha": c["sha"][:7],
+                        "message": c["commit"]["message"],
+                        "author_name": c["commit"]["author"]["name"],
+                        "author_avatar": c["author"]["avatar_url"] if c.get("author") else None,
+                        "date": c["commit"]["author"]["date"],
+                        "parents": [p["sha"] for p in c.get("parents", [])],
+                    })
+
+                has_more = len(data) == per_page
+                logger.info("Fetched commits", repo=f"{owner}/{repo}", branch=branch, count=len(commits), page=page)
+                return {"commits": commits, "has_more": has_more}
+
+        except Exception as e:
+            logger.error("Failed to fetch commits", repo=f"{owner}/{repo}", error=str(e))
+            return {"commits": [], "has_more": False}
+
+    async def get_commit_diff(self, owner: str, repo: str, sha: str) -> Dict[str, Any]:
+        """Get the diff (changed files) for a specific commit.
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            sha: Full commit SHA
+
+        Returns:
+            Dict with commit info and list of changed files with patch data
+        """
+        if not self.config.token:
+            logger.warning("GitHub token not configured")
+            return {"files": [], "stats": {}}
+
+        session = await self._get_session()
+        url = f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}"
+
+        try:
+            async with session.get(url) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.error("GitHub API error getting commit diff", status=response.status, error=error_text)
+                    return {"files": [], "stats": {}}
+
+                data = await response.json()
+                files = []
+                for f in data.get("files", []):
+                    files.append({
+                        "filename": f["filename"],
+                        "status": f["status"],
+                        "additions": f["additions"],
+                        "deletions": f["deletions"],
+                        "changes": f["changes"],
+                        "patch": f.get("patch", ""),
+                        "previous_filename": f.get("previous_filename"),
+                    })
+
+                return {
+                    "sha": data["sha"],
+                    "message": data["commit"]["message"],
+                    "author_name": data["commit"]["author"]["name"],
+                    "date": data["commit"]["author"]["date"],
+                    "stats": data.get("stats", {}),
+                    "files": files,
+                }
+
+        except Exception as e:
+            logger.error("Failed to fetch commit diff", repo=f"{owner}/{repo}", sha=sha, error=str(e))
+            return {"files": [], "stats": {}}
+
     async def validate_branch(self, owner: str, repo: str, branch: str) -> tuple[bool, str]:
         """Validate that a branch exists in the repository.
 

@@ -688,6 +688,41 @@
                         </div>
                     </div>
                 </div>
+                <!-- Activity modal -->
+                <div id="stack-activity-modal" class="modal">
+                    <div class="modal-content modal-fullscreen">
+                        <div class="modal-header">
+                            <div class="modal-title-section">
+                                <h2 id="stack-activity-title">Activity</h2>
+                            </div>
+                            <div class="modal-header-actions">
+                                <button class="modal-close" onclick="closeActivityModal()">&times;</button>
+                            </div>
+                        </div>
+                        <div class="modal-body activity-modal-body">
+                            <div class="activity-layout">
+                                <div class="activity-graph-panel" id="activity-graph-panel">
+                                    <div class="activity-graph-container" id="activity-graph-container">
+                                        <div class="loading-placeholder">Loading activity...</div>
+                                    </div>
+                                </div>
+                                <div class="activity-diff-panel" id="activity-diff-panel" style="display: none;">
+                                    <div class="activity-diff-header" id="activity-diff-header">
+                                        <button class="btn btn-sm btn-ghost" onclick="closeActivityDiff()">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                                                <line x1="18" y1="6" x2="6" y2="18"/>
+                                                <line x1="6" y1="6" x2="18" y2="18"/>
+                                            </svg>
+                                            Close
+                                        </button>
+                                        <span class="activity-diff-title" id="activity-diff-title"></span>
+                                    </div>
+                                    <div class="activity-diff-content" id="activity-diff-content"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </section>
 
             <!-- Terminal View -->
