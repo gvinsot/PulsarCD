@@ -2263,6 +2263,7 @@ function exportLogs() {
 let stacksRepos = [];
 let stacksDeployedTags = {};
 let stacksLatestBuilt = {};
+let stacksPipelineState = {};
 
 async function loadStacks() {
     // Check GitHub status
@@ -2391,27 +2392,41 @@ async function updateStacksContainerStates() {
             apiGet('/containers/states'),
             apiGet('/hosts/metrics'),
         ];
-        if (fetchVersions) promises.push(apiGet('/stacks/deployed-tags'));
+        if (fetchVersions) {
+            promises.push(apiGet('/stacks/deployed-tags'));
+            promises.push(apiGet('/stacks/pipeline/status'));
+        }
 
         const results = await Promise.all(promises);
         const statesData = results[0];
         const hostMetrics = results[1];
         const tagsData = fetchVersions ? results[2] : null;
+        const pipelineData = fetchVersions ? results[3] : null;
 
         if (!statesData) return;
         if (hostMetrics) stacksHostMetrics = hostMetrics;
 
-        // Update version data if fetched
+        // Update version + pipeline data if fetched
+        let needsRerender = false;
         if (tagsData) {
             const oldDeployed = JSON.stringify(stacksDeployedTags);
             const oldBuilt = JSON.stringify(stacksLatestBuilt);
             stacksDeployedTags = (tagsData.tags) ? tagsData.tags : {};
             stacksLatestBuilt = (tagsData.latest_built) ? tagsData.latest_built : {};
-            // If versions changed, re-render to show/hide update buttons
             if (JSON.stringify(stacksDeployedTags) !== oldDeployed || JSON.stringify(stacksLatestBuilt) !== oldBuilt) {
-                renderStacksList();
-                return;
+                needsRerender = true;
             }
+        }
+        if (pipelineData) {
+            const oldPipeline = JSON.stringify(stacksPipelineState);
+            stacksPipelineState = pipelineData.pipelines || {};
+            if (JSON.stringify(stacksPipelineState) !== oldPipeline) {
+                needsRerender = true;
+            }
+        }
+        if (needsRerender) {
+            renderStacksList();
+            return;
         }
 
         // Build a map: stackName -> serviceName -> containers
@@ -2497,29 +2512,65 @@ function updateStackDom(repoName, stackName, services) {
         }
     }
 
+    // Compute GPU stats
+    let maxGpuPercent = null;
+    let totalVramUsed = 0;
+    let totalVramTotal = 0;
+    let hasVramData = false;
+    if (stacksHostMetrics) {
+        const hostsInStack = new Set();
+        for (const containers of Object.values(services)) {
+            for (const c of containers) { if (c.host) hostsInStack.add(c.host); }
+        }
+        for (const host of hostsInStack) {
+            if (stacksHostMetrics[host]) {
+                const gp = stacksHostMetrics[host].gpu_percent;
+                if (gp != null) maxGpuPercent = maxGpuPercent != null ? Math.max(maxGpuPercent, gp) : gp;
+                const gu = stacksHostMetrics[host].gpu_memory_used_mb;
+                const gt = stacksHostMetrics[host].gpu_memory_total_mb;
+                if (gu != null && gt != null) { totalVramUsed += gu; totalVramTotal += gt; hasVramData = true; }
+            }
+        }
+    }
+
+    // Update health class on host-header
+    const headerEl = hostGroupEl.querySelector('.host-header');
+    if (headerEl) {
+        const maxGpuForHealth = maxGpuPercent || 0;
+        headerEl.classList.remove('health-critical', 'health-warning');
+        if (stackMaxCpu >= 80 || maxGpuForHealth >= 80) headerEl.classList.add('health-critical');
+        else if (stackMaxCpu >= 50 || maxGpuForHealth >= 50) headerEl.classList.add('health-warning');
+    }
+
     // Update header stats
     const hostNameEl = hostGroupEl.querySelector('.host-name');
     if (hostNameEl) {
         // Update group-count
         const groupCountEl = hostNameEl.querySelector('.group-count');
         if (groupCountEl) {
-            groupCountEl.textContent = `${Object.keys(services).length} services, ${containerCount} containers`;
+            groupCountEl.textContent = `${Object.keys(services).length} svc, ${containerCount} ct`;
         }
-        // Update memory
-        const memEl = hostNameEl.querySelector('.group-memory');
-        if (memEl) {
-            memEl.innerHTML = `💾 ${formatMemory(stackTotalMemory)}`;
-            memEl.style.display = stackTotalMemory > 0 ? '' : 'none';
+
+        // Update tooltip content
+        const tooltipContent = hostNameEl.querySelector('.tooltip-content');
+        if (tooltipContent) {
+            const lines = [];
+            if (stackTotalMemory > 0) lines.push(`<div>RAM: ${formatMemory(stackTotalMemory)}</div>`);
+            if (stackMaxCpu > 0) lines.push(`<div>CPU: ${stackMaxCpu.toFixed(1)}%</div>`);
+            if (maxGpuPercent != null) lines.push(`<div>GPU: ${maxGpuPercent.toFixed(1)}%</div>`);
+            if (hasVramData && totalVramTotal > 0) lines.push(`<div>VRAM: ${formatMemory(totalVramUsed)} / ${formatMemory(totalVramTotal)}</div>`);
+            tooltipContent.innerHTML = lines.join('');
         }
-        // Update CPU
-        const cpuEl = hostNameEl.querySelector('.group-cpu');
-        if (cpuEl) {
-            cpuEl.className = `group-stat group-cpu ${stackMaxCpu >= 80 ? 'cpu-critical' : (stackMaxCpu >= 50 ? 'cpu-warning' : '')}`;
-            cpuEl.innerHTML = `⚡ ${stackMaxCpu > 0 ? stackMaxCpu.toFixed(1) + '%' : ''}`;
-            cpuEl.style.display = stackMaxCpu > 0 ? '' : 'none';
+
+        // Update health dot
+        const healthDot = hostNameEl.querySelector('.health-dot');
+        if (healthDot) {
+            healthDot.className = 'health-dot';
+            const maxGpuForHealth = maxGpuPercent || 0;
+            if (stackMaxCpu >= 80 || maxGpuForHealth >= 80) healthDot.classList.add('dot-critical');
+            else if (stackMaxCpu >= 50 || maxGpuForHealth >= 50) healthDot.classList.add('dot-warning');
+            else healthDot.classList.add('dot-ok');
         }
-        // Update GPU stats from host metrics
-        updateStackGpuStats(hostNameEl, stackName, services);
     }
 
     // Update each service's containers
@@ -2593,46 +2644,6 @@ function updateStackDom(repoName, stackName, services) {
         // Update individual container items
         updateContainerItems(containerListEl, containers, stackName);
     });
-}
-
-function updateStackGpuStats(hostNameEl, stackName, services) {
-    if (!stacksHostMetrics) return;
-
-    const hostsInStack = new Set();
-    for (const containers of Object.values(services)) {
-        for (const c of containers) {
-            if (c.host) hostsInStack.add(c.host);
-        }
-    }
-
-    let maxGpuPercent = null;
-    let totalVramUsed = 0;
-    let totalVramTotal = 0;
-    let hasVramData = false;
-
-    for (const host of hostsInStack) {
-        if (stacksHostMetrics[host]) {
-            const gpuPercent = stacksHostMetrics[host].gpu_percent;
-            const gpuMemUsed = stacksHostMetrics[host].gpu_memory_used_mb;
-            const gpuMemTotal = stacksHostMetrics[host].gpu_memory_total_mb;
-
-            if (gpuPercent != null) {
-                maxGpuPercent = maxGpuPercent != null ? Math.max(maxGpuPercent, gpuPercent) : gpuPercent;
-            }
-            if (gpuMemUsed != null && gpuMemTotal != null) {
-                totalVramUsed += gpuMemUsed;
-                totalVramTotal += gpuMemTotal;
-                hasVramData = true;
-            }
-        }
-    }
-
-    const gpuEl = hostNameEl.querySelector('.group-gpu');
-    if (gpuEl && maxGpuPercent != null) {
-        const gpuClass = maxGpuPercent >= 80 ? 'gpu-critical' : (maxGpuPercent >= 50 ? 'gpu-warning' : '');
-        gpuEl.className = `group-stat group-gpu ${gpuClass}`;
-        gpuEl.innerHTML = `🎮 ${maxGpuPercent.toFixed(1)}%`;
-    }
 }
 
 /**
@@ -2790,10 +2801,11 @@ function renderStacksList() {
         }
         
         // Calculate GPU stats from host metrics
-        let stackGpuDisplay = '';
-        let stackGpuClass = '';
-        let stackVramDisplay = '';
-        
+        let maxGpuPercent = null;
+        let totalVramUsed = 0;
+        let totalVramTotal = 0;
+        let hasVramData = false;
+
         if (isDeployed && stacksHostMetrics) {
             const hostsInStack = new Set();
             for (const serviceContainers of Object.values(stackContainers)) {
@@ -2801,11 +2813,6 @@ function renderStacksList() {
                     if (c.host) hostsInStack.add(c.host);
                 }
             }
-            
-            let maxGpuPercent = null;
-            let totalVramUsed = 0;
-            let totalVramTotal = 0;
-            let hasVramData = false;
             
             for (const host of hostsInStack) {
                 if (stacksHostMetrics[host]) {
@@ -2824,20 +2831,42 @@ function renderStacksList() {
                 }
             }
             
-            if (maxGpuPercent != null) {
-                stackGpuClass = maxGpuPercent >= 80 ? 'gpu-critical' : (maxGpuPercent >= 50 ? 'gpu-warning' : '');
-                stackGpuDisplay = `<span class="group-stat group-gpu ${stackGpuClass}" title="GPU - Max usage">🎮 ${maxGpuPercent.toFixed(1)}%</span>`;
-            }
-            if (hasVramData && totalVramTotal > 0) {
-                const vramPercent = (totalVramUsed / totalVramTotal) * 100;
-                const vramClass = vramPercent >= 80 ? 'gpu-critical' : (vramPercent >= 50 ? 'gpu-warning' : '');
-                stackVramDisplay = `<span class="group-stat group-gpu ${vramClass}" title="VRAM usage">🖼️ ${formatMemory(totalVramUsed)} / ${formatMemory(totalVramTotal)}</span>`;
-            }
         }
-        
+
         const stackMemoryDisplay = isDeployed && stackTotalMemory > 0 ? formatMemory(stackTotalMemory) : '';
-        const stackCpuClass = stackMaxCpu >= 80 ? 'cpu-critical' : (stackMaxCpu >= 50 ? 'cpu-warning' : '');
         const stackCpuDisplay = isDeployed && stackMaxCpu > 0 ? `${stackMaxCpu.toFixed(1)}%` : '';
+
+        // Health-based background class
+        const maxGpuForHealth = maxGpuPercent || 0;
+        const healthClass = (stackMaxCpu >= 80 || maxGpuForHealth >= 80) ? 'health-critical'
+                          : (stackMaxCpu >= 50 || maxGpuForHealth >= 50) ? 'health-warning' : '';
+
+        // Pipeline step states
+        const pipeline = stacksPipelineState[repo.name];
+        const stageOrder = { build: 1, test: 2, deploy: 3, done: 4 };
+        let versionStep = 'idle', buildStep = 'idle', testStep = 'idle', deployStep = 'idle';
+
+        if (pipeline && pipeline.status === 'running') {
+            const cs = stageOrder[pipeline.stage] || 0;
+            versionStep = 'success';
+            buildStep = cs === 1 ? 'running' : (cs > 1 ? 'success' : 'idle');
+            testStep = cs === 2 ? 'running' : (cs > 2 ? 'success' : 'idle');
+            deployStep = cs === 3 ? 'running' : 'idle';
+        } else if (pipeline && pipeline.status === 'failed') {
+            const cs = stageOrder[pipeline.stage] || 0;
+            versionStep = cs >= 1 ? 'success' : 'idle';
+            buildStep = cs === 1 ? 'failed' : (cs > 1 ? 'success' : 'idle');
+            testStep = cs === 2 ? 'failed' : (cs > 2 ? 'success' : 'idle');
+            deployStep = cs === 3 ? 'failed' : 'idle';
+        } else if (pipeline && pipeline.stage === 'done') {
+            versionStep = 'success'; buildStep = 'success'; testStep = 'success'; deployStep = 'success';
+        } else if (hasUpdate) {
+            versionStep = 'success'; buildStep = 'success'; testStep = 'success'; deployStep = 'pending';
+        } else if (isDeployed) {
+            versionStep = 'success'; buildStep = 'success'; testStep = 'success'; deployStep = 'success';
+        }
+
+        const pipelineVersion = (pipeline && pipeline.version) ? pipeline.version : (latestBuilt ? normalizeVersion(latestBuilt) : (deployedTag || '–'));
         
         // Build containers HTML (similar to Computers view compose-group style)
         let containersHtml = '';
@@ -2983,10 +3012,24 @@ function renderStacksList() {
             <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
         </svg>`;
         
+        // SVG icons for pipeline steps
+        const checkSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12"><polyline points="20 6 9 17 4 12"/></svg>`;
+        const xSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+        const spinnerSvg = `<svg class="pipeline-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12"><path d="M12 2a10 10 0 0 1 10 10"/></svg>`;
+
+        const stepIcon = (state) => state === 'success' ? checkSvg : state === 'failed' ? xSvg : state === 'running' ? spinnerSvg : '';
+
+        // Monitoring tooltip content
+        const tooltipLines = [];
+        if (stackMemoryDisplay) tooltipLines.push(`RAM: ${stackMemoryDisplay}`);
+        if (stackCpuDisplay) tooltipLines.push(`CPU: ${stackCpuDisplay}`);
+        if (maxGpuPercent != null) tooltipLines.push(`GPU: ${maxGpuPercent.toFixed(1)}%`);
+        if (hasVramData && totalVramTotal > 0) tooltipLines.push(`VRAM: ${formatMemory(totalVramUsed)} / ${formatMemory(totalVramTotal)}`);
+
         // Use host-group structure similar to Computers view
         return `
         <div class="host-group ${isExpanded ? '' : 'collapsed'}" data-repo="${escapeHtml(repo.name)}">
-            <div class="host-header" ${isDeployed ? `onclick="toggleStackExpand('${escapeHtml(repo.name)}')"` : ''}>
+            <div class="host-header ${healthClass}" ${isDeployed ? `onclick="toggleStackExpand('${escapeHtml(repo.name)}')"` : ''}>
                 <span class="host-name">
                     ${isDeployed ? `
                     <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2997,11 +3040,12 @@ function renderStacksList() {
                     ${escapeHtml(repo.name)}
                     ${deployedTag ? `<span class="stack-badge deployed" title="Deployed version">${escapeHtml(deployedTag)}</span>` : '<span class="stack-badge" style="background: var(--bg-tertiary); color: var(--text-muted);">Not deployed</span>'}
                     ${hasUpdate ? `<span class="stack-badge update-available" title="New version available">${escapeHtml(latestBuilt)}</span>` : ''}
-                    ${isDeployed ? `<span class="group-count">${Object.keys(stackContainers).length} services, ${containerCount} containers</span>` : ''}
-                    ${stackMemoryDisplay ? `<span class="group-stat group-memory" title="RAM - Total memory usage">💾 ${stackMemoryDisplay}</span>` : ''}
-                    ${stackCpuDisplay ? `<span class="group-stat group-cpu ${stackCpuClass}" title="CPU - Max usage">⚡ ${stackCpuDisplay}</span>` : ''}
-                    ${stackGpuDisplay}
-                    ${stackVramDisplay}
+                    ${isDeployed ? `<span class="group-count">${Object.keys(stackContainers).length} svc, ${containerCount} ct</span>` : ''}
+                    ${isDeployed && tooltipLines.length > 0 ? `
+                    <span class="stack-monitoring-tooltip">
+                        <span class="health-dot ${healthClass ? (healthClass === 'health-critical' ? 'dot-critical' : 'dot-warning') : 'dot-ok'}"></span>
+                        <span class="tooltip-content">${tooltipLines.map(l => `<div>${l}</div>`).join('')}</span>
+                    </span>` : ''}
                 </span>
                 <div class="host-header-actions" onclick="event.stopPropagation();">
                     <a class="btn btn-sm btn-ghost" href="${escapeHtml(repo.html_url)}" target="_blank" rel="noopener" title="Open on GitHub">
@@ -3025,33 +3069,29 @@ function renderStacksList() {
                         </svg>
                         <span>Env</span>
                     </button>
-                    <button class="btn btn-sm btn-secondary" onclick="buildStack('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}')" id="build-${escapeHtml(repo.name)}" title="Build images">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                            <polyline points="22 4 12 14.01 9 11.01"/>
-                        </svg>
-                        <span>Build</span>
-                    </button>
-                    ${hasUpdate ? `
-                    <button class="btn btn-sm btn-update" onclick="deployStack('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}')" title="Update to ${escapeHtml(latestBuilt)}">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                            <path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
-                            <path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
-                        </svg>
-                        <span>Update</span>
-                    </button>
-                    ` : ''}
-                    <button class="btn btn-sm btn-primary" onclick="deployStack('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}')" id="deploy-${escapeHtml(repo.name)}" title="Deploy stack">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                            <polyline points="7.5 4.21 12 6.81 16.5 4.21"/>
-                            <polyline points="7.5 19.79 7.5 14.6 3 12"/>
-                            <polyline points="21 12 16.5 14.6 16.5 19.79"/>
-                            <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
-                            <line x1="12" y1="22.08" x2="12" y2="12"/>
-                        </svg>
-                        <span>Deploy</span>
-                    </button>
+
+                    <div class="pipeline-flow">
+                        <div class="pipeline-step step-${versionStep}" title="Version: ${escapeHtml(pipelineVersion)}">
+                            ${stepIcon(versionStep)}
+                            <span>${escapeHtml(pipelineVersion)}</span>
+                        </div>
+                        <span class="pipeline-arrow">\u2192</span>
+                        <div class="pipeline-step step-${buildStep}" onclick="event.stopPropagation(); buildStack('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}')" title="Build">
+                            ${stepIcon(buildStep)}
+                            <span>Build</span>
+                        </div>
+                        <span class="pipeline-arrow">\u2192</span>
+                        <div class="pipeline-step step-${testStep}" title="Test (auto)">
+                            ${stepIcon(testStep)}
+                            <span>Test</span>
+                        </div>
+                        <span class="pipeline-arrow">\u2192</span>
+                        <div class="pipeline-step step-${deployStep}" onclick="event.stopPropagation(); deployStack('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}')" title="Deploy">
+                            ${stepIcon(deployStep)}
+                            <span>Deploy</span>
+                        </div>
+                    </div>
+
                     ${isDeployed ? `
                     <button class="btn btn-sm btn-danger" onclick="removeDeployedStack('${escapeHtml(repo.name)}')" title="Remove deployed stack">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">

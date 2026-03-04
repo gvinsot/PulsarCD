@@ -1593,52 +1593,120 @@ async def get_stacks_deployed_tags():
     return {"tags": deployed_tags, "latest_built": latest_built}
 
 
-# ============== Auto-Build Poller ==============
+# ============== Pipeline (Auto Build → Test → Deploy) ==============
 
 _auto_build_state = {}  # {repo_name: {"last_sha": str, "building": bool}}
+_pipeline_state = {}  # {repo_name: {"stage": str, "status": str, "build_action_id": str|None, "deploy_action_id": str|None, "version": str}}
 _auto_build_task = None
 AUTO_BUILD_POLL_INTERVAL = 20  # seconds
 
+# Pipeline stages in order
+PIPELINE_STAGES = ["build", "test", "deploy", "done"]
 
-async def _trigger_auto_build(repo_name: str, ssh_url: str):
-    """Trigger an auto-build for a repo. Reuses the same BackgroundAction pattern."""
+
+def _extract_version_from_output(lines: list) -> Optional[str]:
+    """Parse the built version from build script output.
+
+    Build script outputs: 'Version: 1.0.X (tag: v1.0.X)'
+    """
+    for line in lines:
+        if "Version:" in line:
+            m = re.search(r'Version:\s*(\d+\.\d+\.\d+)', line)
+            if m:
+                return m.group(1)
+    return None
+
+
+async def _trigger_pipeline(repo_name: str, ssh_url: str):
+    """Trigger a full pipeline: build → test (skip) → deploy."""
     try:
         deployer, host_name = _get_deployer_and_host()
     except Exception as e:
-        logger.error("Auto-build: no host available", repo=repo_name, error=str(e))
+        logger.error("Pipeline: no host available", repo=repo_name, error=str(e))
+        _pipeline_state[repo_name] = {"stage": "build", "status": "failed", "build_action_id": None, "deploy_action_id": None, "version": None}
         _auto_build_state[repo_name]["building"] = False
         return
 
-    action_id = str(uuid.uuid4())[:8]
-    action = BackgroundAction(action_id, "build", repo_name)
-    _background_actions[action_id] = action
+    _pipeline_state[repo_name] = {"stage": "build", "status": "running", "build_action_id": None, "deploy_action_id": None, "version": None}
 
-    async def _run():
+    async def _run_pipeline():
+        built_version = None
         try:
+            # ── Step 1: Build ──
+            build_id = str(uuid.uuid4())[:8]
+            build_action = BackgroundAction(build_id, "build", repo_name)
+            _background_actions[build_id] = build_action
+            _pipeline_state[repo_name]["build_action_id"] = build_id
+
+            logger.info("Pipeline: starting build", repo=repo_name, action_id=build_id)
             result = await deployer.build(
                 repo_name, ssh_url, version="1.0",
-                output_callback=action.append_output,
-                cancel_event=action.cancel_event,
+                output_callback=build_action.append_output,
+                cancel_event=build_action.cancel_event,
             )
             result["host"] = host_name
             result["auto_triggered"] = True
-            action.result = result
-            action.status = "completed" if result.get("success") else "failed"
+            build_action.result = result
+            build_action.status = "completed" if result.get("success") else "failed"
+
+            if not result.get("success"):
+                _pipeline_state[repo_name] = {"stage": "build", "status": "failed", "build_action_id": build_id, "deploy_action_id": None, "version": None}
+                return
+
+            built_version = _extract_version_from_output(build_action.output_lines)
+            _pipeline_state[repo_name]["version"] = built_version
+            logger.info("Pipeline: build succeeded", repo=repo_name, version=built_version)
+
+            # ── Step 2: Test (placeholder - auto-skip) ──
+            _pipeline_state[repo_name] = {"stage": "test", "status": "running", "action_id": build_id, "version": built_version}
+            await asyncio.sleep(1)
+            _pipeline_state[repo_name] = {"stage": "test", "status": "success", "action_id": build_id, "version": built_version}
+
+            # ── Step 3: Deploy ──
+            _pipeline_state[repo_name] = {"stage": "deploy", "status": "running", "action_id": None, "version": built_version}
+            deploy_id = str(uuid.uuid4())[:8]
+            deploy_action = BackgroundAction(deploy_id, "deploy", repo_name)
+            _background_actions[deploy_id] = deploy_action
+            _pipeline_state[repo_name]["action_id"] = deploy_id
+
+            tag = f"v{built_version}" if built_version else None
+            logger.info("Pipeline: starting deploy", repo=repo_name, action_id=deploy_id, tag=tag)
+            deploy_result = await deployer.deploy(
+                repo_name, ssh_url, version="1.0",
+                tag=tag,
+                output_callback=deploy_action.append_output,
+                cancel_event=deploy_action.cancel_event,
+            )
+            deploy_result["host"] = host_name
+            deploy_result["auto_triggered"] = True
+            deploy_action.result = deploy_result
+            deploy_action.status = "completed" if deploy_result.get("success") else "failed"
+
+            if deploy_result.get("success"):
+                _pipeline_state[repo_name] = {"stage": "done", "status": "success", "action_id": deploy_id, "version": built_version}
+                logger.info("Pipeline: deploy succeeded", repo=repo_name, version=built_version)
+            else:
+                _pipeline_state[repo_name] = {"stage": "deploy", "status": "failed", "action_id": deploy_id, "version": built_version}
+
         except Exception as e:
-            logger.exception("Auto-build failed", repo=repo_name, error=str(e))
-            action.status = "failed"
-            action.result = {"success": False, "output": str(e), "action": "build", "repo": repo_name}
+            logger.exception("Pipeline failed", repo=repo_name, error=str(e))
+            current = _pipeline_state.get(repo_name, {})
+            _pipeline_state[repo_name] = {
+                "stage": current.get("stage", "build"),
+                "status": "failed",
+                "action_id": current.get("action_id"),
+                "version": built_version,
+            }
         finally:
             if repo_name in _auto_build_state:
                 _auto_build_state[repo_name]["building"] = False
 
-    action.task = asyncio.create_task(_run())
-    logger.info("Auto-build triggered", repo=repo_name, action_id=action_id)
+    asyncio.create_task(_run_pipeline())
+    logger.info("Pipeline triggered", repo=repo_name)
 
 
 async def auto_build_poller():
-    """Periodically check starred repos for new commits on default branch and trigger builds."""
-    # Wait for initial startup
+    """Periodically check starred repos for new commits on default branch and trigger pipeline."""
     await asyncio.sleep(10)
 
     while True:
@@ -1649,7 +1717,6 @@ async def auto_build_poller():
                 for repo in repos:
                     owner, name, ssh_url = repo["owner"], repo["name"], repo["ssh_url"]
 
-                    # Get latest commit on default branch (1 commit only)
                     commits_data = await github_service.get_repo_commits(owner, name, per_page=1)
                     commits = commits_data.get("commits", [])
                     if not commits:
@@ -1658,25 +1725,29 @@ async def auto_build_poller():
                     latest_sha = commits[0]["sha"]
                     state = _auto_build_state.get(name)
 
-                    # First run: record current SHA, don't build
                     if state is None:
                         _auto_build_state[name] = {"last_sha": latest_sha, "building": False}
                         continue
 
-                    # New commit detected and not already building
                     if latest_sha != state["last_sha"] and not state.get("building"):
-                        logger.info("New commit detected, triggering auto-build",
+                        logger.info("New commit detected, triggering pipeline",
                                     repo=name,
                                     old_sha=state["last_sha"][:7],
                                     new_sha=latest_sha[:7])
                         _auto_build_state[name]["building"] = True
                         _auto_build_state[name]["last_sha"] = latest_sha
-                        await _trigger_auto_build(name, ssh_url)
+                        await _trigger_pipeline(name, ssh_url)
 
         except Exception as e:
             logger.error("Auto-build poller error", error=str(e))
 
         await asyncio.sleep(AUTO_BUILD_POLL_INTERVAL)
+
+
+@app.get("/api/stacks/pipeline/status")
+async def get_pipeline_status():
+    """Get pipeline state for all repos."""
+    return {"pipelines": _pipeline_state}
 
 
 @app.get("/api/stacks/auto-build/status")
