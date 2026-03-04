@@ -1658,16 +1658,16 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str):
             logger.info("Pipeline: build succeeded", repo=repo_name, version=built_version)
 
             # ── Step 2: Test (placeholder - auto-skip) ──
-            _pipeline_state[repo_name] = {"stage": "test", "status": "running", "action_id": build_id, "version": built_version}
+            _pipeline_state[repo_name] = {"stage": "test", "status": "running", "build_action_id": build_id, "deploy_action_id": None, "version": built_version}
             await asyncio.sleep(1)
-            _pipeline_state[repo_name] = {"stage": "test", "status": "success", "action_id": build_id, "version": built_version}
+            _pipeline_state[repo_name] = {"stage": "test", "status": "success", "build_action_id": build_id, "deploy_action_id": None, "version": built_version}
 
             # ── Step 3: Deploy ──
-            _pipeline_state[repo_name] = {"stage": "deploy", "status": "running", "action_id": None, "version": built_version}
+            _pipeline_state[repo_name] = {"stage": "deploy", "status": "running", "build_action_id": build_id, "deploy_action_id": None, "version": built_version}
             deploy_id = str(uuid.uuid4())[:8]
             deploy_action = BackgroundAction(deploy_id, "deploy", repo_name)
             _background_actions[deploy_id] = deploy_action
-            _pipeline_state[repo_name]["action_id"] = deploy_id
+            _pipeline_state[repo_name]["deploy_action_id"] = deploy_id
 
             tag = f"v{built_version}" if built_version else None
             logger.info("Pipeline: starting deploy", repo=repo_name, action_id=deploy_id, tag=tag)
@@ -1683,10 +1683,10 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str):
             deploy_action.status = "completed" if deploy_result.get("success") else "failed"
 
             if deploy_result.get("success"):
-                _pipeline_state[repo_name] = {"stage": "done", "status": "success", "action_id": deploy_id, "version": built_version}
+                _pipeline_state[repo_name] = {"stage": "done", "status": "success", "build_action_id": build_id, "deploy_action_id": deploy_id, "version": built_version}
                 logger.info("Pipeline: deploy succeeded", repo=repo_name, version=built_version)
             else:
-                _pipeline_state[repo_name] = {"stage": "deploy", "status": "failed", "action_id": deploy_id, "version": built_version}
+                _pipeline_state[repo_name] = {"stage": "deploy", "status": "failed", "build_action_id": build_id, "deploy_action_id": deploy_id, "version": built_version}
 
         except Exception as e:
             logger.exception("Pipeline failed", repo=repo_name, error=str(e))
@@ -1694,7 +1694,8 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str):
             _pipeline_state[repo_name] = {
                 "stage": current.get("stage", "build"),
                 "status": "failed",
-                "action_id": current.get("action_id"),
+                "build_action_id": current.get("build_action_id"),
+                "deploy_action_id": current.get("deploy_action_id"),
                 "version": built_version,
             }
         finally:

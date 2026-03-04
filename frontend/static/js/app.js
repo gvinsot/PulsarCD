@@ -3076,17 +3076,17 @@ function renderStacksList() {
                             <span>${escapeHtml(pipelineVersion)}</span>
                         </div>
                         <span class="pipeline-arrow">\u2192</span>
-                        <div class="pipeline-step step-${buildStep}" onclick="event.stopPropagation(); buildStack('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}')" title="Build">
+                        <div class="pipeline-step step-${buildStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'build')" title="Build">
                             ${stepIcon(buildStep)}
                             <span>Build</span>
                         </div>
                         <span class="pipeline-arrow">\u2192</span>
-                        <div class="pipeline-step step-${testStep}" title="Test (auto)">
+                        <div class="pipeline-step step-${testStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'test')" title="Test (auto)">
                             ${stepIcon(testStep)}
                             <span>Test</span>
                         </div>
                         <span class="pipeline-arrow">\u2192</span>
-                        <div class="pipeline-step step-${deployStep}" onclick="event.stopPropagation(); deployStack('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}')" title="Deploy">
+                        <div class="pipeline-step step-${deployStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'deploy')" title="Deploy">
                             ${stepIcon(deployStep)}
                             <span>Deploy</span>
                         </div>
@@ -3107,6 +3107,31 @@ function renderStacksList() {
         </div>
     `;
     }).join('');
+}
+
+// ============== Pipeline Step Click ==============
+
+function pipelineStepClick(repoName, sshUrl, step) {
+    const pipeline = stacksPipelineState[repoName];
+
+    if (pipeline) {
+        let actionId = null;
+        if (step === 'build' || step === 'test') {
+            actionId = pipeline.build_action_id;
+        } else if (step === 'deploy') {
+            actionId = pipeline.deploy_action_id;
+        }
+
+        if (actionId) {
+            const label = step.charAt(0).toUpperCase() + step.slice(1);
+            openActionLogs(actionId, `${label} Logs`, repoName);
+            return;
+        }
+    }
+
+    // No logs available — trigger action
+    if (step === 'build') buildStack(repoName, sshUrl);
+    else if (step === 'deploy') deployStack(repoName, sshUrl);
 }
 
 // ============== Build Modal ==============
