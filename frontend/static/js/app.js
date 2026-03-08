@@ -3136,11 +3136,12 @@ function renderStacksList() {
 function pipelineStepClick(repoName, sshUrl, step) {
     const pipeline = stacksPipelineState[repoName];
 
-    if (pipeline) {
+    // Only show logs if the action is currently running (not finished)
+    if (pipeline && pipeline.status === 'running') {
         let actionId = null;
-        if (step === 'build' || step === 'test') {
+        if ((step === 'build' || step === 'test') && pipeline.stage === step) {
             actionId = pipeline.build_action_id;
-        } else if (step === 'deploy') {
+        } else if (step === 'deploy' && pipeline.stage === 'deploy') {
             actionId = pipeline.deploy_action_id;
         }
 
@@ -3151,7 +3152,7 @@ function pipelineStepClick(repoName, sshUrl, step) {
         }
     }
 
-    // No logs available — trigger action
+    // Trigger action (past logs are accessible via the log icon button)
     if (step === 'build') buildStack(repoName, sshUrl);
     else if (step === 'deploy') deployStack(repoName, sshUrl);
 }
