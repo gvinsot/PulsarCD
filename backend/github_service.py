@@ -1201,11 +1201,17 @@ class StackDeployer:
         cmd = f"docker service ls --filter 'name={stack_name}_' --format '{{{{.Image}}}}'"
         success, output = await self._run_command(cmd)
 
-        if not success or not output.strip():
+        if not success:
+            logger.warning("docker service ls failed", stack=stack_name, repo=repo_name, output=output[:200] if output else "")
+            return False, None
+
+        if not output.strip():
+            logger.info("No services found for stack", stack=stack_name, repo=repo_name, cmd=cmd)
             return False, None
 
         registry = self.config.registry_url or ""
         images = [img.strip() for img in output.strip().split('\n') if img.strip()]
+        logger.info("Found services for stack", stack=stack_name, repo=repo_name, image_count=len(images), registry=registry, images=images[:5])
         fallback_tag = None
 
         for image in images:
@@ -1214,23 +1220,100 @@ class StackDeployer:
                 logger.debug("Skipping non-registry image", stack=stack_name, image=image, registry=registry)
                 continue
             if ':' in image:
-                return True, image.split(':')[-1]
+                tag = image.split(':')[-1]
+                logger.info("Found deployed tag", stack=stack_name, tag=tag, image=image)
+                return True, tag
             return True, "latest"
 
         # No registry image found, but services exist — stack is deployed
         # Use any available image tag as fallback
-        if images:
-            for image in images:
-                if ':' in image:
-                    fallback_tag = image.split(':')[-1]
-                    break
-            logger.warning(
-                "No registry image found for stack, using fallback",
-                stack=stack_name,
-                registry=registry,
-                images=images,
-                fallback_tag=fallback_tag,
-            )
-            return True, fallback_tag or "running"
+        for image in images:
+            if ':' in image:
+                fallback_tag = image.split(':')[-1]
+                break
+        logger.warning(
+            "No registry image found for stack, using fallback",
+            stack=stack_name,
+            registry=registry,
+            images=images,
+            fallback_tag=fallback_tag,
+        )
+        return True, fallback_tag or "running"
 
-        return False, None
+    async def get_all_deployed_stack_tags(self, repo_names: list[str]) -> dict[str, Optional[str]]:
+        """Get deployed image tags for all stacks in a single Docker command.
+
+        Runs one 'docker service ls' for all services and matches them to repos,
+        avoiding N concurrent SSH calls.
+
+        Args:
+            repo_names: List of repository names
+
+        Returns:
+            Dict of {repo_name: tag_or_none}
+        """
+        result: dict[str, Optional[str]] = {name: None for name in repo_names}
+
+        # Single command to get all service names and images
+        cmd = "docker service ls --format '{{.Name}} {{.Image}}'"
+        success, output = await self._run_command(cmd)
+
+        if not success or not output.strip():
+            logger.warning("docker service ls failed for bulk query", output=output[:200] if output else "")
+            return result
+
+        registry = self.config.registry_url or ""
+
+        # Build map: stack_name -> list of images
+        # We match services to stacks using known stack names from repos
+        known_stacks = {self._repo_to_stack_name(name): name for name in repo_names}
+
+        services: list[tuple[str, str]] = []  # (service_name, image)
+        for line in output.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(' ', 1)
+            if len(parts) < 2:
+                continue
+            services.append((parts[0], parts[1]))
+
+        # Match each service to a known stack by prefix
+        stacks_images: dict[str, list[str]] = {}
+        for service_name, image in services:
+            for stack_name in known_stacks:
+                if service_name.startswith(stack_name + '_'):
+                    stacks_images.setdefault(stack_name, []).append(image)
+                    break
+
+        logger.info("Bulk service discovery", total_services=len(services), matched=sum(len(v) for v in stacks_images.values()), stacks=list(stacks_images.keys()))
+
+        # Match repos to stacks
+        for repo_name in repo_names:
+            stack_name = self._repo_to_stack_name(repo_name)
+            images = stacks_images.get(stack_name, [])
+            if not images:
+                continue
+
+            # Try to find a registry image first
+            tag = None
+            for image in images:
+                if registry and not image.startswith(registry):
+                    continue
+                if ':' in image:
+                    tag = image.split(':')[-1]
+                else:
+                    tag = "latest"
+                break
+
+            # Fallback: use any image tag
+            if tag is None:
+                for image in images:
+                    if ':' in image:
+                        tag = image.split(':')[-1]
+                        break
+
+            result[repo_name] = tag or "running"
+            logger.debug("Matched stack", repo=repo_name, stack=stack_name, tag=result[repo_name], images=images[:3])
+
+        return result

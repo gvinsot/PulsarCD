@@ -1634,22 +1634,19 @@ async def get_stacks_deployed_tags():
     repos = await github_service.get_starred_repos()
     deployer = StackDeployer(settings.github, None)
 
-    async def get_info(repo):
-        name = repo["name"]
-        owner = repo["owner"]
-        success, deployed = await deployer.get_deployed_stack_tag(name)
-        latest = await github_service.get_latest_tag(owner, name)
-        return name, deployed if success else None, latest
+    # Fetch all deployed tags in a single SSH command (avoids concurrent SSH issues)
+    all_deployed = await deployer.get_all_deployed_stack_tags(
+        [repo["name"] for repo in repos]
+    )
 
-    results = await asyncio.gather(*[get_info(r) for r in repos])
+    # Fetch latest built tags from GitHub in parallel
+    async def get_latest(repo):
+        return repo["name"], await github_service.get_latest_tag(repo["owner"], repo["name"])
 
-    deployed_tags = {}
-    latest_built = {}
-    for name, deployed, latest in results:
-        if deployed:
-            deployed_tags[name] = deployed
-        if latest:
-            latest_built[name] = latest
+    latest_results = await asyncio.gather(*[get_latest(r) for r in repos])
+
+    deployed_tags = {name: tag for name, tag in all_deployed.items() if tag}
+    latest_built = {name: tag for name, tag in latest_results if tag}
 
     return {"tags": deployed_tags, "latest_built": latest_built}
 
