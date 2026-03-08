@@ -970,10 +970,13 @@ class StackDeployer:
 
             # Run build script with optional branch and commit
             scripts_path = self.config.scripts_path
-            
+            repos_path = self.config.repos_path
+            repo_path = f"{repos_path}/{repo_name}"
+
             # Build command with optional branch/commit parameters
+            # Pass absolute repo_path to avoid path computation mismatch
             # Script format: build-push.sh <folder> <version> [branch] [commit]
-            build_cmd = f"cd {scripts_path} && bash build-push.sh \"{repo_name}\" {version}"
+            build_cmd = f"cd {scripts_path} && bash build-push.sh \"{repo_path}\" {version}"
             if branch:
                 build_cmd += f" {branch}"
                 if commit:
@@ -1052,7 +1055,11 @@ class StackDeployer:
 
             # Run deploy script
             scripts_path = self.config.scripts_path
-            deploy_cmd = f"cd {scripts_path} && bash deploy-service.sh \"{repo_name}\" {deploy_version}"
+            repos_path = self.config.repos_path
+            repo_path = f"{repos_path}/{repo_name}"
+
+            # Pass absolute repo_path to avoid path computation mismatch
+            deploy_cmd = f"cd {scripts_path} && bash deploy-service.sh \"{repo_path}\" {deploy_version}"
 
             if output_callback and clone_msg:
                 for line in clone_msg.split('\n'):

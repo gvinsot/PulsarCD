@@ -213,7 +213,13 @@ if [ ! -d "$REPO_PATH" ]; then
 fi
 
 # Define devops folder path
-DEVOPS_PATH="$REPO_PATH/$DEVOPS_FOLDER"
+# Safety: if REPO_PATH already ends with /devops, don't append it again
+if [[ "$REPO_PATH" == */devops ]]; then
+    DEVOPS_PATH="$REPO_PATH"
+    REPO_PATH="$(dirname "$REPO_PATH")"
+else
+    DEVOPS_PATH="$REPO_PATH/$DEVOPS_FOLDER"
+fi
 
 # Derive stack name
 STACK_NAME=$(get_stack_name "$REPO_FOLDER")

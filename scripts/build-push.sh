@@ -213,7 +213,13 @@ else
 fi
 
 # Define devops folder path (after REPO_PATH is set)
-DEVOPS_PATH="$REPO_PATH/$DEVOPS_FOLDER"
+# Safety: if REPO_PATH already ends with /devops, don't append it again
+if [[ "$REPO_PATH" == */devops ]]; then
+    DEVOPS_PATH="$REPO_PATH"
+    REPO_PATH="$(dirname "$REPO_PATH")"
+else
+    DEVOPS_PATH="$REPO_PATH/$DEVOPS_FOLDER"
+fi
 COMPOSE_PATH="$DEVOPS_PATH/$COMPOSE_FILE"
 
 # Validate repository exists
