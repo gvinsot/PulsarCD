@@ -2863,6 +2863,13 @@ function renderStacksList() {
             deployStep = cs === 3 ? 'failed' : (cs > 3 ? 'success' : 'pending');
         } else if (pipeline && pipeline.stage === 'done') {
             versionStep = 'success'; buildStep = 'success'; testStep = 'success'; deployStep = 'success';
+        } else if (pipeline && pipeline.status === 'success') {
+            // Manual build/deploy completed successfully (not full pipeline)
+            const cs = stageOrder[pipeline.stage] || 0;
+            versionStep = 'success';
+            buildStep = cs >= 1 ? 'success' : 'pending';
+            testStep = cs >= 2 ? 'success' : 'pending';
+            deployStep = cs >= 3 ? 'success' : 'pending';
         } else if (hasUpdate) {
             versionStep = 'success'; buildStep = 'success'; testStep = 'success'; deployStep = 'pending';
         } else if (isDeployed) {

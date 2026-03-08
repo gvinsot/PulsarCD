@@ -1393,7 +1393,14 @@ async def build_stack(
     action_id = str(uuid.uuid4())[:8]
     action = BackgroundAction(action_id, "build", repo_name)
     _background_actions[action_id] = action
-    
+
+    # Update pipeline state so all browsers see the build
+    _pipeline_state[repo_name] = {
+        "stage": "build", "status": "running",
+        "build_action_id": action_id, "deploy_action_id": _pipeline_state.get(repo_name, {}).get("deploy_action_id"),
+        "version": version,
+    }
+
     async def _run_build():
         try:
             result = await deployer.build(
@@ -1406,6 +1413,20 @@ async def build_stack(
             action.status = "completed" if result.get("success") else "failed"
             if action.cancel_event.is_set():
                 action.status = "cancelled"
+            # Update pipeline state with result
+            prev = _pipeline_state.get(repo_name, {})
+            if result.get("success"):
+                _pipeline_state[repo_name] = {
+                    "stage": "build", "status": "success",
+                    "build_action_id": action_id, "deploy_action_id": prev.get("deploy_action_id"),
+                    "version": version,
+                }
+            else:
+                _pipeline_state[repo_name] = {
+                    "stage": "build", "status": "failed",
+                    "build_action_id": action_id, "deploy_action_id": prev.get("deploy_action_id"),
+                    "version": version,
+                }
         except Exception as e:
             import traceback
             error_detail = f"{type(e).__name__}: {e}"
@@ -1413,9 +1434,15 @@ async def build_stack(
             action.status = "failed"
             action.result = {"success": False, "output": error_detail, "action": "build", "repo": repo_name}
             action.append_output(error_detail)
-    
+            prev = _pipeline_state.get(repo_name, {})
+            _pipeline_state[repo_name] = {
+                "stage": "build", "status": "failed",
+                "build_action_id": action_id, "deploy_action_id": prev.get("deploy_action_id"),
+                "version": version,
+            }
+
     action.task = asyncio.create_task(_run_build())
-    
+
     return {"action_id": action_id, "action_type": "build", "repo": repo_name}
 
 
@@ -1443,7 +1470,15 @@ async def deploy_stack(
     action_id = str(uuid.uuid4())[:8]
     action = BackgroundAction(action_id, "deploy", repo_name)
     _background_actions[action_id] = action
-    
+
+    # Update pipeline state so all browsers see the deploy
+    prev = _pipeline_state.get(repo_name, {})
+    _pipeline_state[repo_name] = {
+        "stage": "deploy", "status": "running",
+        "build_action_id": prev.get("build_action_id"), "deploy_action_id": action_id,
+        "version": prev.get("version") or version,
+    }
+
     async def _run_deploy():
         try:
             result = await deployer.deploy(
@@ -1456,6 +1491,20 @@ async def deploy_stack(
             action.status = "completed" if result.get("success") else "failed"
             if action.cancel_event.is_set():
                 action.status = "cancelled"
+            # Update pipeline state with result
+            prev = _pipeline_state.get(repo_name, {})
+            if result.get("success"):
+                _pipeline_state[repo_name] = {
+                    "stage": "done", "status": "success",
+                    "build_action_id": prev.get("build_action_id"), "deploy_action_id": action_id,
+                    "version": prev.get("version") or version,
+                }
+            else:
+                _pipeline_state[repo_name] = {
+                    "stage": "deploy", "status": "failed",
+                    "build_action_id": prev.get("build_action_id"), "deploy_action_id": action_id,
+                    "version": prev.get("version") or version,
+                }
         except Exception as e:
             import traceback
             error_detail = f"{type(e).__name__}: {e}"
@@ -1463,9 +1512,15 @@ async def deploy_stack(
             action.status = "failed"
             action.result = {"success": False, "output": error_detail, "action": "deploy", "repo": repo_name}
             action.append_output(error_detail)
-    
+            prev = _pipeline_state.get(repo_name, {})
+            _pipeline_state[repo_name] = {
+                "stage": "deploy", "status": "failed",
+                "build_action_id": prev.get("build_action_id"), "deploy_action_id": action_id,
+                "version": prev.get("version") or version,
+            }
+
     action.task = asyncio.create_task(_run_deploy())
-    
+
     return {"action_id": action_id, "action_type": "deploy", "repo": repo_name}
 
 
