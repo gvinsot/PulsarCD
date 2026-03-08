@@ -3548,6 +3548,22 @@ a.btn {
         font-size: 1rem;
     }
 
+    /* Pipeline: wrap to its own row on tablet */
+    .host-header-actions {
+        flex-wrap: wrap;
+    }
+
+    .pipeline-flow {
+        order: 99;
+        width: 100%;
+        margin-left: 0;
+        margin-top: 6px;
+    }
+
+    .pipeline-step {
+        min-height: 32px;
+    }
+
     .compose-header {
         padding: 10px 16px;
         font-size: 0.85rem;
@@ -3926,9 +3942,45 @@ a.btn {
         display: none;
     }
 
-    .pipeline-flow span { display: none; }
-    .pipeline-arrow { display: none; }
-    .pipeline-step { padding: 3px 5px; }
+    /* Pipeline: full-width row below action buttons on mobile */
+    .host-header-actions {
+        flex-wrap: wrap;
+    }
+
+    .pipeline-flow {
+        order: 99;
+        width: 100%;
+        justify-content: stretch;
+        gap: 4px;
+        margin-left: 0;
+        margin-top: 6px;
+    }
+
+    .pipeline-step {
+        flex: 1;
+        justify-content: center;
+        min-height: 36px;
+        padding: 6px 4px;
+        font-size: 0.7rem;
+    }
+
+    /* Keep step labels visible on mobile */
+    .pipeline-flow .pipeline-step span {
+        display: inline;
+    }
+
+    /* Hide version text to save space, keep icon */
+    .pipeline-flow .pipeline-step:first-child span {
+        display: none;
+    }
+
+    .pipeline-arrow {
+        display: none;
+    }
+
+    .pipeline-log-btn {
+        display: none;
+    }
 
     .activity-layout {
         flex-direction: column;
