@@ -1008,7 +1008,8 @@ class StackDeployer:
         """Get the deployed image tag for a stack from Docker Swarm.
 
         Filters to only consider images from our registry (skips third-party
-        images like redis, postgres, etc.).
+        images like redis, postgres, etc.). Falls back to any image tag if
+        no registry image is found but services exist (stack is deployed).
 
         Args:
             repo_name: Name of the repository (stack name = repo_name.lower())
@@ -1026,15 +1027,32 @@ class StackDeployer:
             return False, None
 
         registry = self.config.registry_url or ""
-        for image in output.strip().split('\n'):
-            image = image.strip()
-            if not image:
-                continue
+        images = [img.strip() for img in output.strip().split('\n') if img.strip()]
+        fallback_tag = None
+
+        for image in images:
             # Only consider our images (from our registry)
             if registry and not image.startswith(registry):
+                logger.debug("Skipping non-registry image", stack=stack_name, image=image, registry=registry)
                 continue
             if ':' in image:
                 return True, image.split(':')[-1]
             return True, "latest"
+
+        # No registry image found, but services exist — stack is deployed
+        # Use any available image tag as fallback
+        if images:
+            for image in images:
+                if ':' in image:
+                    fallback_tag = image.split(':')[-1]
+                    break
+            logger.warning(
+                "No registry image found for stack, using fallback",
+                stack=stack_name,
+                registry=registry,
+                images=images,
+                fallback_tag=fallback_tag,
+            )
+            return True, fallback_tag or "running"
 
         return False, None
