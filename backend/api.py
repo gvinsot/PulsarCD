@@ -1471,12 +1471,17 @@ async def deploy_stack(
     action = BackgroundAction(action_id, "deploy", repo_name)
     _background_actions[action_id] = action
 
-    # Update pipeline state so all browsers see the deploy
+    # Use the tag as display version when deploying a specific tag
+    deploy_version = tag.lstrip('v') if tag else version
     prev = _pipeline_state.get(repo_name, {})
+
+    # When deploying a specific tag (no prior build), clear build_action_id
+    prev_build_id = prev.get("build_action_id") if not tag else None
+
     _pipeline_state[repo_name] = {
         "stage": "deploy", "status": "running",
-        "build_action_id": prev.get("build_action_id"), "deploy_action_id": action_id,
-        "version": prev.get("version") or version,
+        "build_action_id": prev_build_id, "deploy_action_id": action_id,
+        "version": deploy_version,
     }
 
     async def _run_deploy():
@@ -1491,19 +1496,18 @@ async def deploy_stack(
             action.status = "completed" if result.get("success") else "failed"
             if action.cancel_event.is_set():
                 action.status = "cancelled"
-            # Update pipeline state with result
             prev = _pipeline_state.get(repo_name, {})
             if result.get("success"):
                 _pipeline_state[repo_name] = {
                     "stage": "done", "status": "success",
                     "build_action_id": prev.get("build_action_id"), "deploy_action_id": action_id,
-                    "version": prev.get("version") or version,
+                    "version": deploy_version,
                 }
             else:
                 _pipeline_state[repo_name] = {
                     "stage": "deploy", "status": "failed",
                     "build_action_id": prev.get("build_action_id"), "deploy_action_id": action_id,
-                    "version": prev.get("version") or version,
+                    "version": deploy_version,
                 }
         except Exception as e:
             import traceback
@@ -1516,7 +1520,7 @@ async def deploy_stack(
             _pipeline_state[repo_name] = {
                 "stage": "deploy", "status": "failed",
                 "build_action_id": prev.get("build_action_id"), "deploy_action_id": action_id,
-                "version": prev.get("version") or version,
+                "version": deploy_version,
             }
 
     action.task = asyncio.create_task(_run_deploy())

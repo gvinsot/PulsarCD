@@ -2849,26 +2849,31 @@ function renderStacksList() {
         const stageOrder = { build: 1, test: 2, deploy: 3, done: 4 };
         let versionStep = 'idle', buildStep = 'idle', testStep = 'idle', deployStep = 'idle';
 
+        // Whether build/test steps were part of this pipeline
+        const hadBuild = pipeline ? !!pipeline.build_action_id : false;
+
         if (pipeline && pipeline.status === 'running') {
             const cs = stageOrder[pipeline.stage] || 0;
             versionStep = 'success';
-            buildStep = cs === 1 ? 'running' : (cs > 1 ? 'success' : 'pending');
-            testStep = cs === 2 ? 'running' : (cs > 2 ? 'success' : 'pending');
+            buildStep = cs === 1 ? 'running' : (hadBuild && cs > 1 ? 'success' : (cs > 1 ? 'idle' : 'pending'));
+            testStep = cs === 2 ? 'running' : (hadBuild && cs > 2 ? 'success' : (cs > 2 ? 'idle' : 'pending'));
             deployStep = cs === 3 ? 'running' : 'pending';
         } else if (pipeline && pipeline.status === 'failed') {
             const cs = stageOrder[pipeline.stage] || 0;
             versionStep = 'success';
-            buildStep = cs === 1 ? 'failed' : (cs > 1 ? 'success' : 'pending');
-            testStep = cs === 2 ? 'failed' : (cs > 2 ? 'success' : (cs < 2 ? 'pending' : 'idle'));
+            buildStep = cs === 1 ? 'failed' : (hadBuild && cs > 1 ? 'success' : (cs > 1 ? 'idle' : 'pending'));
+            testStep = cs === 2 ? 'failed' : (hadBuild && cs > 2 ? 'success' : (cs > 2 ? 'idle' : 'pending'));
             deployStep = cs === 3 ? 'failed' : (cs > 3 ? 'success' : 'pending');
         } else if (pipeline && pipeline.stage === 'done') {
-            versionStep = 'success'; buildStep = 'success'; testStep = 'success'; deployStep = 'success';
+            versionStep = 'success';
+            buildStep = hadBuild ? 'success' : 'idle';
+            testStep = hadBuild ? 'success' : 'idle';
+            deployStep = 'success';
         } else if (pipeline && pipeline.status === 'success') {
-            // Manual build/deploy completed successfully (not full pipeline)
             const cs = stageOrder[pipeline.stage] || 0;
             versionStep = 'success';
-            buildStep = cs >= 1 ? 'success' : 'pending';
-            testStep = cs >= 2 ? 'success' : 'pending';
+            buildStep = hadBuild && cs >= 1 ? 'success' : (cs >= 1 ? 'idle' : 'pending');
+            testStep = hadBuild && cs >= 2 ? 'success' : (cs >= 2 ? 'idle' : 'pending');
             deployStep = cs >= 3 ? 'success' : 'pending';
         } else if (hasUpdate) {
             versionStep = 'success'; buildStep = 'success'; testStep = 'success'; deployStep = 'pending';
