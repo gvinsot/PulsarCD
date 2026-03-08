@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 
 import aiohttp
@@ -14,8 +14,12 @@ from .config import GitHubConfig
 
 logger = structlog.get_logger()
 
-# Cache TTL for starred repos (1 minute)
-STARRED_REPOS_CACHE_TTL = timedelta(minutes=1)
+# Cache TTLs
+STARRED_REPOS_CACHE_TTL = timedelta(minutes=5)
+BRANCHES_CACHE_TTL = timedelta(minutes=5)
+COMMITS_CACHE_TTL = timedelta(minutes=2)
+COMMIT_DIFF_CACHE_TTL = timedelta(minutes=10)
+TAGS_CACHE_TTL = timedelta(minutes=5)
 
 # File path for persistent tag date cache
 TAG_DATE_CACHE_FILE = Path(__file__).parent.parent / ".tag_date_cache.json"
@@ -30,10 +34,20 @@ class GitHubService:
         # Cache for starred repos
         self._starred_repos_cache: Optional[List[Dict[str, Any]]] = None
         self._starred_repos_cache_time: Optional[datetime] = None
+        # Cache for branches: key = "owner/repo"
+        self._branches_cache: Dict[str, Tuple[List[Dict[str, Any]], datetime]] = {}
+        # Cache for commits: key = "owner/repo/branch/per_page/page"
+        self._commits_cache: Dict[str, Tuple[Dict[str, Any], datetime]] = {}
+        # Cache for commit diffs: key = "owner/repo/sha"
+        self._commit_diff_cache: Dict[str, Tuple[Dict[str, Any], datetime]] = {}
+        # Cache for tags: key = "owner/repo/limit"
+        self._tags_cache: Dict[str, Tuple[Dict[str, Any], datetime]] = {}
         # Persistent cache for tag dates (SHA -> date string)
         # SHAs are immutable so this cache never expires
         self._tag_date_cache: Optional[Dict[str, str]] = None
         self._tag_date_cache_dirty: bool = False
+        # Rate limit state
+        self._rate_limit_reset: Optional[datetime] = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session."""
@@ -57,6 +71,44 @@ class GitHubService:
         if self._starred_repos_cache is None or self._starred_repos_cache_time is None:
             return False
         return datetime.now() - self._starred_repos_cache_time < STARRED_REPOS_CACHE_TTL
+
+    def _get_cached(self, cache: dict, key: str, ttl: timedelta) -> Optional[Any]:
+        """Get value from a TTL cache dict. Returns None if missing or expired."""
+        entry = cache.get(key)
+        if entry is None:
+            return None
+        value, cached_at = entry
+        if datetime.now() - cached_at >= ttl:
+            del cache[key]
+            return None
+        return value
+
+    def _set_cached(self, cache: dict, key: str, value: Any):
+        """Store a value in a TTL cache dict."""
+        cache[key] = (value, datetime.now())
+
+    def _is_rate_limited(self) -> bool:
+        """Check if we are currently rate-limited."""
+        if self._rate_limit_reset is None:
+            return False
+        if datetime.now() >= self._rate_limit_reset:
+            self._rate_limit_reset = None
+            return False
+        return True
+
+    def _handle_rate_limit(self, response_headers) -> bool:
+        """Check response headers for rate limit. Returns True if rate-limited."""
+        remaining = response_headers.get("X-RateLimit-Remaining")
+        if remaining is not None and int(remaining) <= 0:
+            reset_ts = response_headers.get("X-RateLimit-Reset")
+            if reset_ts:
+                self._rate_limit_reset = datetime.fromtimestamp(int(reset_ts))
+            else:
+                self._rate_limit_reset = datetime.now() + timedelta(minutes=5)
+            logger.warning("GitHub API rate limit hit, backing off",
+                          reset_at=str(self._rate_limit_reset))
+            return True
+        return False
 
     def _load_tag_date_cache(self) -> Dict[str, str]:
         """Load tag date cache from file."""
@@ -87,10 +139,14 @@ class GitHubService:
             logger.warning("Failed to save tag date cache", error=str(e))
 
     def invalidate_cache(self):
-        """Invalidate the starred repos cache."""
+        """Invalidate all in-memory caches."""
         self._starred_repos_cache = None
         self._starred_repos_cache_time = None
-        logger.info("Starred repos cache invalidated")
+        self._branches_cache.clear()
+        self._commits_cache.clear()
+        self._commit_diff_cache.clear()
+        self._tags_cache.clear()
+        logger.info("All GitHub caches invalidated")
 
     async def get_starred_repos(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
         """Get list of starred repositories for the configured user.
@@ -108,6 +164,13 @@ class GitHubService:
 
         if not self.config.token:
             logger.warning("GitHub token not configured")
+            return []
+
+        # If rate-limited, return stale cache if available
+        if self._is_rate_limited():
+            if self._starred_repos_cache:
+                logger.info("Rate limited, returning stale starred repos cache")
+                return self._starred_repos_cache
             return []
 
         session = await self._get_session()
@@ -136,6 +199,12 @@ class GitHubService:
                                scopes=scopes, 
                                rate_limit=rate_limit)
                     
+                    self._handle_rate_limit(response.headers)
+                    if response.status == 403 and self._is_rate_limited():
+                        logger.warning("GitHub rate limit exceeded during starred repos fetch")
+                        if self._starred_repos_cache:
+                            return self._starred_repos_cache
+                        break
                     if response.status != 200:
                         error_text = await response.text()
                         logger.error("GitHub API error", status=response.status, error=error_text)
@@ -191,8 +260,21 @@ class GitHubService:
         Returns:
             List of branch info dicts with name, commit sha, etc.
         """
+        cache_key = f"{owner}/{repo}"
+        cached = self._get_cached(self._branches_cache, cache_key, BRANCHES_CACHE_TTL)
+        if cached is not None:
+            logger.debug("Returning cached branches", repo=cache_key, count=len(cached))
+            return cached
+
         if not self.config.token:
             logger.warning("GitHub token not configured")
+            return []
+
+        if self._is_rate_limited():
+            stale = self._branches_cache.get(cache_key)
+            if stale:
+                logger.info("Rate limited, returning stale branches cache", repo=cache_key)
+                return stale[0]
             return []
 
         session = await self._get_session()
@@ -203,6 +285,7 @@ class GitHubService:
 
         try:
             async with session.get(url, params=params) as response:
+                self._handle_rate_limit(response.headers)
                 if response.status != 200:
                     error_text = await response.text()
                     logger.error("GitHub API error getting branches", status=response.status, error=error_text)
@@ -227,7 +310,8 @@ class GitHubService:
                     return (2, name)
 
             branches.sort(key=branch_sort_key)
-            logger.info("Fetched branches", repo=f"{owner}/{repo}", count=len(branches))
+            self._set_cached(self._branches_cache, cache_key, branches)
+            logger.info("Fetched and cached branches", repo=f"{owner}/{repo}", count=len(branches))
             return branches
 
         except Exception as e:
@@ -245,8 +329,21 @@ class GitHubService:
         Returns:
             Dict with tags grouped by branch and metadata
         """
+        cache_key = f"{owner}/{repo}/{limit}"
+        cached = self._get_cached(self._tags_cache, cache_key, TAGS_CACHE_TTL)
+        if cached is not None:
+            logger.debug("Returning cached tags", repo=f"{owner}/{repo}", count=len(cached.get("tags", [])))
+            return cached
+
         if not self.config.token:
             logger.warning("GitHub token not configured")
+            return {"tags": [], "branches": {}}
+
+        if self._is_rate_limited():
+            stale = self._tags_cache.get(cache_key)
+            if stale:
+                logger.info("Rate limited, returning stale tags cache", repo=f"{owner}/{repo}")
+                return stale[0]
             return {"tags": [], "branches": {}}
 
         session = await self._get_session()
@@ -318,12 +415,14 @@ class GitHubService:
                 # In a more sophisticated implementation, we could trace the commit history
                 tags_by_branch["main"].append(tag)
 
-            logger.info("Fetched tags", repo=f"{owner}/{repo}", count=len(tags), cached=len(tags) - len(tags_needing_dates))
-            return {
+            result = {
                 "tags": tags,
                 "branches": [b["name"] for b in branches],
                 "default_branch": branches[0]["name"] if branches else "main",
             }
+            self._set_cached(self._tags_cache, cache_key, result)
+            logger.info("Fetched and cached tags", repo=f"{owner}/{repo}", count=len(tags), cached=len(tags) - len(tags_needing_dates))
+            return result
 
         except Exception as e:
             logger.error("Failed to fetch tags", repo=f"{owner}/{repo}", error=str(e))
@@ -358,8 +457,21 @@ class GitHubService:
         Returns:
             Dict with commits list and pagination info
         """
+        cache_key = f"{owner}/{repo}/{branch or 'default'}/{per_page}/{page}"
+        cached = self._get_cached(self._commits_cache, cache_key, COMMITS_CACHE_TTL)
+        if cached is not None:
+            logger.debug("Returning cached commits", repo=f"{owner}/{repo}", branch=branch)
+            return cached
+
         if not self.config.token:
             logger.warning("GitHub token not configured")
+            return {"commits": [], "has_more": False}
+
+        if self._is_rate_limited():
+            stale = self._commits_cache.get(cache_key)
+            if stale:
+                logger.info("Rate limited, returning stale commits cache", repo=f"{owner}/{repo}")
+                return stale[0]
             return {"commits": [], "has_more": False}
 
         session = await self._get_session()
@@ -370,6 +482,7 @@ class GitHubService:
 
         try:
             async with session.get(url, params=params) as response:
+                self._handle_rate_limit(response.headers)
                 if response.status != 200:
                     error_text = await response.text()
                     logger.error("GitHub API error getting commits", status=response.status, error=error_text)
@@ -389,8 +502,10 @@ class GitHubService:
                     })
 
                 has_more = len(data) == per_page
-                logger.info("Fetched commits", repo=f"{owner}/{repo}", branch=branch, count=len(commits), page=page)
-                return {"commits": commits, "has_more": has_more}
+                result = {"commits": commits, "has_more": has_more}
+                self._set_cached(self._commits_cache, cache_key, result)
+                logger.info("Fetched and cached commits", repo=f"{owner}/{repo}", branch=branch, count=len(commits), page=page)
+                return result
 
         except Exception as e:
             logger.error("Failed to fetch commits", repo=f"{owner}/{repo}", error=str(e))
@@ -407,8 +522,21 @@ class GitHubService:
         Returns:
             Dict with commit info and list of changed files with patch data
         """
+        cache_key = f"{owner}/{repo}/{sha}"
+        cached = self._get_cached(self._commit_diff_cache, cache_key, COMMIT_DIFF_CACHE_TTL)
+        if cached is not None:
+            logger.debug("Returning cached commit diff", repo=f"{owner}/{repo}", sha=sha[:7])
+            return cached
+
         if not self.config.token:
             logger.warning("GitHub token not configured")
+            return {"files": [], "stats": {}}
+
+        if self._is_rate_limited():
+            stale = self._commit_diff_cache.get(cache_key)
+            if stale:
+                logger.info("Rate limited, returning stale commit diff cache", repo=f"{owner}/{repo}")
+                return stale[0]
             return {"files": [], "stats": {}}
 
         session = await self._get_session()
@@ -416,6 +544,7 @@ class GitHubService:
 
         try:
             async with session.get(url) as response:
+                self._handle_rate_limit(response.headers)
                 if response.status != 200:
                     error_text = await response.text()
                     logger.error("GitHub API error getting commit diff", status=response.status, error=error_text)
@@ -434,7 +563,7 @@ class GitHubService:
                         "previous_filename": f.get("previous_filename"),
                     })
 
-                return {
+                result = {
                     "sha": data["sha"],
                     "message": data["commit"]["message"],
                     "author_name": data["commit"]["author"]["name"],
@@ -442,6 +571,8 @@ class GitHubService:
                     "stats": data.get("stats", {}),
                     "files": files,
                 }
+                self._set_cached(self._commit_diff_cache, cache_key, result)
+                return result
 
         except Exception as e:
             logger.error("Failed to fetch commit diff", repo=f"{owner}/{repo}", sha=sha, error=str(e))
@@ -490,11 +621,16 @@ class GitHubService:
             logger.warning("GitHub token not configured, skipping commit validation")
             return True, ""
 
+        if self._is_rate_limited():
+            logger.warning("Rate limited, skipping commit validation", repo=f"{owner}/{repo}", commit=commit_id)
+            return True, ""
+
         session = await self._get_session()
         url = f"https://api.github.com/repos/{owner}/{repo}/commits/{commit_id}"
 
         try:
             async with session.get(url) as response:
+                self._handle_rate_limit(response.headers)
                 if response.status == 200:
                     return True, ""
                 elif response.status == 404:

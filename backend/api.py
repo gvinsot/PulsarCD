@@ -1598,7 +1598,7 @@ async def get_stacks_deployed_tags():
 _auto_build_state = {}  # {repo_name: {"last_sha": str, "building": bool}}
 _pipeline_state = {}  # {repo_name: {"stage": str, "status": str, "build_action_id": str|None, "deploy_action_id": str|None, "version": str}}
 _auto_build_task = None
-AUTO_BUILD_POLL_INTERVAL = 20  # seconds
+AUTO_BUILD_POLL_INTERVAL = 120  # seconds (was 20s, increased to avoid GitHub rate limits)
 
 # Pipeline stages in order
 PIPELINE_STAGES = ["build", "test", "deploy", "done"]
