@@ -2303,24 +2303,26 @@ async function refreshStacks() {
     const listEl = document.getElementById('stacks-list');
     listEl.innerHTML = '<div class="loading-placeholder">Loading starred repositories...</div>';
     
-    // Load repos, deployed tags, and containers in parallel
-    const [reposData, tagsData, containersData, hostMetrics] = await Promise.all([
+    // Load repos, deployed tags, pipeline state, and containers in parallel
+    const [reposData, tagsData, containersData, hostMetrics, pipelineData] = await Promise.all([
         apiGet('/stacks/repos'),
         apiGet('/stacks/deployed-tags'),
         apiGet('/containers/grouped?refresh=true&group_by=stack'),
-        apiGet('/hosts/metrics')
+        apiGet('/hosts/metrics'),
+        apiGet('/stacks/pipeline/status')
     ]);
-    
+
     if (!reposData || !reposData.repos) {
         listEl.innerHTML = '<div class="error-placeholder">Failed to load repositories</div>';
         return;
     }
-    
+
     stacksRepos = reposData.repos;
     stacksDeployedTags = (tagsData && tagsData.tags) ? tagsData.tags : {};
     stacksLatestBuilt = (tagsData && tagsData.latest_built) ? tagsData.latest_built : {};
     stacksContainers = containersData || {};
     stacksHostMetrics = hostMetrics || {};
+    stacksPipelineState = (pipelineData && pipelineData.pipelines) ? pipelineData.pipelines : {};
     
     if (stacksRepos.length === 0) {
         listEl.innerHTML = '<div class="empty-placeholder">No starred repositories found</div>';
@@ -2384,6 +2386,7 @@ async function updateStacksContainerStates() {
     if (!stacksRepos || stacksRepos.length === 0) return;
 
     try {
+        // Always fetch pipeline status (for cross-browser sync)
         // Periodically re-fetch version info to detect new builds
         _versionPollCounter++;
         const fetchVersions = (_versionPollCounter % VERSION_POLL_EVERY === 0);
@@ -2391,17 +2394,17 @@ async function updateStacksContainerStates() {
         const promises = [
             apiGet('/containers/states'),
             apiGet('/hosts/metrics'),
+            apiGet('/stacks/pipeline/status'),
         ];
         if (fetchVersions) {
             promises.push(apiGet('/stacks/deployed-tags'));
-            promises.push(apiGet('/stacks/pipeline/status'));
         }
 
         const results = await Promise.all(promises);
         const statesData = results[0];
         const hostMetrics = results[1];
-        const tagsData = fetchVersions ? results[2] : null;
-        const pipelineData = fetchVersions ? results[3] : null;
+        const pipelineData = results[2];
+        const tagsData = fetchVersions ? results[3] : null;
 
         if (!statesData) return;
         if (hostMetrics) stacksHostMetrics = hostMetrics;
@@ -2849,15 +2852,15 @@ function renderStacksList() {
         if (pipeline && pipeline.status === 'running') {
             const cs = stageOrder[pipeline.stage] || 0;
             versionStep = 'success';
-            buildStep = cs === 1 ? 'running' : (cs > 1 ? 'success' : 'idle');
-            testStep = cs === 2 ? 'running' : (cs > 2 ? 'success' : 'idle');
-            deployStep = cs === 3 ? 'running' : 'idle';
+            buildStep = cs === 1 ? 'running' : (cs > 1 ? 'success' : 'pending');
+            testStep = cs === 2 ? 'running' : (cs > 2 ? 'success' : 'pending');
+            deployStep = cs === 3 ? 'running' : 'pending';
         } else if (pipeline && pipeline.status === 'failed') {
             const cs = stageOrder[pipeline.stage] || 0;
-            versionStep = cs >= 1 ? 'success' : 'idle';
-            buildStep = cs === 1 ? 'failed' : (cs > 1 ? 'success' : 'idle');
-            testStep = cs === 2 ? 'failed' : (cs > 2 ? 'success' : 'idle');
-            deployStep = cs === 3 ? 'failed' : 'idle';
+            versionStep = 'success';
+            buildStep = cs === 1 ? 'failed' : (cs > 1 ? 'success' : 'pending');
+            testStep = cs === 2 ? 'failed' : (cs > 2 ? 'success' : (cs < 2 ? 'pending' : 'idle'));
+            deployStep = cs === 3 ? 'failed' : (cs > 3 ? 'success' : 'pending');
         } else if (pipeline && pipeline.stage === 'done') {
             versionStep = 'success'; buildStep = 'success'; testStep = 'success'; deployStep = 'success';
         } else if (hasUpdate) {
@@ -3020,7 +3023,8 @@ function renderStacksList() {
         const spinnerSvg = `<svg class="pipeline-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12"><path d="M12 2a10 10 0 0 1 10 10"/></svg>`;
 
         const idleSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"/></svg>`;
-        const stepIcon = (state) => state === 'success' ? checkSvg : state === 'failed' ? xSvg : state === 'running' ? spinnerSvg : idleSvg;
+        const pendingSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
+        const stepIcon = (state) => state === 'success' ? checkSvg : state === 'failed' ? xSvg : state === 'running' ? spinnerSvg : state === 'pending' ? pendingSvg : idleSvg;
 
         // Monitoring tooltip content
         const tooltipLines = [];
@@ -4053,67 +4057,28 @@ function closeActivityDiff() {
 const _activeActions = {}; // action_id -> { interval, toastEl, ... }
 
 function trackBackgroundAction(actionId, actionType, repoName) {
-    const startTime = Date.now();
-    let toastShown = false;
-    let toastEl = null;
-    
-    const tracker = { actionId, actionType, repoName, startTime, interval: null, toastEl: null };
+    const tracker = { actionId, actionType, repoName, interval: null };
     _activeActions[actionId] = tracker;
-    
-    // Poll for status every 2 seconds
+
+    // Force immediate pipeline state refresh to update inline status
+    scheduleStacksStateUpdate();
+
+    // Poll for completion (no toast — status shown inline in pipeline flow)
     tracker.interval = setInterval(async () => {
-        const elapsed = (Date.now() - startTime) / 1000;
-        
-        // Show persistent toast immediately
-        if (!toastShown) {
-            toastShown = true;
-            toastEl = showActionToast(actionId, actionType, repoName);
-            tracker.toastEl = toastEl;
-        }
-        
-        // Update elapsed time on toast
-        if (toastEl) {
-            const elapsedEl = toastEl.querySelector('.action-toast-elapsed');
-            if (elapsedEl) {
-                elapsedEl.textContent = formatElapsed(elapsed);
-            }
-        }
-        
-        // Check status
         try {
             const status = await apiGet(`/stacks/actions/${actionId}/status`);
             if (!status) return;
-            
+
             if (status.status !== 'running') {
-                // Action finished
                 clearInterval(tracker.interval);
                 delete _activeActions[actionId];
-                
-                // Remove toast if shown
-                if (toastEl) {
-                    toastEl.classList.add('toast-exit');
-                    setTimeout(() => toastEl.remove(), 300);
-                }
-                
-                // Close action logs modal if open for this action
+
                 if (currentActionLogsId === actionId) {
                     stopActionLogsPolling();
                 }
-                
-                // Show result
-                if (status.result) {
-                    showStackOutput(actionType, repoName, status.result);
-                } else {
-                    showNotification(
-                        status.status === 'cancelled' ? 'warning' : (status.status === 'completed' ? 'success' : 'error'),
-                        `${actionType} ${repoName}: ${status.status}`
-                    );
-                }
-                
-                // Incremental update after deploy
-                if (actionType === 'Deploy' && status.status === 'completed') {
-                    scheduleStacksStateUpdate();
-                }
+
+                // Refresh pipeline state to update step indicators
+                scheduleStacksStateUpdate();
             }
         } catch (e) {
             console.error('Failed to poll action status:', e);
