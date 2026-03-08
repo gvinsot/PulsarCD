@@ -3027,13 +3027,16 @@ a.btn {
     height: 16px;
     border-radius: 3px;
     cursor: pointer;
-    opacity: 0.4;
+    opacity: 0;
     transition: opacity 0.15s, background 0.15s;
     margin-left: 2px;
     flex-shrink: 0;
 }
+.pipeline-step:hover .pipeline-log-btn {
+    opacity: 0.5;
+}
 .pipeline-log-btn:hover {
-    opacity: 1;
+    opacity: 1 !important;
     background: rgba(255, 255, 255, 0.12);
 }
 
