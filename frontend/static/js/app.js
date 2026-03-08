@@ -3019,7 +3019,8 @@ function renderStacksList() {
         const xSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
         const spinnerSvg = `<svg class="pipeline-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12"><path d="M12 2a10 10 0 0 1 10 10"/></svg>`;
 
-        const stepIcon = (state) => state === 'success' ? checkSvg : state === 'failed' ? xSvg : state === 'running' ? spinnerSvg : '';
+        const idleSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"/></svg>`;
+        const stepIcon = (state) => state === 'success' ? checkSvg : state === 'failed' ? xSvg : state === 'running' ? spinnerSvg : idleSvg;
 
         // Monitoring tooltip content
         const tooltipLines = [];
