@@ -1168,6 +1168,20 @@ class StackDeployer:
 
         return True, "File saved successfully"
 
+    @staticmethod
+    def _repo_to_stack_name(repo_name: str) -> str:
+        """Convert a repository name to a Docker stack name.
+
+        Mirrors the logic in deploy-service.sh get_stack_name():
+        lowercase, replace non-alphanumeric with hyphens, collapse multiples, strip edges.
+        """
+        import re
+        name = repo_name.lower()
+        name = re.sub(r'[^a-z0-9]', '-', name)
+        name = re.sub(r'-+', '-', name)
+        name = name.strip('-')
+        return name
+
     async def get_deployed_stack_tag(self, repo_name: str) -> tuple[bool, Optional[str]]:
         """Get the deployed image tag for a stack from Docker Swarm.
 
@@ -1176,12 +1190,12 @@ class StackDeployer:
         no registry image is found but services exist (stack is deployed).
 
         Args:
-            repo_name: Name of the repository (stack name = repo_name.lower())
+            repo_name: Name of the repository
 
         Returns:
             Tuple of (success, tag_or_none)
         """
-        stack_name = repo_name.lower()
+        stack_name = self._repo_to_stack_name(repo_name)
 
         # Get ALL service images in the stack
         cmd = f"docker service ls --filter 'name={stack_name}_' --format '{{{{.Image}}}}'"

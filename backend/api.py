@@ -678,8 +678,8 @@ async def execute_container_action(request: ActionRequest) -> ActionResult:
 @app.post("/api/stacks/{stack_name}/remove")
 async def remove_stack(stack_name: str, host: Optional[str] = Query(default=None)) -> Dict[str, Any]:
     """Remove a Docker Swarm stack."""
-    # Docker Swarm stores stack names in lowercase
-    stack_name = stack_name.lower()
+    # Normalize to Docker stack name (mirrors deploy-service.sh)
+    stack_name = StackDeployer._repo_to_stack_name(stack_name)
     
     # Find the Swarm manager host to execute the removal
     manager_host = None

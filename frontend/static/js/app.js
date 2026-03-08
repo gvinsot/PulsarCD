@@ -2470,7 +2470,7 @@ async function updateStacksContainerStates() {
 
         // Update stacksContainers for each known repo
         for (const repo of stacksRepos) {
-            const stackName = repo.name.toLowerCase();
+            const stackName = repoToStackName(repo.name);
             const oldStackContainers = stacksContainers[stackName] || {};
             const newStackContainers = newContainersByStack[stackName] || {};
 
@@ -2785,8 +2785,8 @@ function renderStacksList() {
         const latestBuilt = stacksLatestBuilt[repo.name];
         const hasUpdate = deployedTag && latestBuilt && normalizeVersion(latestBuilt) !== normalizeVersion(deployedTag);
         const isDeployed = !!deployedTag;
-        // Docker stack names are lowercase versions of repo names
-        const stackName = repo.name.toLowerCase();
+        // Docker stack names: lowercase, non-alphanumeric → hyphens (mirrors deploy-service.sh)
+        const stackName = repoToStackName(repo.name);
         const stackContainers = stacksContainers[stackName] || {};
         const isExpanded = expandedStacks[repo.name] || false;
         
@@ -4385,6 +4385,11 @@ function formatRelativeTime(isoString) {
 function normalizeVersion(v) {
     if (!v) return '';
     return v.replace(/^v/, '');
+}
+
+/** Convert repo name to Docker stack name (mirrors deploy-service.sh get_stack_name). */
+function repoToStackName(name) {
+    return name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 }
 
 function escapeHtml(str) {
