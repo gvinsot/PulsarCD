@@ -167,8 +167,14 @@ get_images_from_compose() {
         }
     }
     ' "$compose_file" | while read -r img; do
-        # Resolve ${DOCKER_REGISTRY_URL} with actual registry
-        echo "$img" | sed "s|\${DOCKER_REGISTRY_URL}|$REGISTRY|g"
+        # Resolve all environment variables (REGISTRY_URL, REPO_NAME, VERSION, etc.)
+        resolved=$(echo "$img" | envsubst 2>/dev/null)
+        if [ -n "$resolved" ] && ! echo "$resolved" | grep -q '\${'; then
+            echo "$resolved"
+        else
+            # Fallback: resolve ${VAR:-default} patterns manually
+            echo "$img" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g'
+        fi
     done
 }
 
@@ -379,6 +385,32 @@ if [ ! -f "$COMPOSE_PATH" ]; then
     exit 1
 fi
 
+# Save script arguments before sourcing .env (which might override VERSION, etc.)
+SCRIPT_VERSION="$VERSION"
+SCRIPT_REPO_FOLDER="$REPO_FOLDER"
+
+# Load environment variables from .env BEFORE reading compose file
+# so that variable substitution (e.g., ${REGISTRY_URL}) works correctly
+if [ -f "$DEVOPS_PATH/.env" ]; then
+    log_info "Loading environment variables from devops/.env..."
+    set -a
+    source "$DEVOPS_PATH/.env"
+    set +a
+elif [ -f "$REPO_PATH/.env" ]; then
+    log_info "Loading environment variables from .env..."
+    set -a
+    source "$REPO_PATH/.env"
+    set +a
+fi
+
+# Restore script arguments (they take priority over .env values)
+VERSION="$SCRIPT_VERSION"
+
+# Export build-time variables so envsubst/compose can resolve them
+export REPO_NAME="${REPO_NAME:-$(basename "$REPO_PATH")}"
+export VERSION="${VERSION}"
+export DOCKER_REGISTRY_URL="${DOCKER_REGISTRY_URL:-$REGISTRY}"
+
 log_info "Reading images from compose file..."
 IMAGES=$(get_images_from_compose "$COMPOSE_PATH")
 
@@ -440,23 +472,7 @@ echo ""
 # ============================================================================
 log_info "Building Docker images..."
 
-# Load environment variables from .env file if it exists (needed for docker compose build)
-if [ -f "$DEVOPS_PATH/.env" ]; then
-    log_info "Loading environment variables from devops/.env..."
-    set -a
-    source "$DEVOPS_PATH/.env"
-    set +a
-elif [ -f "$REPO_PATH/.env" ]; then
-    log_info "Loading environment variables from .env..."
-    set -a
-    source "$REPO_PATH/.env"
-    set +a
-fi
-
-# Export DOCKER_REGISTRY_URL if not already set (for compose files using this variable)
-export DOCKER_REGISTRY_URL="${DOCKER_REGISTRY_URL:-$REGISTRY}"
-
-# Build all images using docker compose
+# Build all images using docker compose (env already loaded in Step 3)
 if ! docker compose -f "$COMPOSE_PATH" build; then
     log_error "Docker build failed!"
     
