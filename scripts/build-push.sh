@@ -407,9 +407,13 @@ fi
 VERSION="$SCRIPT_VERSION"
 
 # Export build-time variables so envsubst/compose can resolve them
+export REGISTRY_URL="${REGISTRY_URL:-$REGISTRY}"
 export REPO_NAME="${REPO_NAME:-$(basename "$REPO_PATH")}"
 export VERSION="${VERSION}"
 export DOCKER_REGISTRY_URL="${DOCKER_REGISTRY_URL:-$REGISTRY}"
+
+log_info "REGISTRY_URL=$REGISTRY_URL"
+log_info "REPO_NAME=$REPO_NAME"
 
 log_info "Reading images from compose file..."
 IMAGES=$(get_images_from_compose "$COMPOSE_PATH")

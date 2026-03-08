@@ -3101,10 +3101,9 @@ function renderStacksList() {
                             ${buildActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${buildActionId}', 'Build Logs', '${escapeHtml(repo.name)}')" title="View build logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
                         </div>
                         <span class="pipeline-arrow">\u2192</span>
-                        <div class="pipeline-step step-${testStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'test')" title="Test (auto)">
+                        <div class="pipeline-step step-${testStep}" title="Test (auto-skip)">
                             ${stepIcon(testStep)}
                             <span>Test</span>
-                            ${buildActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${buildActionId}', 'Test Logs', '${escapeHtml(repo.name)}')" title="View test logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
                         </div>
                         <span class="pipeline-arrow">\u2192</span>
                         <div class="pipeline-step step-${deployStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'deploy')" title="Deploy">

@@ -138,15 +138,26 @@ update_image_tags() {
     local compose_file="$1"
     local version="$2"
     local output_file="$3"
-    local registry_url="${DOCKER_REGISTRY_URL:-$REGISTRY}"
-    
-    # Replace ${DOCKER_REGISTRY_URL} with actual registry, then replace :latest with :version
-    sed -e "s|\${DOCKER_REGISTRY_URL}|${registry_url}|g" \
-        -e "s|\(${registry_url}/[^:]*\):latest|\1:${version}|g" \
-        "$compose_file" > "$output_file"
-    
-    # Also handle images that might not have :latest explicitly
-    # (images defined without tag get :latest by default, but we want our version)
+    local registry_url="${REGISTRY_URL:-${DOCKER_REGISTRY_URL:-$REGISTRY}}"
+
+    # Resolve all environment variables in compose file, then update version tags
+    envsubst < "$compose_file" 2>/dev/null | \
+        sed -e "s|\(${registry_url}/[^:]*\):[^[:space:]\"']*|\1:${version}|g" \
+        > "$output_file"
+
+    # Fallback if envsubst failed
+    if [ ! -s "$output_file" ]; then
+        log_warning "envsubst failed, falling back to sed substitution"
+        sed -e "s|\${REGISTRY_URL:-[^}]*}|${registry_url}|g" \
+            -e "s|\${REGISTRY_URL}|${registry_url}|g" \
+            -e "s|\${DOCKER_REGISTRY_URL}|${registry_url}|g" \
+            -e "s|\${REPO_NAME:-[^}]*}|${REPO_NAME}|g" \
+            -e "s|\${REPO_NAME}|${REPO_NAME}|g" \
+            -e "s|\${VERSION:-[^}]*}|${version}|g" \
+            -e "s|\${VERSION}|${version}|g" \
+            -e "s|\(${registry_url}/[^:]*\):[^[:space:]\"']*|\1:${version}|g" \
+            "$compose_file" > "$output_file"
+    fi
 }
 
 # Run a hook script if it exists
@@ -412,8 +423,10 @@ export DEPLOY_VERSION="$VERSION"
 export DEPLOY_STACK_NAME="$STACK_NAME"
 export DEPLOY_REGISTRY="$REGISTRY"
 
-# Export DOCKER_REGISTRY_URL if not already set (for compose files using this variable)
+# Export registry variables for compose files (support both REGISTRY_URL and DOCKER_REGISTRY_URL)
+export REGISTRY_URL="${REGISTRY_URL:-$REGISTRY}"
 export DOCKER_REGISTRY_URL="${DOCKER_REGISTRY_URL:-$REGISTRY}"
+export REPO_NAME="${REPO_NAME:-$STACK_NAME}"
 
 # ============================================================================
 # Step 4: Run pre-deployment script if it exists
