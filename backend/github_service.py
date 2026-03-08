@@ -96,6 +96,22 @@ class GitHubService:
             return False
         return True
 
+    @staticmethod
+    def _parse_permission_error(error_text: str, status: int, resource: str, required_permission: str) -> str:
+        """Parse GitHub API error and return a user-friendly hint if it's a permission issue."""
+        if status == 403 and "Resource not accessible by personal access token" in error_text:
+            return (
+                f"GitHub token lacks the '{required_permission}' permission required to access {resource}. "
+                f"Go to GitHub Settings > Developer settings > Personal access tokens > Fine-grained tokens, "
+                f"edit your token and enable '{required_permission}' under Repository permissions. "
+                f"Alternatively, use a classic token with the 'repo' scope."
+            )
+        if status == 403:
+            return f"Access denied (403) when fetching {resource}. Check that your GitHub token has the required permissions."
+        if status == 404:
+            return f"Repository not found or not accessible (404) when fetching {resource}."
+        return f"GitHub API returned status {status} when fetching {resource}."
+
     def _handle_rate_limit(self, response_headers) -> bool:
         """Check response headers for rate limit. Returns True if rate-limited."""
         remaining = response_headers.get("X-RateLimit-Remaining")
@@ -207,7 +223,8 @@ class GitHubService:
                         break
                     if response.status != 200:
                         error_text = await response.text()
-                        logger.error("GitHub API error", status=response.status, error=error_text)
+                        error_msg = self._parse_permission_error(error_text, response.status, "starred repos", "Starring: Read")
+                        logger.error("GitHub API error", status=response.status, error=error_text, hint=error_msg)
                         break
 
                     data = await response.json()
@@ -288,7 +305,8 @@ class GitHubService:
                 self._handle_rate_limit(response.headers)
                 if response.status != 200:
                     error_text = await response.text()
-                    logger.error("GitHub API error getting branches", status=response.status, error=error_text)
+                    error_msg = self._parse_permission_error(error_text, response.status, "branches", "Contents: Read")
+                    logger.error("GitHub API error getting branches", status=response.status, error=error_text, hint=error_msg)
                     return []
 
                 data = await response.json()
@@ -357,7 +375,8 @@ class GitHubService:
             async with session.get(tags_url, params={"per_page": min(limit, 100)}) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    logger.error("GitHub API error getting tags", status=response.status, error=error_text)
+                    error_msg = self._parse_permission_error(error_text, response.status, "tags", "Contents: Read")
+                    logger.error("GitHub API error getting tags", status=response.status, error=error_text, hint=error_msg)
                     return {"tags": [], "branches": {}}
 
                 data = await response.json()
@@ -485,8 +504,9 @@ class GitHubService:
                 self._handle_rate_limit(response.headers)
                 if response.status != 200:
                     error_text = await response.text()
-                    logger.error("GitHub API error getting commits", status=response.status, error=error_text)
-                    return {"commits": [], "has_more": False}
+                    error_msg = self._parse_permission_error(error_text, response.status, "commits", "Contents: Read")
+                    logger.error("GitHub API error getting commits", status=response.status, error=error_text, hint=error_msg)
+                    return {"commits": [], "has_more": False, "error": error_msg}
 
                 data = await response.json()
                 commits = []
@@ -547,8 +567,9 @@ class GitHubService:
                 self._handle_rate_limit(response.headers)
                 if response.status != 200:
                     error_text = await response.text()
-                    logger.error("GitHub API error getting commit diff", status=response.status, error=error_text)
-                    return {"files": [], "stats": {}}
+                    error_msg = self._parse_permission_error(error_text, response.status, "commit diff", "Contents: Read")
+                    logger.error("GitHub API error getting commit diff", status=response.status, error=error_text, hint=error_msg)
+                    return {"files": [], "stats": {}, "error": error_msg}
 
                 data = await response.json()
                 files = []

@@ -1289,6 +1289,9 @@ async def get_repo_activity(
     ]
     all_results = await asyncio.gather(*commit_tasks)
 
+    # Collect any permission errors from the results
+    errors = [r.get("error") for r in all_results if r.get("error")]
+
     # Deduplicate commits by SHA across all branches, track which branches contain each commit
     seen = {}
     commit_branches = {}  # sha -> list of branch names that contain this commit
@@ -1310,7 +1313,7 @@ async def get_repo_activity(
     for t in tags_data.get("tags", []):
         tag_map.setdefault(t["sha"], []).append(t["name"])
 
-    return {
+    response = {
         "branches": branches,
         "tags": tags_data.get("tags", []),
         "commits": commits,
@@ -1319,6 +1322,9 @@ async def get_repo_activity(
         "commit_branches": commit_branches,
         "default_branch": tags_data.get("default_branch", "main"),
     }
+    if errors:
+        response["error"] = errors[0]  # Surface first permission error to frontend
+    return response
 
 
 @app.get("/api/stacks/{owner}/{repo}/commits/{sha}/diff")
