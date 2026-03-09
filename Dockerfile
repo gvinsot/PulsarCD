@@ -1,7 +1,7 @@
-FROM python:3.11-slim
-
-# All configuration is via environment variables - no config file needed!
-# See docker-compose.yml for example configuration.
+# ============================================================================
+# Stage: base - Common dependencies
+# ============================================================================
+FROM python:3.11-slim AS base
 
 WORKDIR /app
 
@@ -27,6 +27,25 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY backend/ ./backend/
 COPY frontend/ ./frontend/
+
+# ============================================================================
+# Stage: test - Run tests then exit
+# ============================================================================
+FROM base AS test
+
+# Install test dependencies
+RUN pip install --no-cache-dir pytest
+
+# Copy test files
+COPY tests/ ./tests/
+
+# Run tests on container start
+CMD ["python", "-m", "pytest", "tests/", "-v", "--tb=short"]
+
+# ============================================================================
+# Stage: production (default) - Run the application
+# ============================================================================
+FROM base AS production
 
 # Create non-root user
 RUN useradd -m -s /bin/bash appuser && chown -R appuser:appuser /app

@@ -58,6 +58,7 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      target: production
     # Run as root to access Docker socket for Swarm API queries
     user: root
     extra_hosts:
@@ -152,6 +153,19 @@ services:
       placement:
         constraints:
           - node.hostname == ${BACKEND_NODE_HOSTNAME:-server-b}
+
+  # ==========================================================================
+  # Test - Build target for running tests (not deployed)
+  # Usage: docker compose -f docker-compose.swarm.yml run --rm test
+  # ==========================================================================
+  test:
+    image: ${DOCKER_REGISTRY_URL}/logscrawler-test:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: test
+    deploy:
+      replicas: 0
 
   # ==========================================================================
   # LogsCrawler Agent - Deployed on EVERY node (global mode)
