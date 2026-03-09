@@ -50,15 +50,23 @@ class GitHubService:
         self._rate_limit_reset: Optional[datetime] = None
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create aiohttp session."""
+        """Get or create aiohttp session. Recreates if token has changed."""
+        token = self.config.token or ""
+        if self._session is not None and not self._session.closed:
+            # Check if the token changed since the session was created
+            if getattr(self, "_session_token", None) != token:
+                logger.info("GitHub token changed, recreating session")
+                await self._session.close()
+                self._session = None
         if self._session is None or self._session.closed:
             headers = {
                 "Accept": "application/vnd.github.v3+json",
                 "User-Agent": "LogsCrawler",
             }
-            if self.config.token:
-                headers["Authorization"] = f"token {self.config.token}"
+            if token:
+                headers["Authorization"] = f"token {token}"
             self._session = aiohttp.ClientSession(headers=headers)
+            self._session_token = token
         return self._session
 
     async def close(self):

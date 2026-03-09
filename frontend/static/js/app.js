@@ -4152,7 +4152,7 @@ async function loadActivityData() {
     const data = await apiGet(`/stacks/${encodeURIComponent(activityOwner)}/${encodeURIComponent(activityRepo)}/activity?per_page=30`);
 
     if (!data) {
-        graphContainer.innerHTML = '<div class="loading-placeholder" style="color: var(--status-error);">Failed to load activity data</div>';
+        graphContainer.innerHTML = '<div class="loading-placeholder" style="color: var(--status-error);">Failed to load activity data. Check browser console for details.</div>';
         return;
     }
 
@@ -4164,6 +4164,18 @@ async function loadActivityData() {
 
     if (data.error && activityCommits.length === 0) {
         graphContainer.innerHTML = `<div class="loading-placeholder" style="color: var(--status-error);">${escapeHtml(data.error)}</div>`;
+        return;
+    }
+
+    if (activityCommits.length === 0) {
+        // No error from backend but also no commits — run a diagnostic check
+        graphContainer.innerHTML = '<div class="loading-placeholder">No commits found. Checking permissions...</div>';
+        const diagData = await apiGet(`/stacks/test-permissions/${encodeURIComponent(activityOwner)}/${encodeURIComponent(activityRepo)}`);
+        if (diagData && diagData.summary) {
+            graphContainer.innerHTML = `<div class="loading-placeholder" style="color: var(--status-error);">${escapeHtml(diagData.summary)}</div>`;
+        } else {
+            graphContainer.innerHTML = '<div class="loading-placeholder" style="color: var(--status-error);">No commits found. Ensure your GitHub token has \'Contents: Read\' permission.</div>';
+        }
         return;
     }
 

@@ -1291,6 +1291,76 @@ async def get_stacks_status():
     }
 
 
+@app.get("/api/stacks/test-permissions/{owner}/{repo}")
+async def test_github_permissions(owner: str, repo: str):
+    """Test GitHub token permissions for a specific repository.
+
+    Returns detailed diagnostics about what the token can and cannot access.
+    """
+    if not github_service.is_configured():
+        raise HTTPException(status_code=400, detail="GitHub integration not configured")
+
+    import aiohttp
+    session = await github_service._get_session()
+    results = {}
+
+    # Test 1: Can we access the repo at all?
+    try:
+        async with session.get(f"https://api.github.com/repos/{owner}/{repo}") as resp:
+            results["repo_access"] = {"status": resp.status, "ok": resp.status == 200}
+            if resp.status == 200:
+                data = await resp.json()
+                results["repo_access"]["default_branch"] = data.get("default_branch")
+                results["repo_access"]["private"] = data.get("private")
+            else:
+                results["repo_access"]["error"] = (await resp.text())[:200]
+            scopes = resp.headers.get("X-OAuth-Scopes", "none")
+            results["token_scopes"] = scopes
+            results["rate_limit_remaining"] = resp.headers.get("X-RateLimit-Remaining")
+    except Exception as e:
+        results["repo_access"] = {"status": 0, "ok": False, "error": str(e)}
+
+    # Test 2: Can we list branches? (requires Contents: Read)
+    try:
+        async with session.get(f"https://api.github.com/repos/{owner}/{repo}/branches", params={"per_page": 1}) as resp:
+            results["branches_access"] = {"status": resp.status, "ok": resp.status == 200}
+            if resp.status == 200:
+                data = await resp.json()
+                results["branches_access"]["count"] = len(data)
+            else:
+                results["branches_access"]["error"] = (await resp.text())[:200]
+    except Exception as e:
+        results["branches_access"] = {"status": 0, "ok": False, "error": str(e)}
+
+    # Test 3: Can we list commits? (requires Contents: Read)
+    try:
+        async with session.get(f"https://api.github.com/repos/{owner}/{repo}/commits", params={"per_page": 1}) as resp:
+            results["commits_access"] = {"status": resp.status, "ok": resp.status == 200}
+            if resp.status == 200:
+                data = await resp.json()
+                results["commits_access"]["count"] = len(data)
+            else:
+                results["commits_access"]["error"] = (await resp.text())[:200]
+    except Exception as e:
+        results["commits_access"] = {"status": 0, "ok": False, "error": str(e)}
+
+    # Summary
+    all_ok = all(r.get("ok") for r in results.values() if isinstance(r, dict) and "ok" in r)
+    if all_ok:
+        results["summary"] = "All permissions OK - token can access repo, branches, and commits."
+    else:
+        issues = []
+        if not results.get("repo_access", {}).get("ok"):
+            issues.append("Cannot access repository (check token has access to this repo)")
+        if not results.get("branches_access", {}).get("ok"):
+            issues.append("Cannot list branches (need 'Contents: Read' permission)")
+        if not results.get("commits_access", {}).get("ok"):
+            issues.append("Cannot list commits (need 'Contents: Read' permission)")
+        results["summary"] = "Permission issues found: " + "; ".join(issues)
+
+    return results
+
+
 @app.get("/api/stacks/repos")
 async def get_starred_repos():
     """Get list of starred GitHub repositories."""
@@ -1348,6 +1418,37 @@ async def get_repo_activity(
     if not github_service.is_configured():
         raise HTTPException(status_code=400, detail="GitHub integration not configured")
 
+    # Quick access check: verify we can reach the repo at all
+    # This catches token issues early and gives clear error messages
+    session = await github_service._get_session()
+    try:
+        async with session.get(f"https://api.github.com/repos/{owner}/{repo}") as check_resp:
+            if check_resp.status == 401:
+                return {
+                    "branches": [], "tags": [], "commits": [], "branch_tip_map": {},
+                    "tag_map": {}, "commit_branches": {}, "default_branch": "main",
+                    "error": "GitHub token is invalid or expired. Please update your GitHub token in settings.",
+                }
+            if check_resp.status == 404:
+                return {
+                    "branches": [], "tags": [], "commits": [], "branch_tip_map": {},
+                    "tag_map": {}, "commit_branches": {}, "default_branch": "main",
+                    "error": f"Repository '{owner}/{repo}' not found. The token may not have access to this repository.",
+                }
+            if check_resp.status == 403:
+                error_text = await check_resp.text()
+                return {
+                    "branches": [], "tags": [], "commits": [], "branch_tip_map": {},
+                    "tag_map": {}, "commit_branches": {}, "default_branch": "main",
+                    "error": f"Access denied to '{owner}/{repo}'. GitHub says: {error_text[:200]}",
+                }
+            # Get the default branch from the repo metadata
+            repo_data = await check_resp.json()
+            repo_default_branch = repo_data.get("default_branch", "main")
+    except Exception as e:
+        logger.error("Failed to check repo access", repo=f"{owner}/{repo}", error=str(e))
+        repo_default_branch = "main"
+
     # Fetch branches and tags first
     branches, tags_data = await asyncio.gather(
         github_service.get_repo_branches(owner, repo),
@@ -1370,7 +1471,7 @@ async def get_repo_activity(
             github_service.get_repo_commits(owner, repo, per_page=per_page)
         ]
         # Create a synthetic branch entry for the fallback
-        branches = [{"name": tags_data.get("default_branch", "main"), "sha": "", "protected": False}]
+        branches = [{"name": tags_data.get("default_branch", repo_default_branch), "sha": "", "protected": False}]
 
     all_results = await asyncio.gather(*commit_tasks)
 
@@ -1405,7 +1506,7 @@ async def get_repo_activity(
         "branch_tip_map": branch_tip_map,
         "tag_map": tag_map,
         "commit_branches": commit_branches,
-        "default_branch": tags_data.get("default_branch", "main"),
+        "default_branch": tags_data.get("default_branch", repo_default_branch),
     }
     if errors:
         response["error"] = errors[0]  # Surface first permission error to frontend
@@ -1416,6 +1517,12 @@ async def get_repo_activity(
             "Go to GitHub Settings > Developer settings > Personal access tokens > Fine-grained tokens, "
             "edit your token and enable 'Contents: Read' under Repository permissions. "
             "Note: 'Administration: Read' alone is not sufficient to access branches and commits."
+        )
+    elif not commits:
+        # Branches were found but no commits — something unexpected
+        response["error"] = (
+            f"No commits found on any branch ({len(branches)} branches checked). "
+            "This may indicate a permission issue — ensure your GitHub token has 'Contents: Read' permission."
         )
     return response
 
