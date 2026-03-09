@@ -3138,16 +3138,12 @@ function renderStacksList() {
 function pipelineStepClick(repoName, sshUrl, step) {
     const pipeline = stacksPipelineState[repoName];
 
-    // Only show logs if the action is currently running (not finished)
+    // If the step is currently running, show live logs instead of opening the modal
     if (pipeline && pipeline.status === 'running') {
         let actionId = null;
-        if (step === 'build' && pipeline.stage === 'build') {
-            actionId = pipeline.build_action_id;
-        } else if (step === 'test' && pipeline.stage === 'test') {
-            actionId = pipeline.test_action_id;
-        } else if (step === 'deploy' && pipeline.stage === 'deploy') {
-            actionId = pipeline.deploy_action_id;
-        }
+        if (step === 'build' && pipeline.stage === 'build') actionId = pipeline.build_action_id;
+        else if (step === 'test' && pipeline.stage === 'test') actionId = pipeline.test_action_id;
+        else if (step === 'deploy' && pipeline.stage === 'deploy') actionId = pipeline.deploy_action_id;
 
         if (actionId) {
             const label = step.charAt(0).toUpperCase() + step.slice(1);
@@ -3156,7 +3152,7 @@ function pipelineStepClick(repoName, sshUrl, step) {
         }
     }
 
-    // Trigger action (past logs are accessible via the log icon button)
+    // Otherwise, always open the action modal (past logs accessible via the log icon button)
     if (step === 'version') pipelineStack(repoName, sshUrl);
     else if (step === 'build') buildStack(repoName, sshUrl);
     else if (step === 'test') testStack(repoName, sshUrl);
