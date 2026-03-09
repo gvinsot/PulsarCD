@@ -988,7 +988,7 @@ async def get_ai_status() -> Dict[str, Any]:
     return {
         "available": available,
         "model": ai.model,
-        "ollama_url": ai.ollama_url,
+        "vllm_url": ai.vllm_url,
     }
 
 

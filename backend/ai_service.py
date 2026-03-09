@@ -1,4 +1,4 @@
-"""AI Service for natural language to OpenSearch query conversion."""
+"""AI Service for natural language to OpenSearch query conversion using vLLM (OpenAI-compatible API)."""
 
 import json
 import re
@@ -13,7 +13,7 @@ logger = structlog.get_logger()
 
 def build_system_prompt(metadata: Optional[Dict[str, Any]] = None) -> str:
     """Build system prompt with dynamic context from available metadata."""
-    
+
     # Base prompt structure
     base_prompt = """You are an AI assistant that converts natural language questions about logs into OpenSearch query parameters.
 
@@ -73,31 +73,31 @@ IMPORTANT RULES:
     # Add dynamic context if metadata is provided
     if metadata:
         context_parts = []
-        
+
         if metadata.get("hosts"):
             hosts_list = metadata["hosts"][:30]  # Limit for prompt size
             context_parts.append(f"Available hosts: {json.dumps(hosts_list)}")
-        
+
         if metadata.get("containers"):
             containers_list = metadata["containers"][:50]  # Limit for prompt size
             context_parts.append(f"Available containers: {json.dumps(containers_list)}")
-        
+
         if metadata.get("compose_projects"):
             projects_list = metadata["compose_projects"][:20]
             context_parts.append(f"Available compose projects: {json.dumps(projects_list)}")
-        
+
         if metadata.get("compose_services"):
             services_list = metadata["compose_services"][:50]
             context_parts.append(f"Available compose services: {json.dumps(services_list)}")
-        
+
         if metadata.get("levels"):
             context_parts.append(f"Available log levels: {json.dumps(metadata['levels'])}")
-        
+
         if context_parts:
             base_prompt += "\n\n=== AVAILABLE VALUES IN THIS ENVIRONMENT ===\n"
             base_prompt += "\n".join(context_parts)
             base_prompt += "\n\nUse these EXACT values when filtering by host, container, or project names."
-    
+
     # Add examples with dynamic context hints
     base_prompt += """
 
@@ -133,105 +133,114 @@ SYSTEM_PROMPT = build_system_prompt()
 
 
 class AIService:
-    """Service for AI-powered query conversion using Ollama."""
-    
-    def __init__(self, ollama_url: str = "http://localhost:11434", model: str = "phi3:mini"):
-        self.ollama_url = ollama_url.rstrip("/")
+    """Service for AI-powered query conversion using vLLM (OpenAI-compatible API)."""
+
+    def __init__(self, vllm_url: str = "http://localhost:8000", model: str = "Qwen/Qwen2.5-1.5B-Instruct"):
+        self.vllm_url = vllm_url.rstrip("/")
         self.model = model
         self._session: Optional[aiohttp.ClientSession] = None
         self._available = False
-        
+
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
         return self._session
-    
+
     async def close(self):
         if self._session and not self._session.closed:
             await self._session.close()
-    
+
     async def check_availability(self) -> bool:
-        """Check if Ollama is available and model is loaded."""
+        """Check if vLLM is available and model is loaded."""
         try:
             session = await self._get_session()
-            async with session.get(f"{self.ollama_url}/api/tags", timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            async with session.get(f"{self.vllm_url}/v1/models", timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    models = [m.get("name", "") for m in data.get("models", [])]
+                    models = [m.get("id", "") for m in data.get("data", [])]
                     # Check if our model or a variant is available
-                    model_base = self.model.split(":")[0]
-                    self._available = any(model_base in m for m in models)
+                    model_base = self.model.split("/")[-1].lower()
+                    self._available = any(model_base in m.lower() for m in models) or len(models) > 0
                     if not self._available:
-                        logger.warning("AI model not found", model=self.model, available=models)
+                        logger.warning("AI model not found on vLLM", model=self.model, available=models)
                     return self._available
         except Exception as e:
-            logger.debug("Ollama not available", error=str(e))
+            logger.debug("vLLM not available", error=str(e))
             self._available = False
         return False
-    
+
+    async def _chat_completion(self, messages: list, max_tokens: int = 512, temperature: float = 0.1, timeout: float = 30) -> Optional[str]:
+        """Send a chat completion request to vLLM and return the response text."""
+        session = await self._get_session()
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+
+        async with session.post(
+            f"{self.vllm_url}/v1/chat/completions",
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=timeout),
+        ) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                choices = data.get("choices", [])
+                if choices:
+                    return choices[0].get("message", {}).get("content", "")
+            else:
+                error_text = await resp.text()
+                logger.error("vLLM request failed", status=resp.status, error=error_text[:200])
+        return None
+
     async def convert_to_query(self, natural_query: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Convert natural language question to OpenSearch query parameters.
-        
+
         Args:
             natural_query: The user's natural language question
             metadata: Optional dict containing available hosts, containers, projects, etc.
         """
         if not self._available:
             await self.check_availability()
-            
+
         if not self._available:
-            # Fallback: return basic query with metadata hints
             return self._fallback_parse(natural_query, metadata)
-        
+
         try:
-            session = await self._get_session()
-            
-            # Build dynamic prompt with available metadata context
             system_prompt = build_system_prompt(metadata) if metadata else SYSTEM_PROMPT
-            
-            payload = {
-                "model": self.model,
-                "prompt": natural_query,
-                "system": system_prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.1,  # Low temperature for consistent output
-                    "num_predict": 512,  # Increased for more complex queries
-                }
-            }
-            
-            async with session.post(
-                f"{self.ollama_url}/api/generate",
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    response_text = data.get("response", "")
-                    return self._parse_ai_response(response_text, natural_query, metadata)
-                else:
-                    logger.error("Ollama request failed", status=resp.status)
-                    return self._fallback_parse(natural_query, metadata)
-                    
+
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": natural_query},
+            ]
+
+            response_text = await self._chat_completion(messages, max_tokens=512, temperature=0.1, timeout=30)
+            if response_text:
+                return self._parse_ai_response(response_text, natural_query, metadata)
+            else:
+                return self._fallback_parse(natural_query, metadata)
+
         except Exception as e:
             logger.error("AI conversion failed", error=str(e))
             return self._fallback_parse(natural_query, metadata)
-    
+
     def _parse_ai_response(self, response: str, original_query: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Parse AI response JSON."""
         try:
             # Try to extract JSON from response
             response = response.strip()
-            
+
             # Handle markdown code blocks
             if "```json" in response:
                 response = response.split("```json")[1].split("```")[0]
             elif "```" in response:
                 response = response.split("```")[1].split("```")[0]
-            
+
             # Parse JSON
             result = json.loads(response.strip())
-            
+
             # Validate and normalize
             return {
                 "query": result.get("query"),
@@ -244,18 +253,18 @@ class AIService:
                 "time_range": result.get("time_range"),
                 "sort_order": result.get("sort_order", "desc"),
             }
-            
+
         except json.JSONDecodeError as e:
             logger.warning("Failed to parse AI response", response=response[:200], error=str(e))
             return self._fallback_parse(original_query, metadata)
-    
+
     def _fallback_parse(self, query: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Simple fallback parser for when AI is unavailable.
-        
+
         Uses metadata to match container/host names if available.
         """
         query_lower = query.lower()
-        
+
         result = {
             "query": None,
             "levels": [],
@@ -267,7 +276,7 @@ class AIService:
             "time_range": None,
             "sort_order": "desc",
         }
-        
+
         # Detect error levels
         if any(w in query_lower for w in ["error", "erreur", "fail", "fatal", "critical"]):
             result["levels"].append("ERROR")
@@ -275,7 +284,7 @@ class AIService:
             result["levels"].append("WARN")
         if any(w in query_lower for w in ["debug"]):
             result["levels"].append("DEBUG")
-        
+
         # Try to match container names from metadata
         if metadata and metadata.get("containers"):
             for container in metadata["containers"]:
@@ -286,7 +295,7 @@ class AIService:
                 ):
                     result["containers"].append(container)
                     break  # Only match first container
-        
+
         # Try to match host names from metadata
         if metadata and metadata.get("hosts"):
             for host in metadata["hosts"]:
@@ -296,7 +305,7 @@ class AIService:
                 ):
                     result["hosts"].append(host)
                     break
-        
+
         # Try to match compose projects from metadata
         if metadata and metadata.get("compose_projects"):
             for project in metadata["compose_projects"]:
@@ -304,7 +313,7 @@ class AIService:
                 if project_lower in query_lower:
                     result["compose_projects"].append(project)
                     break
-        
+
         # Detect time ranges
         time_patterns = [
             (r"(\d+)\s*minutes?", lambda m: f"{m.group(1)}m"),
@@ -315,13 +324,13 @@ class AIService:
             (r"today|aujourd", lambda m: "24h"),
             (r"yesterday|hier", lambda m: "24h"),
         ]
-        
+
         for pattern, converter in time_patterns:
             match = re.search(pattern, query_lower)
             if match:
                 result["time_range"] = converter(match)
                 break
-        
+
         # Detect HTTP status codes
         status_match = re.search(r"\b([45]\d{2})\b", query)
         if status_match:
@@ -334,43 +343,43 @@ class AIService:
         elif "4xx" in query_lower or "400" in query_lower:
             result["http_status_min"] = 400
             result["http_status_max"] = 499
-        
+
         # Extract search terms (simple approach)
         # Remove common words and use remaining as query
-        stop_words = {"find", "show", "get", "list", "search", "logs", "log", "from", "in", "the", 
+        stop_words = {"find", "show", "get", "list", "search", "logs", "log", "from", "in", "the",
                      "last", "recent", "all", "me", "trouve", "affiche", "cherche", "les", "des",
                      "dernières", "derniers", "minutes", "heures", "hours", "errors", "warnings"}
         words = re.findall(r'\b\w+\b', query_lower)
         search_words = [w for w in words if w not in stop_words and len(w) > 2 and not w.isdigit()]
-        
+
         if search_words and not result["levels"] and result["http_status_min"] is None:
             result["query"] = " ".join(search_words[:3])  # Limit to 3 words
-        
+
         return result
-    
+
     async def analyze_log(self, message: str, level: str = "", container_name: str = "") -> Dict[str, Any]:
         """Analyze a log message to determine if it needs attention."""
-        
+
         # Quick heuristic checks first (avoid AI call for obvious cases)
         message_lower = message.lower()
-        
+
         # Clear error indicators
         critical_patterns = [
             "exception", "fatal", "critical", "panic", "crash", "out of memory",
             "connection refused", "permission denied", "access denied", "segmentation fault",
             "stack trace", "traceback", "killed", "oom", "deadlock"
         ]
-        
+
         error_patterns = [
             "error", "failed", "failure", "unable to", "cannot", "could not",
             "timeout", "timed out", "refused", "rejected", "invalid", "corrupt"
         ]
-        
+
         warning_patterns = [
             "warning", "warn", "deprecated", "slow", "retry", "retrying",
             "high", "low memory", "disk space", "rate limit"
         ]
-        
+
         # Check for obvious critical issues first (fast heuristic)
         if level in ["FATAL", "CRITICAL"] or any(p in message_lower for p in critical_patterns):
             # Still try AI for better description
@@ -385,7 +394,7 @@ class AIService:
                 "severity": "critical",
                 "assessment": "Critical issue detected - requires immediate attention."
             }
-        
+
         # Check for HTTP logs with status codes (fast heuristic)
         is_http_log = "http" in message_lower and ('" 2' in message or '" 3' in message or '" 4' in message or '" 5' in message)
         if is_http_log:
@@ -407,11 +416,11 @@ class AIService:
                         "severity": "critical",
                         "assessment": f"HTTP {status} server error - Backend issue needs investigation."
                     }
-        
+
         # For all other logs, try AI analysis
         if not self._available:
             await self.check_availability()
-        
+
         if self._available:
             try:
                 # Hint the AI about probable severity based on level
@@ -422,42 +431,40 @@ class AIService:
                     hint = "attention"
                 elif level == "DEBUG":
                     hint = "normal"
-                
+
                 return await self._ai_analyze_log(message, level, container_name, hint_severity=hint)
             except Exception as e:
                 logger.debug("AI analysis failed, using heuristics", error=str(e))
-        
+
         # Fallback to heuristics if AI not available
         has_error_in_path = "/error" in message_lower or "/errors" in message_lower
-        
+
         if level == "ERROR" or (any(p in message_lower for p in error_patterns) and not has_error_in_path):
             return {
                 "severity": "attention",
                 "assessment": "Error indicator detected - review recommended."
             }
-        
+
         if level in ["WARN", "WARNING"] or any(p in message_lower for p in warning_patterns):
             return {
                 "severity": "attention",
                 "assessment": "Warning indicator detected - may need monitoring."
             }
-        
+
         # Default: appears normal
         return {
             "severity": "normal",
             "assessment": "Standard operational message."
         }
-    
+
     async def _ai_analyze_log(self, message: str, level: str, container_name: str, hint_severity: str = None) -> Dict[str, Any]:
         """Use AI to analyze a log message."""
-        session = await self._get_session()
-        
         # Build context hint if provided
         context_hint = ""
         if hint_severity:
             context_hint = f"\nNote: Based on log level '{level}', this is likely a '{hint_severity}' severity, but analyze the actual content."
-        
-        analysis_prompt = f"""Analyze this log message and provide a specific assessment.
+
+        user_prompt = f"""Analyze this log message and provide a specific assessment.
 
 Log message: {message[:500]}
 Log level: {level or 'UNKNOWN'}
@@ -477,43 +484,31 @@ Examples:
 DO NOT use generic messages. Describe what THIS specific log is about.
 Respond only with valid JSON, no markdown or extra text."""
 
-        payload = {
-            "model": self.model,
-            "prompt": analysis_prompt,
-            "stream": False,
-            "options": {
-                "temperature": 0.3,
-                "num_predict": 150,
-            }
-        }
-        
-        async with session.post(
-            f"{self.ollama_url}/api/generate",
-            json=payload,
-            timeout=aiohttp.ClientTimeout(total=15)
-        ) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                response_text = data.get("response", "").strip()
-                
-                # Parse JSON response
-                try:
-                    if "```" in response_text:
-                        response_text = response_text.split("```")[1] if "```json" in response_text else response_text.split("```")[0]
-                        response_text = response_text.replace("json", "").strip()
-                    
-                    result = json.loads(response_text)
-                    severity = result.get("severity", "normal")
-                    if severity not in ["normal", "attention", "critical"]:
-                        severity = "normal"
-                    
-                    return {
-                        "severity": severity,
-                        "assessment": result.get("assessment", "Analysis complete.")[:150]
-                    }
-                except:
-                    pass
-        
+        messages = [
+            {"role": "user", "content": user_prompt},
+        ]
+
+        response_text = await self._chat_completion(messages, max_tokens=150, temperature=0.3, timeout=15)
+
+        if response_text:
+            try:
+                text = response_text.strip()
+                if "```" in text:
+                    text = text.split("```")[1] if "```json" in text else text.split("```")[0]
+                    text = text.replace("json", "").strip()
+
+                result = json.loads(text)
+                severity = result.get("severity", "normal")
+                if severity not in ["normal", "attention", "critical"]:
+                    severity = "normal"
+
+                return {
+                    "severity": severity,
+                    "assessment": result.get("assessment", "Analysis complete.")[:150]
+                }
+            except Exception:
+                pass
+
         # Fallback
         return {
             "severity": "normal",
@@ -529,10 +524,10 @@ def get_ai_service() -> AIService:
     """Get or create AI service instance."""
     import os
     from .config import settings
-    
+
     global ai_service
     if ai_service is None:
-        ollama_url = os.environ.get("LOGSCRAWLER_OLLAMA_URL", "http://ollama:11434")
+        vllm_url = os.environ.get("LOGSCRAWLER_VLLM_URL", "http://vllm:8000")
         model = settings.ai.model
-        ai_service = AIService(ollama_url, model)
+        ai_service = AIService(vllm_url, model)
     return ai_service

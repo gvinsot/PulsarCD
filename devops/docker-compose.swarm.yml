@@ -76,9 +76,9 @@ services:
       - LOGSCRAWLER_OPENSEARCH__HOSTS=["http://opensearch:9200"]
       - LOGSCRAWLER_OPENSEARCH__INDEX_PREFIX=logscrawler
 
-      # AI/Ollama configuration
-      - LOGSCRAWLER_AI__MODEL=${OLLAMA_MODEL:-llama3.2:latest}
-      - LOGSCRAWLER_OLLAMA_URL=${OLLAMA_URL:-http://ollama:11434}
+      # AI/vLLM configuration
+      - LOGSCRAWLER_AI__MODEL=${VLLM_MODEL:-txn545/Qwen3.5-122B-A10B-NVFP4}
+      - LOGSCRAWLER_VLLM_URL=${VLLM_URL:-http://vllm-dev-service:8000}
 
       # Collector settings - agents handle log/metrics collection
       - LOGSCRAWLER_COLLECTOR__AGENTS_ONLY=true

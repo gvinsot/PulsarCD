@@ -61,9 +61,9 @@ services:
       - LOGSCRAWLER_OPENSEARCH__HOSTS=["http://opensearch:9200"]
       - LOGSCRAWLER_OPENSEARCH__INDEX_PREFIX=logscrawler
 
-      # AI/Ollama configuration
-      - LOGSCRAWLER_AI__MODEL=llama3.2:latest
-      - LOGSCRAWLER_OLLAMA_URL=https://llm-dev.methodinfo.fr
+      # AI/vLLM configuration
+      - LOGSCRAWLER_AI__MODEL=txn545/Qwen3.5-122B-A10B-NVFP4
+      - LOGSCRAWLER_VLLM_URL=https://llm-dev.methodinfo.fr
 
       # Collector settings
       - LOGSCRAWLER_COLLECTOR__LOG_INTERVAL_SECONDS=30

@@ -77,8 +77,8 @@ class CollectorConfig(BaseModel):
 
 
 class AIConfig(BaseModel):
-    """AI/Ollama configuration."""
-    model: str = "qwen2.5:1.5b"
+    """AI/vLLM configuration."""
+    model: str = "txn545/Qwen3.5-122B-A10B-NVFP4"
 
 
 class GitHubConfig(BaseModel):
