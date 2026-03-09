@@ -1312,10 +1312,21 @@ async def get_repo_activity(
     )
 
     # Fetch commits from all branches in parallel
-    commit_tasks = [
-        github_service.get_repo_commits(owner, repo, branch=b["name"], per_page=per_page)
-        for b in branches
-    ]
+    # If branches list is empty (permissions issue, rate limit), fall back to default branch
+    if branches:
+        commit_tasks = [
+            github_service.get_repo_commits(owner, repo, branch=b["name"], per_page=per_page)
+            for b in branches
+        ]
+    else:
+        # Fallback: fetch commits without specifying a branch (uses repo default)
+        logger.warning("No branches available, falling back to default branch commits", repo=f"{owner}/{repo}")
+        commit_tasks = [
+            github_service.get_repo_commits(owner, repo, per_page=per_page)
+        ]
+        # Create a synthetic branch entry for the fallback
+        branches = [{"name": tags_data.get("default_branch", "main"), "sha": "", "protected": False}]
+
     all_results = await asyncio.gather(*commit_tasks)
 
     # Collect any permission errors from the results

@@ -4162,6 +4162,11 @@ async function loadActivityData() {
     activityTagMap = data.tag_map || {};
     activityCommitBranches = data.commit_branches || {};
 
+    if (data.error && activityCommits.length === 0) {
+        graphContainer.innerHTML = `<div class="loading-placeholder" style="color: var(--status-error);">${escapeHtml(data.error)}</div>`;
+        return;
+    }
+
     renderActivityGraph();
 }
 
