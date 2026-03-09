@@ -951,7 +951,8 @@ class OpenSearchClient:
                         "query": {
                             "range": {"timestamp": {"lt": cutoff.isoformat()}}
                         }
-                    }
+                    },
+                    conflicts="proceed",
                 )
                 logger.info("Cleaned up old data", index=index, cutoff=cutoff.isoformat())
             except Exception as e:
