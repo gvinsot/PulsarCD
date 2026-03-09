@@ -2851,29 +2851,30 @@ function renderStacksList() {
 
         // Whether build/test steps were part of this pipeline
         const hadBuild = pipeline ? !!pipeline.build_action_id : false;
+        const hadTest = pipeline ? !!pipeline.test_action_id : false;
 
         if (pipeline && pipeline.status === 'running') {
             const cs = stageOrder[pipeline.stage] || 0;
             versionStep = 'success';
             buildStep = cs === 1 ? 'running' : (hadBuild && cs > 1 ? 'success' : (cs > 1 ? 'idle' : 'pending'));
-            testStep = cs === 2 ? 'running' : (hadBuild && cs > 2 ? 'success' : (cs > 2 ? 'idle' : 'pending'));
+            testStep = cs === 2 ? 'running' : (hadTest && cs > 2 ? 'success' : (hadBuild && cs > 2 ? 'success' : (cs > 2 ? 'idle' : 'pending')));
             deployStep = cs === 3 ? 'running' : 'pending';
         } else if (pipeline && pipeline.status === 'failed') {
             const cs = stageOrder[pipeline.stage] || 0;
             versionStep = 'success';
             buildStep = cs === 1 ? 'failed' : (hadBuild && cs > 1 ? 'success' : (cs > 1 ? 'idle' : 'pending'));
-            testStep = cs === 2 ? 'failed' : (hadBuild && cs > 2 ? 'success' : (cs > 2 ? 'idle' : 'pending'));
+            testStep = cs === 2 ? 'failed' : (hadTest && cs > 2 ? 'success' : (hadBuild && cs > 2 ? 'success' : (cs > 2 ? 'idle' : 'pending')));
             deployStep = cs === 3 ? 'failed' : (cs > 3 ? 'success' : 'pending');
         } else if (pipeline && pipeline.stage === 'done') {
             versionStep = 'success';
             buildStep = hadBuild ? 'success' : 'idle';
-            testStep = hadBuild ? 'success' : 'idle';
+            testStep = hadTest ? 'success' : (hadBuild ? 'success' : 'idle');
             deployStep = 'success';
         } else if (pipeline && pipeline.status === 'success') {
             const cs = stageOrder[pipeline.stage] || 0;
             versionStep = 'success';
             buildStep = hadBuild && cs >= 1 ? 'success' : (cs >= 1 ? 'idle' : 'pending');
-            testStep = hadBuild && cs >= 2 ? 'success' : (cs >= 2 ? 'idle' : 'pending');
+            testStep = hadTest && cs >= 2 ? 'success' : (hadBuild && cs >= 2 ? 'success' : (cs >= 2 ? 'idle' : 'pending'));
             deployStep = cs >= 3 ? 'success' : 'pending';
         } else if (hasUpdate) {
             versionStep = 'success'; buildStep = 'success'; testStep = 'success'; deployStep = 'pending';
@@ -2883,6 +2884,7 @@ function renderStacksList() {
 
         const pipelineVersion = (pipeline && pipeline.version) ? pipeline.version : (latestBuilt ? normalizeVersion(latestBuilt) : (deployedTag || '–'));
         const buildActionId = pipeline ? pipeline.build_action_id : null;
+        const testActionId = pipeline ? pipeline.test_action_id : null;
         const deployActionId = pipeline ? pipeline.deploy_action_id : null;
 
         // Build containers HTML (similar to Computers view compose-group style)
@@ -3101,9 +3103,10 @@ function renderStacksList() {
                             ${buildActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${buildActionId}', 'Build Logs', '${escapeHtml(repo.name)}')" title="View build logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
                         </div>
                         <span class="pipeline-arrow">\u2192</span>
-                        <div class="pipeline-step step-${testStep}" title="Test (auto-skip)">
+                        <div class="pipeline-step step-${testStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'test')" title="Test">
                             ${stepIcon(testStep)}
                             <span>Test</span>
+                            ${testActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${testActionId}', 'Test Logs', '${escapeHtml(repo.name)}')" title="View test logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
                         </div>
                         <span class="pipeline-arrow">\u2192</span>
                         <div class="pipeline-step step-${deployStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'deploy')" title="Deploy">
@@ -3138,8 +3141,10 @@ function pipelineStepClick(repoName, sshUrl, step) {
     // Only show logs if the action is currently running (not finished)
     if (pipeline && pipeline.status === 'running') {
         let actionId = null;
-        if ((step === 'build' || step === 'test') && pipeline.stage === step) {
+        if (step === 'build' && pipeline.stage === 'build') {
             actionId = pipeline.build_action_id;
+        } else if (step === 'test' && pipeline.stage === 'test') {
+            actionId = pipeline.test_action_id;
         } else if (step === 'deploy' && pipeline.stage === 'deploy') {
             actionId = pipeline.deploy_action_id;
         }
@@ -3153,6 +3158,7 @@ function pipelineStepClick(repoName, sshUrl, step) {
 
     // Trigger action (past logs are accessible via the log icon button)
     if (step === 'build') buildStack(repoName, sshUrl);
+    else if (step === 'test') testStack(repoName, sshUrl);
     else if (step === 'deploy') deployStack(repoName, sshUrl);
 }
 
@@ -3288,6 +3294,138 @@ async function submitBuild() {
                 <polyline points="22 4 12 14.01 9 11.01"/>
             </svg>
             Build
+        `;
+    }
+}
+
+// ============== Test Modal ==============
+
+let currentTestRepo = null;
+let currentTestSshUrl = null;
+
+async function testStack(repoName, sshUrl) {
+    currentTestRepo = repoName;
+    currentTestSshUrl = sshUrl;
+
+    const modal = document.getElementById('stack-test-modal');
+    const title = document.getElementById('stack-test-title');
+    const branchSelect = document.getElementById('test-branch-select');
+    const commitInput = document.getElementById('test-commit-input');
+
+    title.textContent = `Test: ${repoName}`;
+    branchSelect.innerHTML = '<option value="">Loading branches...</option>';
+    commitInput.value = '';
+
+    // Reset to branch mode
+    document.querySelector('input[name="test-source"][value="branch"]').checked = true;
+    toggleTestSource('branch');
+
+    modal.classList.add('active');
+
+    // Extract owner from ssh_url
+    const ownerMatch = sshUrl.match(/[:/]([^/]+)\/[^/]+\.git$/);
+    if (!ownerMatch) {
+        branchSelect.innerHTML = '<option value="">Failed to parse repository URL</option>';
+        return;
+    }
+    const owner = ownerMatch[1];
+
+    // Load branches
+    try {
+        const data = await apiGet(`/stacks/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/branches`);
+        if (data && data.branches && data.branches.length > 0) {
+            branchSelect.innerHTML = data.branches.map(b =>
+                `<option value="${escapeHtml(b.name)}" ${b.name === 'main' || b.name === 'master' ? 'selected' : ''}>
+                    ${escapeHtml(b.name)}${b.protected ? ' \uD83D\uDD12' : ''}
+                </option>`
+            ).join('');
+        } else {
+            branchSelect.innerHTML = '<option value="main">main</option>';
+        }
+    } catch (e) {
+        console.error('Failed to load branches:', e);
+        branchSelect.innerHTML = '<option value="main">main (default)</option>';
+    }
+}
+
+function toggleTestSource(source) {
+    const branchGroup = document.getElementById('test-branch-group');
+    const commitGroup = document.getElementById('test-commit-group');
+
+    if (source === 'branch') {
+        branchGroup.style.display = 'block';
+        commitGroup.style.display = 'none';
+    } else {
+        branchGroup.style.display = 'none';
+        commitGroup.style.display = 'block';
+    }
+}
+
+function closeTestModal() {
+    document.getElementById('stack-test-modal').classList.remove('active');
+    currentTestRepo = null;
+    currentTestSshUrl = null;
+}
+
+async function submitTest() {
+    if (!currentTestRepo || !currentTestSshUrl) return;
+
+    const submitBtn = document.getElementById('stack-test-submit');
+    const source = document.querySelector('input[name="test-source"]:checked').value;
+
+    let branch = null;
+    let commit = null;
+
+    if (source === 'branch') {
+        branch = document.getElementById('test-branch-select').value;
+    } else {
+        commit = document.getElementById('test-commit-input').value.trim();
+        if (!commit) {
+            showNotification('error', 'Please enter a commit ID');
+            return;
+        }
+        if (!/^[a-fA-F0-9]{7,40}$/.test(commit)) {
+            showNotification('error', 'Invalid commit ID format. Expected 7-40 hexadecimal characters.');
+            return;
+        }
+    }
+
+    // Disable button and show loading
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="btn-loading"></span> Starting...';
+
+    try {
+        let url = `/stacks/test?repo_name=${encodeURIComponent(currentTestRepo)}&ssh_url=${encodeURIComponent(currentTestSshUrl)}`;
+        if (branch) {
+            url += `&branch=${encodeURIComponent(branch)}`;
+        }
+        if (commit) {
+            url += `&commit=${encodeURIComponent(commit)}`;
+        }
+
+        const repoName = currentTestRepo;
+        const response = await fetch(`${API_BASE}${url}`, { method: 'POST', headers: authHeaders() });
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        if (data && data.action_id) {
+            closeTestModal();
+            trackBackgroundAction(data.action_id, 'Test', repoName);
+        } else {
+            showNotification('error', 'Failed to start tests');
+        }
+    } catch (e) {
+        showNotification('error', e.message || 'Test failed');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                <path d="M9 11l3 3L22 4"/>
+                <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+            </svg>
+            Run Tests
         `;
     }
 }

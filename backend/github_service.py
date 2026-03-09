@@ -1107,6 +1107,81 @@ class StackDeployer:
 
         return result
 
+    async def test(self, repo_name: str, ssh_url: str,
+                   branch: str = None, commit: str = None,
+                   output_callback=None, cancel_event=None) -> Dict[str, Any]:
+        """Run tests for a stack by executing the 'test' build target from docker-compose.swarm.yml.
+
+        Args:
+            repo_name: Name of the repository
+            ssh_url: SSH URL for cloning if needed
+            branch: Optional branch name to test from
+            commit: Optional specific commit hash to test from
+            output_callback: Optional callable(str) for streaming output
+            cancel_event: Optional asyncio.Event for cancellation
+
+        Returns:
+            Dict with success status, output, and timing info
+        """
+        start_time = datetime.utcnow()
+        result = {
+            "action": "test",
+            "repo": repo_name,
+            "branch": branch,
+            "commit": commit,
+            "success": False,
+            "output": "",
+            "started_at": start_time.isoformat(),
+            "completed_at": None,
+            "duration_seconds": 0,
+        }
+
+        try:
+            # Ensure repo is cloned
+            clone_success, clone_msg = await self._ensure_repo_cloned(repo_name, ssh_url)
+            if not clone_success:
+                result["output"] = clone_msg
+                return result
+
+            # Run test script
+            scripts_path = self.config.scripts_path
+            repos_path = self.config.repos_path
+            repo_path = f"{repos_path}/{repo_name}"
+
+            # Script format: test.sh <folder> [branch] [commit]
+            test_cmd = f"cd {scripts_path} && bash test.sh \"{repo_path}\""
+            if branch:
+                test_cmd += f" {branch}"
+                if commit:
+                    test_cmd += f" {commit}"
+            elif commit:
+                test_cmd += f" \"\" {commit}"
+
+            if output_callback and clone_msg:
+                for line in clone_msg.split('\n'):
+                    output_callback(line)
+
+            # Check cancellation before running tests
+            if cancel_event and cancel_event.is_set():
+                result["output"] = clone_msg + "\n[Cancelled by user]"
+                return result
+
+            logger.info("Running tests", repo=repo_name, branch=branch, commit=commit)
+            success, output = await self._run_command(test_cmd, output_callback=output_callback, cancel_event=cancel_event)
+
+            result["success"] = success
+            result["output"] = f"{clone_msg}\n\n{output}" if clone_msg else output
+
+        except Exception as e:
+            result["output"] = str(e)
+            logger.error("Test failed", repo=repo_name, error=str(e))
+
+        end_time = datetime.utcnow()
+        result["completed_at"] = end_time.isoformat()
+        result["duration_seconds"] = (end_time - start_time).total_seconds()
+
+        return result
+
     async def get_env_file(self, repo_name: str) -> tuple[bool, str]:
         """Get the content of the .env file for a repository.
 

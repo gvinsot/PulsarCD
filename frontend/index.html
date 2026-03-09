@@ -634,6 +634,56 @@
                     </div>
                 </div>
                 
+                <!-- Test modal -->
+                <div id="stack-test-modal" class="modal">
+                    <div class="modal-content modal-md">
+                        <div class="modal-header">
+                            <h2 id="stack-test-title">Test Stack</h2>
+                            <button class="modal-close" onclick="closeTestModal()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <p class="modal-help-text">Run tests by building and executing the "test" target from docker-compose.swarm.yml.</p>
+
+                            <div class="form-group">
+                                <label class="form-label">Source</label>
+                                <div class="radio-group">
+                                    <label class="radio-label">
+                                        <input type="radio" name="test-source" value="branch" checked onchange="toggleTestSource('branch')">
+                                        <span>Branch</span>
+                                    </label>
+                                    <label class="radio-label">
+                                        <input type="radio" name="test-source" value="commit" onchange="toggleTestSource('commit')">
+                                        <span>Commit ID</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div id="test-branch-group" class="form-group">
+                                <label class="form-label" for="test-branch-select">Branch</label>
+                                <select id="test-branch-select" class="form-select">
+                                    <option value="">Loading branches...</option>
+                                </select>
+                            </div>
+
+                            <div id="test-commit-group" class="form-group" style="display: none;">
+                                <label class="form-label" for="test-commit-input">Commit ID</label>
+                                <input type="text" id="test-commit-input" class="form-input" placeholder="e.g., abc1234 or full SHA">
+                                <span class="form-hint">Enter a short or full commit hash (7-40 characters)</span>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" onclick="closeTestModal()">Cancel</button>
+                            <button class="btn btn-primary" id="stack-test-submit" onclick="submitTest()">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                                    <path d="M9 11l3 3L22 4"/>
+                                    <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+                                </svg>
+                                Run Tests
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Service Deploy modal (for individual container/service tag update) -->
                 <div id="service-deploy-modal" class="modal">
                     <div class="modal-content modal-md">
