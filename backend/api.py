@@ -12,7 +12,7 @@ import structlog
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from .auth import create_token, decode_token
 from .collector import Collector
@@ -48,15 +48,26 @@ class BackgroundAction:
         self.id = action_id
         self.action_type = action_type  # "build" or "deploy"
         self.repo_name = repo_name
-        self.status = "running"  # running, completed, failed, cancelled
+        self._status = "running"  # running, completed, failed, cancelled
         self.output_lines: List[str] = []
         self.result: Optional[Dict[str, Any]] = None
         self.started_at = datetime.utcnow()
         self.cancel_event = asyncio.Event()
         self.task: Optional[asyncio.Task] = None
-    
+        self.new_line_event = asyncio.Event()
+
+    @property
+    def status(self):
+        return self._status
+
+    @status.setter
+    def status(self, value):
+        self._status = value
+        self.new_line_event.set()
+
     def append_output(self, line: str):
         self.output_lines.append(line)
+        self.new_line_event.set()
     
     def get_output(self) -> str:
         return "\n".join(self.output_lines)
@@ -211,10 +222,15 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     # All other /api/ endpoints: validate JWT Bearer token
-    if not auth_header.startswith("Bearer "):
-        return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+    # Support token via query param for SSE (EventSource can't set headers)
+    token = None
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+    elif request.query_params.get("token"):
+        token = request.query_params["token"]
 
-    token = auth_header[7:]
+    if not token:
+        return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
     try:
         payload = decode_token(token, settings.auth.jwt_secret)
         request.state.user = payload.get("sub", "")
@@ -1671,6 +1687,48 @@ async def get_action_logs(
         "offset": offset,
         "total_lines": len(action.output_lines),
     }
+
+
+@app.get("/api/stacks/actions/{action_id}/logs/stream")
+async def stream_action_logs(
+    action_id: str,
+    offset: int = Query(default=0, ge=0, description="Line offset to start from"),
+):
+    """Stream logs of a background action via Server-Sent Events."""
+    action = _background_actions.get(action_id)
+    if not action:
+        raise HTTPException(status_code=404, detail="Action not found")
+
+    async def event_generator():
+        cursor = offset
+        while True:
+            # Send any new lines
+            if cursor < len(action.output_lines):
+                for line in action.output_lines[cursor:]:
+                    data = json.dumps({"type": "line", "line": line})
+                    yield f"data: {data}\n\n"
+                cursor = len(action.output_lines)
+
+            # If action is done, send final status and close
+            if action.status != "running":
+                data = json.dumps({"type": "done", "status": action.status})
+                yield f"data: {data}\n\n"
+                return
+
+            # Clear before waiting; re-check after clear to avoid race
+            action.new_line_event.clear()
+            if cursor < len(action.output_lines) or action.status != "running":
+                continue
+            try:
+                await asyncio.wait_for(action.new_line_event.wait(), timeout=15.0)
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/api/stacks/actions/{action_id}/cancel")

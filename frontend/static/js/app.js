@@ -4366,7 +4366,7 @@ function trackBackgroundAction(actionId, actionType, repoName) {
                 delete _activeActions[actionId];
 
                 if (currentActionLogsId === actionId) {
-                    stopActionLogsPolling();
+                    stopActionLogsStream();
                 }
 
                 // Refresh pipeline state to update step indicators
@@ -4450,90 +4450,91 @@ async function cancelAction(actionId) {
 // ============== Action Logs Modal ==============
 
 let currentActionLogsId = null;
-let actionLogsInterval = null;
-let actionLogsOffset = 0;
+let actionLogsEventSource = null;
 
 function openActionLogs(actionId, actionType, repoName) {
     currentActionLogsId = actionId;
-    actionLogsOffset = 0;
-    
+
     const modal = document.getElementById('action-logs-modal');
     const title = document.getElementById('action-logs-title');
     const content = document.getElementById('action-logs-content');
-    
+
     title.textContent = `${actionType}: ${repoName}`;
     content.innerHTML = '<div class="loading-placeholder">Loading logs...</div>';
-    
+
     modal.classList.add('active');
-    
-    // Start polling logs
-    pollActionLogs();
-    actionLogsInterval = setInterval(pollActionLogs, 1500);
+
+    // Start SSE stream
+    startActionLogsStream(actionId);
 }
 
 function closeActionLogsModal() {
-    stopActionLogsPolling();
+    stopActionLogsStream();
     document.getElementById('action-logs-modal').classList.remove('active');
     currentActionLogsId = null;
 }
 
-function stopActionLogsPolling() {
-    if (actionLogsInterval) {
-        clearInterval(actionLogsInterval);
-        actionLogsInterval = null;
+function stopActionLogsStream() {
+    if (actionLogsEventSource) {
+        actionLogsEventSource.close();
+        actionLogsEventSource = null;
     }
 }
 
-async function pollActionLogs() {
-    if (!currentActionLogsId) return;
-    
-    try {
-        const data = await apiGet(`/stacks/actions/${currentActionLogsId}/logs?offset=${actionLogsOffset}`);
-        if (!data) return;
-        
+function appendLogLine(content, line) {
+    const lineEl = document.createElement('div');
+    lineEl.className = 'log-line';
+    if (/\b(error|ERROR|fatal|FATAL|failed|FAILED)\b/.test(line)) {
+        lineEl.classList.add('log-error');
+    }
+    lineEl.textContent = line;
+    content.appendChild(lineEl);
+}
+
+function startActionLogsStream(actionId) {
+    stopActionLogsStream();
+
+    const token = getAuthToken();
+    const url = `${API_BASE}/stacks/actions/${actionId}/logs/stream?token=${encodeURIComponent(token || '')}`;
+    const es = new EventSource(url);
+    actionLogsEventSource = es;
+    let firstLine = true;
+
+    es.onmessage = (event) => {
+        if (actionId !== currentActionLogsId) { es.close(); return; }
+
         const content = document.getElementById('action-logs-content');
-        
-        // On first load, clear placeholder
-        if (actionLogsOffset === 0 && data.lines.length > 0) {
-            content.innerHTML = '';
-        } else if (actionLogsOffset === 0 && data.lines.length === 0) {
-            content.innerHTML = '<div class="empty-placeholder">Waiting for output...</div>';
-            return;
-        }
-        
-        // Append new lines
-        for (const line of data.lines) {
-            const lineEl = document.createElement('div');
-            lineEl.className = 'log-line';
-            
-            // Highlight errors
-            if (/\b(error|ERROR|fatal|FATAL|failed|FAILED)\b/.test(line)) {
-                lineEl.classList.add('log-error');
+        const data = JSON.parse(event.data);
+
+        if (data.type === 'line') {
+            if (firstLine) {
+                content.innerHTML = '';
+                firstLine = false;
             }
-            
-            lineEl.textContent = line;
-            content.appendChild(lineEl);
-        }
-        
-        actionLogsOffset = data.total_lines;
-        
-        // Auto-scroll to bottom
-        content.scrollTop = content.scrollHeight;
-        
-        // Stop polling if action is done
-        if (data.status !== 'running') {
-            stopActionLogsPolling();
-            
-            // Add status line
+            appendLogLine(content, data.line);
+            content.scrollTop = content.scrollHeight;
+        } else if (data.type === 'done') {
             const statusLine = document.createElement('div');
             statusLine.className = `log-line ${data.status === 'completed' ? 'log-success' : 'log-error'}`;
             statusLine.textContent = `\n--- ${data.status.toUpperCase()} ---`;
             content.appendChild(statusLine);
             content.scrollTop = content.scrollHeight;
+            if (firstLine) {
+                content.innerHTML = '';
+                content.appendChild(statusLine);
+            }
+            es.close();
+            actionLogsEventSource = null;
         }
-    } catch (e) {
-        console.error('Failed to poll action logs:', e);
-    }
+    };
+
+    es.onerror = () => {
+        // EventSource will auto-reconnect; if modal closed, stop
+        if (actionId !== currentActionLogsId) {
+            es.close();
+            actionLogsEventSource = null;
+        }
+    };
 }
 
 // ============== Stack Output ==============
