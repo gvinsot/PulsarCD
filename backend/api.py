@@ -1762,6 +1762,35 @@ async def get_stacks_deployed_tags():
 _auto_build_state = {}  # {repo_name: {"last_sha": str, "building": bool}}
 _pipeline_state = {}  # {repo_name: {"stage": str, "status": str, "build_action_id": str|None, "test_action_id": str|None, "deploy_action_id": str|None, "version": str}}
 _auto_build_task = None
+
+
+@app.post("/api/stacks/pipeline")
+async def trigger_pipeline_endpoint(
+    repo_name: str = Query(..., description="Repository name"),
+    ssh_url: str = Query(..., description="SSH URL for cloning"),
+    tag: str = Query(..., description="Git tag to build and deploy (format: vX.X.X)"),
+):
+    """Trigger a full pipeline (Build → Test → Deploy) from a specific git tag."""
+    if not github_service.is_configured():
+        raise HTTPException(status_code=400, detail="GitHub integration not configured")
+
+    if not re.match(r'^v?\d+(\.\d+){1,2}$', tag):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid tag format: '{tag}'. Expected format: vX.X.X (e.g., v1.0.5)"
+        )
+
+    # Check if pipeline is already running for this repo
+    existing = _pipeline_state.get(repo_name, {})
+    if existing.get("status") == "running":
+        raise HTTPException(status_code=409, detail=f"Pipeline already running for {repo_name}")
+
+    # Extract version from tag (e.g., "v1.0.5" → "1.0.5")
+    version = tag.lstrip('v')
+
+    await _trigger_pipeline(repo_name, ssh_url, version=version, tag=tag)
+
+    return {"status": "started", "repo": repo_name, "tag": tag, "version": version}
 AUTO_BUILD_POLL_INTERVAL = 120  # seconds (was 20s, increased to avoid GitHub rate limits)
 
 # Pipeline stages in order
@@ -1781,20 +1810,31 @@ def _extract_version_from_output(lines: list) -> Optional[str]:
     return None
 
 
-async def _trigger_pipeline(repo_name: str, ssh_url: str):
-    """Trigger a full pipeline: build → test → deploy."""
+async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, tag: str = None):
+    """Trigger a full pipeline: build → test → deploy.
+
+    Args:
+        repo_name: Repository name
+        ssh_url: SSH URL for cloning
+        version: Optional exact version (e.g., "1.0.5"). If provided, build uses this exact version.
+        tag: Optional git tag (e.g., "v1.0.5"). If provided, build checks out this tag.
+    """
     try:
         deployer, host_name = _get_deployer_and_host()
     except Exception as e:
         logger.error("Pipeline: no host available", repo=repo_name, error=str(e))
-        _pipeline_state[repo_name] = {"stage": "build", "status": "failed", "build_action_id": None, "test_action_id": None, "deploy_action_id": None, "version": None}
-        _auto_build_state[repo_name]["building"] = False
+        _pipeline_state[repo_name] = {"stage": "build", "status": "failed", "build_action_id": None, "test_action_id": None, "deploy_action_id": None, "version": version}
+        if repo_name in _auto_build_state:
+            _auto_build_state[repo_name]["building"] = False
         return
 
-    _pipeline_state[repo_name] = {"stage": "build", "status": "running", "build_action_id": None, "test_action_id": None, "deploy_action_id": None, "version": None}
+    _pipeline_state[repo_name] = {"stage": "build", "status": "running", "build_action_id": None, "test_action_id": None, "deploy_action_id": None, "version": version}
+
+    # Determine build version param: exact "1.0.5" or auto-increment "1.0"
+    build_version = version if version else "1.0"
 
     async def _run_pipeline():
-        built_version = None
+        built_version = version
         try:
             # ── Step 1: Build ──
             build_id = str(uuid.uuid4())[:8]
@@ -1802,9 +1842,10 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str):
             _background_actions[build_id] = build_action
             _pipeline_state[repo_name]["build_action_id"] = build_id
 
-            logger.info("Pipeline: starting build", repo=repo_name, action_id=build_id)
+            logger.info("Pipeline: starting build", repo=repo_name, action_id=build_id, version=build_version, tag=tag)
             result = await deployer.build(
-                repo_name, ssh_url, version="1.0",
+                repo_name, ssh_url, version=build_version,
+                branch=tag,  # git tag works as a branch ref for checkout
                 output_callback=build_action.append_output,
                 cancel_event=build_action.cancel_event,
             )
@@ -1814,10 +1855,11 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str):
             build_action.status = "completed" if result.get("success") else "failed"
 
             if not result.get("success"):
-                _pipeline_state[repo_name] = {"stage": "build", "status": "failed", "build_action_id": build_id, "test_action_id": None, "deploy_action_id": None, "version": None}
+                _pipeline_state[repo_name] = {"stage": "build", "status": "failed", "build_action_id": build_id, "test_action_id": None, "deploy_action_id": None, "version": version}
                 return
 
-            built_version = _extract_version_from_output(build_action.output_lines)
+            # Extract version from build output, or use provided version
+            built_version = _extract_version_from_output(build_action.output_lines) or version
             _pipeline_state[repo_name]["version"] = built_version
             logger.info("Pipeline: build succeeded", repo=repo_name, version=built_version)
 
@@ -1853,11 +1895,11 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str):
             _background_actions[deploy_id] = deploy_action
             _pipeline_state[repo_name]["deploy_action_id"] = deploy_id
 
-            tag = f"v{built_version}" if built_version else None
-            logger.info("Pipeline: starting deploy", repo=repo_name, action_id=deploy_id, tag=tag)
+            deploy_tag = tag if tag else (f"v{built_version}" if built_version else None)
+            logger.info("Pipeline: starting deploy", repo=repo_name, action_id=deploy_id, tag=deploy_tag)
             deploy_result = await deployer.deploy(
-                repo_name, ssh_url, version="1.0",
-                tag=tag,
+                repo_name, ssh_url, version=build_version,
+                tag=deploy_tag,
                 output_callback=deploy_action.append_output,
                 cancel_event=deploy_action.cancel_event,
             )

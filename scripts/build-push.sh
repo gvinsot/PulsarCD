@@ -193,10 +193,17 @@ VERSION="$2"
 BRANCH="${3:-}"
 COMMIT="${4:-}"
 
-# Validate version format (major.minor)
-if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+# Validate version format (major.minor or major.minor.patch)
+FULL_VERSION_PROVIDED=false
+if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    # Full version provided (e.g., 1.0.5) - skip auto-increment and git tagging
+    FULL_VERSION_PROVIDED=true
+elif [[ "$VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
+    # Major.minor provided (e.g., 1.0) - will auto-increment patch
+    :
+else
     log_error "Invalid version format: $VERSION"
-    log_error "Version must be in major.minor format (e.g., 1.0, 2.3)"
+    log_error "Version must be major.minor (e.g., 1.0) or major.minor.patch (e.g., 1.0.5)"
     exit 1
 fi
 
@@ -362,10 +369,16 @@ restore_env_files "$REPO_PATH"
 # ============================================================================
 # Step 2: Get version (major.minor.patch)
 # ============================================================================
-PATCH_NUMBER=$(get_next_patch_number "$REPO_PATH" "$VERSION")
-FULL_VERSION="${VERSION}.${PATCH_NUMBER}"
-VERSION_TAG="v${FULL_VERSION}"
-log_info "Version: $FULL_VERSION (tag: $VERSION_TAG)"
+if [ "$FULL_VERSION_PROVIDED" = true ]; then
+    FULL_VERSION="$VERSION"
+    VERSION_TAG="v${FULL_VERSION}"
+    log_info "Version: $FULL_VERSION (tag: $VERSION_TAG) [exact version, no auto-increment]"
+else
+    PATCH_NUMBER=$(get_next_patch_number "$REPO_PATH" "$VERSION")
+    FULL_VERSION="${VERSION}.${PATCH_NUMBER}"
+    VERSION_TAG="v${FULL_VERSION}"
+    log_info "Version: $FULL_VERSION (tag: $VERSION_TAG)"
+fi
 
 # ============================================================================
 # Step 3: Get images to build
@@ -578,18 +591,22 @@ done
 log_success "All images pushed successfully!"
 
 # ============================================================================
-# Step 7: Tag git repository with version
+# Step 7: Tag git repository with version (skip if full version was provided)
 # ============================================================================
-log_info "Creating git tag: $VERSION_TAG"
+if [ "$FULL_VERSION_PROVIDED" = true ]; then
+    log_info "Skipping git tagging (exact version $FULL_VERSION provided, tag already exists)"
+else
+    log_info "Creating git tag: $VERSION_TAG"
 
-# Create annotated tag
-git tag -a "$VERSION_TAG" -m "Version $FULL_VERSION from branch $BRANCH (commit $CURRENT_COMMIT_SHORT)"
+    # Create annotated tag
+    git tag -a "$VERSION_TAG" -m "Version $FULL_VERSION from branch $BRANCH (commit $CURRENT_COMMIT_SHORT)"
 
-# Push tag to remote
-log_info "Pushing tag to remote..."
-git push origin "$VERSION_TAG" || log_warning "Could not push tag (check remote permissions)"
+    # Push tag to remote
+    log_info "Pushing tag to remote..."
+    git push origin "$VERSION_TAG" || log_warning "Could not push tag (check remote permissions)"
 
-log_success "Git tag created: $VERSION_TAG"
+    log_success "Git tag created: $VERSION_TAG"
+fi
 
 # ============================================================================
 # Step 8: Restore original state (optional)

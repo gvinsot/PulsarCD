@@ -67,3 +67,5 @@ htmlcov/
 # Data
 data/
 *.db
+
+.claude/settings.local.json

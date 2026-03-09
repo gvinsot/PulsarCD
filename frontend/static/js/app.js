@@ -3092,7 +3092,7 @@ function renderStacksList() {
                     </button>
 
                     <div class="pipeline-flow">
-                        <div class="pipeline-step step-${versionStep}" title="Version: ${escapeHtml(pipelineVersion)}">
+                        <div class="pipeline-step step-${versionStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'version')" title="Version: ${escapeHtml(pipelineVersion)} (click to run full pipeline)" style="cursor:pointer">
                             ${stepIcon(versionStep)}
                             <span>${escapeHtml(pipelineVersion)}</span>
                         </div>
@@ -3157,9 +3157,156 @@ function pipelineStepClick(repoName, sshUrl, step) {
     }
 
     // Trigger action (past logs are accessible via the log icon button)
-    if (step === 'build') buildStack(repoName, sshUrl);
+    if (step === 'version') pipelineStack(repoName, sshUrl);
+    else if (step === 'build') buildStack(repoName, sshUrl);
     else if (step === 'test') testStack(repoName, sshUrl);
     else if (step === 'deploy') deployStack(repoName, sshUrl);
+}
+
+// ============== Pipeline Modal (Version → Build → Test → Deploy) ==============
+
+let currentPipelineRepo = null;
+let currentPipelineSshUrl = null;
+let selectedPipelineTag = null;
+
+async function pipelineStack(repoName, sshUrl) {
+    currentPipelineRepo = repoName;
+    currentPipelineSshUrl = sshUrl;
+    selectedPipelineTag = null;
+
+    const modal = document.getElementById('stack-pipeline-modal');
+    const title = document.getElementById('stack-pipeline-title');
+    const tagsList = document.getElementById('pipeline-tags-list');
+    const selectedDisplay = document.getElementById('pipeline-selected-tag');
+
+    title.textContent = `Pipeline: ${repoName}`;
+    tagsList.innerHTML = '<div class="loading-placeholder">Loading tags...</div>';
+    selectedDisplay.style.display = 'none';
+
+    modal.classList.add('active');
+
+    // Extract owner from ssh_url
+    const ownerMatch = sshUrl.match(/[:/]([^/]+)\/[^/]+\.git$/);
+    if (!ownerMatch) {
+        tagsList.innerHTML = '<div class="error-placeholder">Failed to parse repository URL</div>';
+        return;
+    }
+    const owner = ownerMatch[1];
+
+    // Load tags
+    try {
+        const data = await apiGet(`/stacks/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/tags?limit=20`);
+        if (data && data.tags && data.tags.length > 0) {
+            renderPipelineTagsList(data.tags, data.default_branch || 'main');
+            // Auto-select the first (most recent) tag
+            selectPipelineTag(data.tags[0].name);
+        } else {
+            tagsList.innerHTML = `
+                <div class="empty-placeholder">
+                    <p>No tags found in this repository.</p>
+                    <p class="hint">Create a git tag first (e.g., git tag v1.0.0).</p>
+                </div>
+            `;
+        }
+    } catch (e) {
+        console.error('Failed to load tags:', e);
+        tagsList.innerHTML = `
+            <div class="error-placeholder">
+                <p>Failed to load tags: ${escapeHtml(e.message || 'Unknown error')}</p>
+            </div>
+        `;
+    }
+}
+
+function renderPipelineTagsList(tags, defaultBranch) {
+    const tagsList = document.getElementById('pipeline-tags-list');
+
+    let html = `
+        <div class="tags-group">
+            <div class="tags-group-header">
+                <span class="branch-name">${escapeHtml(defaultBranch)}</span>
+                <span class="tag-count">${tags.length} tag${tags.length !== 1 ? 's' : ''}</span>
+            </div>
+            <div class="tags-group-items">
+    `;
+
+    for (const tag of tags) {
+        const timeAgo = formatTimeAgo(tag.created_at);
+        html += `
+            <div class="tag-item" data-tag="${escapeHtml(tag.name)}" onclick="selectPipelineTag('${escapeHtml(tag.name)}')">
+                <span class="tag-name">${escapeHtml(tag.name)}</span>
+                <span class="tag-meta">
+                    ${timeAgo ? `<span class="tag-age">${timeAgo}</span>` : ''}
+                    <span class="tag-sha">${escapeHtml(tag.sha.substring(0, 7))}</span>
+                </span>
+            </div>
+        `;
+    }
+
+    html += `
+            </div>
+        </div>
+    `;
+
+    tagsList.innerHTML = html;
+}
+
+function selectPipelineTag(tagName) {
+    selectedPipelineTag = tagName;
+
+    // Update visual selection
+    const tagsList = document.getElementById('pipeline-tags-list');
+    tagsList.querySelectorAll('.tag-item').forEach(el => {
+        el.classList.toggle('selected', el.dataset.tag === tagName);
+    });
+
+    // Show selected tag display
+    const selectedDisplay = document.getElementById('pipeline-selected-tag');
+    const selectedValue = document.getElementById('pipeline-selected-tag-value');
+    selectedValue.textContent = tagName;
+    selectedDisplay.style.display = 'flex';
+}
+
+function closePipelineModal() {
+    document.getElementById('stack-pipeline-modal').classList.remove('active');
+    currentPipelineRepo = null;
+    currentPipelineSshUrl = null;
+    selectedPipelineTag = null;
+}
+
+async function submitPipeline() {
+    if (!currentPipelineRepo || !currentPipelineSshUrl) return;
+
+    if (!selectedPipelineTag) {
+        showNotification('error', 'Please select a version tag');
+        return;
+    }
+
+    const submitBtn = document.getElementById('stack-pipeline-submit');
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="btn-loading"></span> Starting...';
+
+    try {
+        const url = `/stacks/pipeline?repo_name=${encodeURIComponent(currentPipelineRepo)}&ssh_url=${encodeURIComponent(currentPipelineSshUrl)}&tag=${encodeURIComponent(selectedPipelineTag)}`;
+        const repoName = currentPipelineRepo;
+        const response = await fetch(`${API_BASE}${url}`, { method: 'POST', headers: authHeaders() });
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `HTTP ${response.status}`);
+        }
+        closePipelineModal();
+        scheduleStacksStateUpdate();
+    } catch (e) {
+        showNotification('error', e.message || 'Pipeline failed to start');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            Run Pipeline
+        `;
+    }
 }
 
 // ============== Build Modal ==============
@@ -3559,9 +3706,9 @@ function renderDeployTagsList(tags, defaultBranch) {
 
 function selectDeployTag(tagName) {
     selectedDeployTag = tagName;
-    
-    // Update visual selection
-    document.querySelectorAll('.tag-item').forEach(el => {
+
+    // Update visual selection (scoped to deploy modal)
+    document.getElementById('deploy-tags-list').querySelectorAll('.tag-item').forEach(el => {
         el.classList.toggle('selected', el.dataset.tag === tagName);
     });
     

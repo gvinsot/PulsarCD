@@ -276,19 +276,24 @@ log_info "Checking for 'test' service in $COMPOSE_FILE..."
 
 # Check if a "test" service is defined (indented with 2 spaces under services)
 if ! grep -qE '^\s{2}test:\s*$' "$COMPOSE_PATH"; then
-    log_error "No 'test' service found in $COMPOSE_FILE"
+    log_warning "No 'test' service found in $COMPOSE_FILE"
+    log_info "Skipping tests (no test service configured)"
     echo ""
-    log_info "Expected a service named 'test' with a build target, e.g.:"
+
+    # Restore original state before exiting
+    cd "$REPO_PATH"
+    if [ -n "$ORIGINAL_BRANCH" ] && [ "$ORIGINAL_BRANCH" != "HEAD" ]; then
+        git checkout "$ORIGINAL_BRANCH" 2>/dev/null || true
+    fi
+    if [ "$STASHED" = true ]; then
+        git stash pop 2>/dev/null || true
+    fi
+
+    echo "=============================================="
+    echo -e "  ${GREEN}Tests Skipped (no test service)${NC}"
+    echo "=============================================="
     echo ""
-    echo "  services:"
-    echo "    test:"
-    echo "      build:"
-    echo "        context: .."
-    echo "        dockerfile: Dockerfile"
-    echo "        target: test"
-    echo "      image: my-project-test:latest"
-    echo ""
-    exit 1
+    exit 0
 fi
 
 # ============================================================================
