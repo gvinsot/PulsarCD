@@ -1354,6 +1354,8 @@ async def get_repo_activity(
         github_service.get_repo_tags(owner, repo, limit=50),
     )
 
+    branches_were_empty = not branches
+
     # Fetch commits from all branches in parallel
     # If branches list is empty (permissions issue, rate limit), fall back to default branch
     if branches:
@@ -1407,6 +1409,14 @@ async def get_repo_activity(
     }
     if errors:
         response["error"] = errors[0]  # Surface first permission error to frontend
+    elif not commits and branches_were_empty:
+        # Both branches and commits failed - likely a permission issue
+        response["error"] = (
+            "Could not fetch repository data. Your GitHub token likely lacks the 'Contents: Read' permission. "
+            "Go to GitHub Settings > Developer settings > Personal access tokens > Fine-grained tokens, "
+            "edit your token and enable 'Contents: Read' under Repository permissions. "
+            "Note: 'Administration: Read' alone is not sufficient to access branches and commits."
+        )
     return response
 
 

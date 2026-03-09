@@ -607,14 +607,14 @@ class GitHubService:
 
         if not self.config.token:
             logger.warning("GitHub token not configured")
-            return {"commits": [], "has_more": False}
+            return {"commits": [], "has_more": False, "error": "GitHub token not configured"}
 
         if self._is_rate_limited():
             stale = self._commits_cache.get(cache_key)
             if stale:
                 logger.info("Rate limited, returning stale commits cache", repo=f"{owner}/{repo}")
                 return stale[0]
-            return {"commits": [], "has_more": False}
+            return {"commits": [], "has_more": False, "error": "Rate limited by GitHub API"}
 
         session = await self._get_session()
         url = f"https://api.github.com/repos/{owner}/{repo}/commits"
@@ -655,7 +655,7 @@ class GitHubService:
 
         except Exception as e:
             logger.error("Failed to fetch commits", repo=f"{owner}/{repo}", error=str(e))
-            return {"commits": [], "has_more": False}
+            return {"commits": [], "has_more": False, "error": f"Failed to fetch commits: {str(e)}"}
 
     async def get_commit_diff(self, owner: str, repo: str, sha: str) -> Dict[str, Any]:
         """Get the diff (changed files) for a specific commit.
