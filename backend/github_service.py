@@ -112,7 +112,7 @@ class GitHubService:
             return f"Repository not found or not accessible (404) when fetching {resource}."
         return f"GitHub API returned status {status} when fetching {resource}."
 
-    def _handle_rate_limit(self, response_headers) -> bool:
+    def _handle_rate_limit(self, response_headers, status: int = 200) -> bool:
         """Check response headers for rate limit. Returns True if rate-limited."""
         remaining = response_headers.get("X-RateLimit-Remaining")
         if remaining is not None and int(remaining) <= 0:
@@ -123,6 +123,17 @@ class GitHubService:
                 self._rate_limit_reset = datetime.now() + timedelta(minutes=5)
             logger.warning("GitHub API rate limit hit, backing off",
                           reset_at=str(self._rate_limit_reset))
+            return True
+        # Secondary rate limit: 403 with Retry-After header
+        retry_after = response_headers.get("Retry-After")
+        if status == 403 and retry_after:
+            try:
+                wait_seconds = int(retry_after)
+            except ValueError:
+                wait_seconds = 60
+            self._rate_limit_reset = datetime.now() + timedelta(seconds=wait_seconds)
+            logger.warning("GitHub secondary rate limit hit, backing off",
+                          retry_after=retry_after, reset_at=str(self._rate_limit_reset))
             return True
         return False
 
@@ -215,7 +226,7 @@ class GitHubService:
                                scopes=scopes, 
                                rate_limit=rate_limit)
                     
-                    self._handle_rate_limit(response.headers)
+                    self._handle_rate_limit(response.headers, response.status)
                     if response.status == 403 and self._is_rate_limited():
                         logger.warning("GitHub rate limit exceeded during starred repos fetch")
                         if self._starred_repos_cache:
@@ -302,7 +313,13 @@ class GitHubService:
 
         try:
             async with session.get(url, params=params) as response:
-                self._handle_rate_limit(response.headers)
+                self._handle_rate_limit(response.headers, response.status)
+                if response.status == 403 and self._is_rate_limited():
+                    logger.warning("GitHub rate limit exceeded during branches fetch", repo=cache_key)
+                    stale = self._branches_cache.get(cache_key)
+                    if stale:
+                        return stale[0]
+                    return []
                 if response.status != 200:
                     error_text = await response.text()
                     error_msg = self._parse_permission_error(error_text, response.status, "branches", "Contents: Read")
@@ -373,6 +390,13 @@ class GitHubService:
 
         try:
             async with session.get(tags_url, params={"per_page": min(limit, 100)}) as response:
+                self._handle_rate_limit(response.headers, response.status)
+                if response.status == 403 and self._is_rate_limited():
+                    logger.warning("GitHub rate limit exceeded during tags fetch", repo=f"{owner}/{repo}")
+                    stale = self._tags_cache.get(cache_key)
+                    if stale:
+                        return stale[0]
+                    return {"tags": [], "branches": {}}
                 if response.status != 200:
                     error_text = await response.text()
                     error_msg = self._parse_permission_error(error_text, response.status, "tags", "Contents: Read")
@@ -501,7 +525,10 @@ class GitHubService:
 
         try:
             async with session.get(url, params=params) as response:
-                self._handle_rate_limit(response.headers)
+                self._handle_rate_limit(response.headers, response.status)
+                if response.status == 403 and self._is_rate_limited():
+                    logger.warning("GitHub rate limit exceeded during commits fetch", repo=f"{owner}/{repo}")
+                    return {"commits": [], "has_more": False, "error": "Rate limited by GitHub API"}
                 if response.status != 200:
                     error_text = await response.text()
                     error_msg = self._parse_permission_error(error_text, response.status, "commits", "Contents: Read")
@@ -564,7 +591,10 @@ class GitHubService:
 
         try:
             async with session.get(url) as response:
-                self._handle_rate_limit(response.headers)
+                self._handle_rate_limit(response.headers, response.status)
+                if response.status == 403 and self._is_rate_limited():
+                    logger.warning("GitHub rate limit exceeded during commit diff fetch", repo=f"{owner}/{repo}")
+                    return {"files": [], "stats": {}, "error": "Rate limited by GitHub API"}
                 if response.status != 200:
                     error_text = await response.text()
                     error_msg = self._parse_permission_error(error_text, response.status, "commit diff", "Contents: Read")
@@ -651,7 +681,7 @@ class GitHubService:
 
         try:
             async with session.get(url) as response:
-                self._handle_rate_limit(response.headers)
+                self._handle_rate_limit(response.headers, response.status)
                 if response.status == 200:
                     return True, ""
                 elif response.status == 404:
