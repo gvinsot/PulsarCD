@@ -204,14 +204,20 @@ if [ -n "$BRANCH" ]; then
             log_error "Failed to checkout remote branch: origin/$BRANCH"
             exit 1
         }
+    elif git show-ref --verify --quiet "refs/tags/$BRANCH"; then
+        log_info "Checking out tag: $BRANCH"
+        git checkout "refs/tags/$BRANCH" || {
+            log_error "Failed to checkout tag: $BRANCH"
+            exit 1
+        }
     else
-        log_error "Branch not found: $BRANCH (checked locally and on origin)"
+        log_error "Branch or tag not found: $BRANCH (checked locally and on origin)"
         exit 1
     fi
 
     if [ -z "$COMMIT" ]; then
         log_info "Pulling latest changes..."
-        git pull origin "$BRANCH" || log_warning "Could not pull (may be a local-only branch)"
+        git pull origin "$BRANCH" || log_warning "Could not pull (may be a local-only branch or a tag)"
     else
         log_info "Checking out commit: $COMMIT"
         git checkout "$COMMIT" || {
