@@ -1137,6 +1137,49 @@ async def health_check() -> Dict[str, str]:
     return {"status": "healthy", "service": "logscrawler"}
 
 
+@app.get("/api/github/check-access")
+async def check_github_access():
+    """Diagnostic: test GitHub API access for all starred repos."""
+    if not github_service or not github_service.config.token:
+        return {"error": "GitHub token not configured"}
+
+    import aiohttp
+    repos = await github_service.get_starred_repos()
+    if not repos:
+        return {"error": "No starred repos found (or token has no access)"}
+
+    results = []
+    session = await github_service._get_session()
+
+    async def check_repo(repo):
+        owner = repo["owner"]
+        name = repo["name"]
+        url = f"https://api.github.com/repos/{owner}/{name}/commits?per_page=1"
+        try:
+            async with session.get(url) as response:
+                status = response.status
+                if status == 200:
+                    return {"repo": f"{owner}/{name}", "status": "ok", "code": 200}
+                else:
+                    error_text = await response.text()
+                    return {"repo": f"{owner}/{name}", "status": "error", "code": status, "message": error_text[:200]}
+        except Exception as e:
+            return {"repo": f"{owner}/{name}", "status": "error", "message": str(e)}
+
+    tasks = [check_repo(r) for r in repos]
+    results = await asyncio.gather(*tasks)
+
+    ok_count = sum(1 for r in results if r["status"] == "ok")
+    error_count = len(results) - ok_count
+
+    return {
+        "total": len(results),
+        "ok": ok_count,
+        "errors": error_count,
+        "repos": results
+    }
+
+
 # ============== Configuration ==============
 
 @app.get("/api/config")
