@@ -487,6 +487,105 @@ class GitHubService:
             return tags[0]["name"]
         return None
 
+    async def create_tag(self, owner: str, repo: str, tag_name: str, commit_sha: str) -> Dict[str, Any]:
+        """Create a lightweight tag on a commit via GitHub API.
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            tag_name: Tag name (e.g., "v1.0.5")
+            commit_sha: Full SHA of the commit to tag
+
+        Returns:
+            Dict with success status and tag info
+        """
+        if not self.config.token:
+            return {"success": False, "error": "GitHub token not configured"}
+
+        session = await self._get_session()
+        url = f"https://api.github.com/repos/{owner}/{repo}/git/refs"
+        payload = {
+            "ref": f"refs/tags/{tag_name}",
+            "sha": commit_sha,
+        }
+
+        try:
+            async with session.post(url, json=payload) as response:
+                self._handle_rate_limit(response.headers, response.status)
+                if response.status == 201:
+                    data = await response.json()
+                    logger.info("Created tag", repo=f"{owner}/{repo}", tag=tag_name, sha=commit_sha[:7])
+                    # Invalidate tags cache
+                    keys_to_remove = [k for k in self._tags_cache if k.startswith(f"{owner}/{repo}/")]
+                    for k in keys_to_remove:
+                        del self._tags_cache[k]
+                    return {"success": True, "tag": tag_name, "sha": commit_sha}
+                else:
+                    error_text = await response.text()
+                    logger.error("Failed to create tag", repo=f"{owner}/{repo}", tag=tag_name, status=response.status, error=error_text)
+                    return {"success": False, "error": error_text}
+        except Exception as e:
+            logger.error("Exception creating tag", repo=f"{owner}/{repo}", tag=tag_name, error=str(e))
+            return {"success": False, "error": str(e)}
+
+    async def get_untagged_commits(self, owner: str, repo: str, limit: int = 10) -> Dict[str, Any]:
+        """Get recent commits that don't have a tag pointing to them.
+
+        Compares the latest commits on the default branch against all known tags
+        to find commits that haven't been tagged (= not yet built/deployed).
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            limit: Max commits to check
+
+        Returns:
+            Dict with untagged_commits list and latest_tag info
+        """
+        # Fetch recent commits and tags in parallel
+        commits_task = self.get_repo_commits(owner, repo, per_page=limit)
+        tags_task = self.get_repo_tags(owner, repo, limit=50)
+
+        commits_data, tags_data = await asyncio.gather(commits_task, tags_task)
+
+        commits = commits_data.get("commits", [])
+        tags = tags_data.get("tags", [])
+        tagged_shas = {t["sha"] for t in tags}
+
+        untagged = []
+        for commit in commits:
+            if commit["sha"] not in tagged_shas:
+                untagged.append(commit)
+            else:
+                # Stop at the first tagged commit - everything before it is "new"
+                break
+
+        latest_tag = tags[0] if tags else None
+
+        return {
+            "untagged_commits": untagged,
+            "latest_tag": latest_tag,
+            "total_commits_checked": len(commits),
+        }
+
+    async def get_next_version(self, owner: str, repo: str) -> str:
+        """Compute the next patch version based on the latest tag.
+
+        E.g., if latest tag is v1.0.5, returns "1.0.6".
+        If no tags exist, returns "1.0.0".
+        """
+        tags_data = await self.get_repo_tags(owner, repo, limit=1)
+        tags = tags_data.get("tags", [])
+        if not tags:
+            return "1.0.0"
+
+        import re as _re
+        m = _re.match(r'^v?(\d+)\.(\d+)\.(\d+)$', tags[0]["name"])
+        if m:
+            major, minor, patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            return f"{major}.{minor}.{patch + 1}"
+        return "1.0.0"
+
     async def get_repo_commits(self, owner: str, repo: str, branch: str = None, per_page: int = 50, page: int = 1) -> Dict[str, Any]:
         """Get commit history for a repository branch.
 

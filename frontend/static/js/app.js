@@ -2264,6 +2264,7 @@ let stacksRepos = [];
 let stacksDeployedTags = {};
 let stacksLatestBuilt = {};
 let stacksPipelineState = {};
+let stacksAutoBuildState = {};
 
 async function loadStacks() {
     // Check GitHub status
@@ -2303,13 +2304,14 @@ async function refreshStacks() {
     const listEl = document.getElementById('stacks-list');
     listEl.innerHTML = '<div class="loading-placeholder">Loading starred repositories...</div>';
     
-    // Load repos, deployed tags, pipeline state, and containers in parallel
-    const [reposData, tagsData, containersData, hostMetrics, pipelineData] = await Promise.all([
+    // Load repos, deployed tags, pipeline state, auto-build state, and containers in parallel
+    const [reposData, tagsData, containersData, hostMetrics, pipelineData, autoBuildData] = await Promise.all([
         apiGet('/stacks/repos'),
         apiGet('/stacks/deployed-tags'),
         apiGet('/containers/grouped?refresh=true&group_by=stack'),
         apiGet('/hosts/metrics'),
-        apiGet('/stacks/pipeline/status')
+        apiGet('/stacks/pipeline/status'),
+        apiGet('/stacks/auto-build/status'),
     ]);
 
     if (!reposData || !reposData.repos) {
@@ -2323,6 +2325,7 @@ async function refreshStacks() {
     stacksContainers = containersData || {};
     stacksHostMetrics = hostMetrics || {};
     stacksPipelineState = (pipelineData && pipelineData.pipelines) ? pipelineData.pipelines : {};
+    stacksAutoBuildState = (autoBuildData && autoBuildData.state) ? autoBuildData.state : {};
     
     if (stacksRepos.length === 0) {
         listEl.innerHTML = '<div class="empty-placeholder">No starred repositories found</div>';
@@ -2395,6 +2398,7 @@ async function updateStacksContainerStates() {
             apiGet('/containers/states'),
             apiGet('/hosts/metrics'),
             apiGet('/stacks/pipeline/status'),
+            apiGet('/stacks/auto-build/status'),
         ];
         if (fetchVersions) {
             promises.push(apiGet('/stacks/deployed-tags'));
@@ -2404,7 +2408,8 @@ async function updateStacksContainerStates() {
         const statesData = results[0];
         const hostMetrics = results[1];
         const pipelineData = results[2];
-        const tagsData = fetchVersions ? results[3] : null;
+        const autoBuildData = results[3];
+        const tagsData = fetchVersions ? results[4] : null;
 
         if (!statesData) return;
         if (hostMetrics) stacksHostMetrics = hostMetrics;
@@ -2424,6 +2429,13 @@ async function updateStacksContainerStates() {
             const oldPipeline = JSON.stringify(stacksPipelineState);
             stacksPipelineState = pipelineData.pipelines || {};
             if (JSON.stringify(stacksPipelineState) !== oldPipeline) {
+                needsRerender = true;
+            }
+        }
+        if (autoBuildData && autoBuildData.state) {
+            const oldAutoBuild = JSON.stringify(stacksAutoBuildState);
+            stacksAutoBuildState = autoBuildData.state;
+            if (JSON.stringify(stacksAutoBuildState) !== oldAutoBuild) {
                 needsRerender = true;
             }
         }
@@ -2785,6 +2797,8 @@ function renderStacksList() {
         const latestBuilt = stacksLatestBuilt[repo.name];
         const hasUpdate = deployedTag && latestBuilt && normalizeVersion(latestBuilt) !== normalizeVersion(deployedTag);
         const isDeployed = !!deployedTag;
+        const autoBuild = stacksAutoBuildState[repo.name];
+        const untaggedCount = (autoBuild && autoBuild.untagged_commits) || 0;
         // Docker stack names: lowercase, non-alphanumeric → hyphens (mirrors deploy-service.sh)
         const stackName = repoToStackName(repo.name);
         const stackContainers = stacksContainers[stackName] || {};
@@ -2878,6 +2892,8 @@ function renderStacksList() {
             deployStep = cs >= 3 ? 'success' : 'pending';
         } else if (hasUpdate) {
             versionStep = 'success'; buildStep = 'success'; testStep = 'success'; deployStep = 'pending';
+        } else if (untaggedCount > 0) {
+            versionStep = 'pending'; buildStep = 'pending'; testStep = 'pending'; deployStep = 'pending';
         } else if (isDeployed) {
             versionStep = 'success'; buildStep = 'success'; testStep = 'success'; deployStep = 'success';
         }
@@ -3061,6 +3077,7 @@ function renderStacksList() {
                     ${escapeHtml(repo.name)}
                     ${deployedTag ? `<span class="stack-badge deployed" title="Deployed version">${escapeHtml(deployedTag)}</span>` : '<span class="stack-badge" style="background: var(--bg-tertiary); color: var(--text-muted);">Not deployed</span>'}
                     ${hasUpdate ? `<span class="stack-badge update-available" title="New version available">${escapeHtml(latestBuilt)}</span>` : ''}
+                    ${untaggedCount > 0 ? `<span class="stack-badge" style="background: var(--warning-bg, #664d03); color: var(--warning-text, #ffcd39);" title="${untaggedCount} untagged commit${untaggedCount > 1 ? 's' : ''}">${untaggedCount} untagged</span>` : ''}
                     ${isDeployed ? `<span class="group-count">${Object.keys(stackContainers).length} svc, ${containerCount} ct</span>` : ''}
                     ${isDeployed && tooltipLines.length > 0 ? `
                     <span class="stack-monitoring-tooltip">
@@ -3163,19 +3180,25 @@ function pipelineStepClick(repoName, sshUrl, step) {
 let currentPipelineRepo = null;
 let currentPipelineSshUrl = null;
 let selectedPipelineTag = null;
+let selectedPipelineCommit = null;  // commit SHA for untagged builds
 
 async function pipelineStack(repoName, sshUrl) {
     currentPipelineRepo = repoName;
     currentPipelineSshUrl = sshUrl;
     selectedPipelineTag = null;
+    selectedPipelineCommit = null;
 
     const modal = document.getElementById('stack-pipeline-modal');
     const title = document.getElementById('stack-pipeline-title');
     const tagsList = document.getElementById('pipeline-tags-list');
+    const untaggedSection = document.getElementById('pipeline-untagged-section');
+    const untaggedList = document.getElementById('pipeline-untagged-list');
     const selectedDisplay = document.getElementById('pipeline-selected-tag');
 
     title.textContent = `Pipeline: ${repoName}`;
-    tagsList.innerHTML = '<div class="loading-placeholder">Loading tags...</div>';
+    tagsList.innerHTML = '<div class="loading-placeholder">Loading...</div>';
+    untaggedSection.style.display = 'none';
+    untaggedList.innerHTML = '';
     selectedDisplay.style.display = 'none';
 
     modal.classList.add('active');
@@ -3188,29 +3211,73 @@ async function pipelineStack(repoName, sshUrl) {
     }
     const owner = ownerMatch[1];
 
-    // Load tags
+    // Load tags and untagged commits in parallel
     try {
-        const data = await apiGet(`/stacks/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/tags?limit=20`);
-        if (data && data.tags && data.tags.length > 0) {
-            renderPipelineTagsList(data.tags, data.default_branch || 'main');
-            // Auto-select the first (most recent) tag
-            selectPipelineTag(data.tags[0].name);
-        } else {
+        const [tagsData, untaggedData] = await Promise.all([
+            apiGet(`/stacks/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/tags?limit=20`),
+            apiGet(`/stacks/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/untagged-commits?limit=10`),
+        ]);
+
+        // Render untagged commits if any
+        const untaggedCommits = (untaggedData && untaggedData.untagged_commits) || [];
+        if (untaggedCommits.length > 0) {
+            untaggedSection.style.display = '';
+            document.getElementById('pipeline-untagged-count').textContent = untaggedCommits.length;
+            renderPipelineUntaggedList(untaggedCommits);
+            // Auto-select the latest untagged commit
+            selectPipelineCommit(untaggedCommits[0].sha);
+        }
+
+        // Render tags
+        const tags = (tagsData && tagsData.tags) || [];
+        if (tags.length > 0) {
+            renderPipelineTagsList(tags, tagsData.default_branch || 'main');
+            // Auto-select first tag only if no untagged commits
+            if (untaggedCommits.length === 0) {
+                selectPipelineTag(tags[0].name);
+            }
+        } else if (untaggedCommits.length === 0) {
             tagsList.innerHTML = `
                 <div class="empty-placeholder">
                     <p>No tags found in this repository.</p>
-                    <p class="hint">Create a git tag first (e.g., git tag v1.0.0).</p>
+                    <p class="hint">Create a git tag first, or push a commit to trigger auto-tagging.</p>
                 </div>
             `;
+        } else {
+            tagsList.innerHTML = `<div class="empty-placeholder"><p>No tags yet. The selected commit will be auto-tagged.</p></div>`;
         }
     } catch (e) {
-        console.error('Failed to load tags:', e);
+        console.error('Failed to load pipeline data:', e);
         tagsList.innerHTML = `
             <div class="error-placeholder">
-                <p>Failed to load tags: ${escapeHtml(e.message || 'Unknown error')}</p>
+                <p>Failed to load data: ${escapeHtml(e.message || 'Unknown error')}</p>
             </div>
         `;
     }
+}
+
+function renderPipelineUntaggedList(commits) {
+    const list = document.getElementById('pipeline-untagged-list');
+
+    let html = `<div class="tags-group"><div class="tags-group-items">`;
+    for (const commit of commits) {
+        const timeAgo = formatTimeAgo(commit.date);
+        const msgFirstLine = (commit.message || '').split('\n')[0].substring(0, 60);
+        html += `
+            <div class="tag-item untagged-commit-item" data-commit="${escapeHtml(commit.sha)}" onclick="selectPipelineCommit('${escapeHtml(commit.sha)}')">
+                <span class="tag-name" style="display:flex;align-items:center;gap:6px;">
+                    <span class="tag-sha" style="font-weight:600;color:var(--accent)">${escapeHtml(commit.short_sha)}</span>
+                    <span style="color:var(--text-secondary);font-size:0.85em;">${escapeHtml(msgFirstLine)}</span>
+                </span>
+                <span class="tag-meta">
+                    ${timeAgo ? `<span class="tag-age">${timeAgo}</span>` : ''}
+                    <span style="font-size:0.8em;color:var(--text-muted)">${escapeHtml(commit.author_name || '')}</span>
+                </span>
+            </div>
+        `;
+    }
+    html += `</div></div>`;
+    list.innerHTML = html;
 }
 
 function renderPipelineTagsList(tags, defaultBranch) {
@@ -3246,10 +3313,28 @@ function renderPipelineTagsList(tags, defaultBranch) {
     tagsList.innerHTML = html;
 }
 
+function selectPipelineCommit(sha) {
+    selectedPipelineCommit = sha;
+    selectedPipelineTag = null;  // deselect tag
+
+    // Update visual selection in both lists
+    document.querySelectorAll('#pipeline-tags-list .tag-item').forEach(el => el.classList.remove('selected'));
+    document.querySelectorAll('#pipeline-untagged-list .tag-item').forEach(el => {
+        el.classList.toggle('selected', el.dataset.commit === sha);
+    });
+
+    const selectedDisplay = document.getElementById('pipeline-selected-tag');
+    const selectedValue = document.getElementById('pipeline-selected-tag-value');
+    selectedValue.textContent = `${sha.substring(0, 7)} (will be auto-tagged)`;
+    selectedDisplay.style.display = 'flex';
+}
+
 function selectPipelineTag(tagName) {
     selectedPipelineTag = tagName;
+    selectedPipelineCommit = null;  // deselect commit
 
-    // Update visual selection
+    // Update visual selection in both lists
+    document.querySelectorAll('#pipeline-untagged-list .tag-item').forEach(el => el.classList.remove('selected'));
     const tagsList = document.getElementById('pipeline-tags-list');
     tagsList.querySelectorAll('.tag-item').forEach(el => {
         el.classList.toggle('selected', el.dataset.tag === tagName);
@@ -3267,13 +3352,14 @@ function closePipelineModal() {
     currentPipelineRepo = null;
     currentPipelineSshUrl = null;
     selectedPipelineTag = null;
+    selectedPipelineCommit = null;
 }
 
 async function submitPipeline() {
     if (!currentPipelineRepo || !currentPipelineSshUrl) return;
 
-    if (!selectedPipelineTag) {
-        showNotification('error', 'Please select a version tag');
+    if (!selectedPipelineTag && !selectedPipelineCommit) {
+        showNotification('error', 'Please select a version tag or an untagged commit');
         return;
     }
 
@@ -3282,12 +3368,20 @@ async function submitPipeline() {
     submitBtn.innerHTML = '<span class="btn-loading"></span> Starting...';
 
     try {
-        const url = `/stacks/pipeline?repo_name=${encodeURIComponent(currentPipelineRepo)}&ssh_url=${encodeURIComponent(currentPipelineSshUrl)}&tag=${encodeURIComponent(selectedPipelineTag)}`;
-        const repoName = currentPipelineRepo;
+        let url;
+        if (selectedPipelineTag) {
+            url = `/stacks/pipeline?repo_name=${encodeURIComponent(currentPipelineRepo)}&ssh_url=${encodeURIComponent(currentPipelineSshUrl)}&tag=${encodeURIComponent(selectedPipelineTag)}`;
+        } else {
+            url = `/stacks/pipeline?repo_name=${encodeURIComponent(currentPipelineRepo)}&ssh_url=${encodeURIComponent(currentPipelineSshUrl)}&commit=${encodeURIComponent(selectedPipelineCommit)}`;
+        }
         const response = await fetch(`${API_BASE}${url}`, { method: 'POST', headers: authHeaders() });
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
             throw new Error(errorData.detail || `HTTP ${response.status}`);
+        }
+        const result = await response.json();
+        if (result.auto_tagged) {
+            showNotification('success', `Commit auto-tagged as ${result.tag}`);
         }
         closePipelineModal();
         scheduleStacksStateUpdate();

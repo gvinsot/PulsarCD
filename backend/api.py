@@ -1282,6 +1282,19 @@ async def get_repo_tags(
     return tags_data
 
 
+@app.get("/api/stacks/{owner}/{repo}/untagged-commits")
+async def get_untagged_commits(
+    owner: str,
+    repo: str,
+    limit: int = Query(default=10, ge=1, le=50, description="Maximum number of commits to check"),
+):
+    """Get recent commits that don't have a tag (not yet built/deployed)."""
+    if not github_service.is_configured():
+        raise HTTPException(status_code=400, detail="GitHub integration not configured")
+
+    return await github_service.get_untagged_commits(owner, repo, limit)
+
+
 @app.get("/api/stacks/{owner}/{repo}/activity")
 async def get_repo_activity(
     owner: str,
@@ -1817,7 +1830,7 @@ async def get_stacks_deployed_tags():
 
 # ============== Pipeline (Auto Build → Test → Deploy) ==============
 
-_auto_build_state = {}  # {repo_name: {"last_sha": str, "building": bool}}
+_auto_build_state = {}  # {repo_name: {"last_sha": str, "building": bool, "untagged_commits": int}}
 _pipeline_state = {}  # {repo_name: {"stage": str, "status": str, "build_action_id": str|None, "test_action_id": str|None, "deploy_action_id": str|None, "version": str}}
 _auto_build_task = None
 
@@ -1826,29 +1839,55 @@ _auto_build_task = None
 async def trigger_pipeline_endpoint(
     repo_name: str = Query(..., description="Repository name"),
     ssh_url: str = Query(..., description="SSH URL for cloning"),
-    tag: str = Query(..., description="Git tag to build and deploy (format: vX.X.X)"),
+    tag: str = Query(default=None, description="Git tag to build and deploy (format: vX.X.X)"),
+    commit: str = Query(default=None, description="Commit SHA to build (will be auto-tagged)"),
 ):
-    """Trigger a full pipeline (Build → Test → Deploy) from a specific git tag."""
+    """Trigger a full pipeline (Build → Test → Deploy) from a tag or commit.
+
+    Either `tag` or `commit` must be provided. If `commit` is provided without a tag,
+    the next version is computed automatically and the commit is tagged before building.
+    """
     if not github_service.is_configured():
         raise HTTPException(status_code=400, detail="GitHub integration not configured")
 
-    if not re.match(r'^v?\d+(\.\d+){1,2}$', tag):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid tag format: '{tag}'. Expected format: vX.X.X (e.g., v1.0.5)"
-        )
+    if not tag and not commit:
+        raise HTTPException(status_code=400, detail="Either 'tag' or 'commit' must be provided")
 
     # Check if pipeline is already running for this repo
     existing = _pipeline_state.get(repo_name, {})
     if existing.get("status") == "running":
         raise HTTPException(status_code=409, detail=f"Pipeline already running for {repo_name}")
 
-    # Extract version from tag (e.g., "v1.0.5" → "1.0.5")
-    version = tag.lstrip('v')
+    if tag:
+        # Existing flow: pipeline from a known tag
+        if not re.match(r'^v?\d+(\.\d+){1,2}$', tag):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid tag format: '{tag}'. Expected format: vX.X.X (e.g., v1.0.5)"
+            )
+        version = tag.lstrip('v')
+        await _trigger_pipeline(repo_name, ssh_url, version=version, tag=tag)
+        return {"status": "started", "repo": repo_name, "tag": tag, "version": version}
+    else:
+        # New flow: auto-tag the commit, then run pipeline
+        owner_match = re.search(r'[:/]([^/]+)/[^/]+\.git$', ssh_url)
+        if not owner_match:
+            raise HTTPException(status_code=400, detail="Cannot parse owner from ssh_url")
+        owner = owner_match.group(1)
 
-    await _trigger_pipeline(repo_name, ssh_url, version=version, tag=tag)
+        next_version = await github_service.get_next_version(owner, repo_name)
+        new_tag = f"v{next_version}"
 
-    return {"status": "started", "repo": repo_name, "tag": tag, "version": version}
+        result = await github_service.create_tag(owner, repo_name, new_tag, commit)
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create tag {new_tag}: {result.get('error', 'unknown')}"
+            )
+
+        logger.info("Auto-tagged commit for pipeline", repo=repo_name, tag=new_tag, commit=commit[:7])
+        await _trigger_pipeline(repo_name, ssh_url, version=next_version, tag=new_tag)
+        return {"status": "started", "repo": repo_name, "tag": new_tag, "version": next_version, "auto_tagged": True}
 AUTO_BUILD_POLL_INTERVAL = 120  # seconds (was 20s, increased to avoid GitHub rate limits)
 
 # Pipeline stages in order
@@ -1992,7 +2031,11 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
 
 
 async def auto_build_poller():
-    """Periodically check starred repos for new commits on default branch and trigger pipeline."""
+    """Periodically check starred repos for new commits on default branch and trigger pipeline.
+
+    Also tracks untagged commits count per repo so the frontend can show
+    that there are new commits awaiting a build.
+    """
     await asyncio.sleep(10)
 
     while True:
@@ -2003,25 +2046,45 @@ async def auto_build_poller():
                 for repo in repos:
                     owner, name, ssh_url = repo["owner"], repo["name"], repo["ssh_url"]
 
-                    commits_data = await github_service.get_repo_commits(owner, name, per_page=1)
+                    try:
+                        # Fetch latest commit and untagged count in parallel
+                        commits_task = github_service.get_repo_commits(owner, name, per_page=1)
+                        untagged_task = github_service.get_untagged_commits(owner, name, limit=20)
+                        commits_data, untagged_data = await asyncio.gather(commits_task, untagged_task)
+                    except Exception as e:
+                        logger.warning("Failed to fetch commit data for repo", repo=name, error=str(e))
+                        continue
+
                     commits = commits_data.get("commits", [])
                     if not commits:
                         continue
 
                     latest_sha = commits[0]["sha"]
+                    untagged_count = len(untagged_data.get("untagged_commits", []))
                     state = _auto_build_state.get(name)
 
                     if state is None:
-                        _auto_build_state[name] = {"last_sha": latest_sha, "building": False}
+                        _auto_build_state[name] = {
+                            "last_sha": latest_sha,
+                            "building": False,
+                            "untagged_commits": untagged_count,
+                        }
+                        if untagged_count > 0:
+                            logger.info("Repo initialized with untagged commits",
+                                        repo=name, untagged=untagged_count)
                         continue
+
+                    # Always update untagged count
+                    state["untagged_commits"] = untagged_count
 
                     if latest_sha != state["last_sha"] and not state.get("building"):
                         logger.info("New commit detected, triggering pipeline",
                                     repo=name,
                                     old_sha=state["last_sha"][:7],
-                                    new_sha=latest_sha[:7])
-                        _auto_build_state[name]["building"] = True
-                        _auto_build_state[name]["last_sha"] = latest_sha
+                                    new_sha=latest_sha[:7],
+                                    untagged=untagged_count)
+                        state["building"] = True
+                        state["last_sha"] = latest_sha
                         await _trigger_pipeline(name, ssh_url)
 
         except Exception as e:

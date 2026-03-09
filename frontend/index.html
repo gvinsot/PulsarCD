@@ -527,10 +527,15 @@
                             <button class="modal-close" onclick="closePipelineModal()">&times;</button>
                         </div>
                         <div class="modal-body">
-                            <p class="modal-help-text">Select a version tag to run the full pipeline: Build → Test → Deploy.</p>
+                            <p class="modal-help-text">Select a version tag or an untagged commit to run the full pipeline: Build → Test → Deploy.</p>
+
+                            <div id="pipeline-untagged-section" class="form-group" style="display: none;">
+                                <label class="form-label">Untagged Commits <span id="pipeline-untagged-count" style="display:inline-block;background:#664d03;color:#ffcd39;border-radius:10px;padding:1px 8px;font-size:0.8em;font-weight:600;margin-left:4px;"></span></label>
+                                <div id="pipeline-untagged-list" class="tags-list"></div>
+                            </div>
 
                             <div class="form-group">
-                                <label class="form-label">Version Tag</label>
+                                <label class="form-label">Version Tags</label>
                                 <div id="pipeline-tags-list" class="tags-list">
                                     <div class="loading-placeholder">Loading tags...</div>
                                 </div>
