@@ -566,13 +566,17 @@
                             <button class="modal-close" onclick="closeBuildModal()">&times;</button>
                         </div>
                         <div class="modal-body">
-                            <p class="modal-help-text">Choose a branch to build from, or enter a specific commit ID.</p>
-                            
+                            <p class="modal-help-text">Choose a tag, branch, or commit to build from.</p>
+
                             <div class="form-group">
                                 <label class="form-label">Source</label>
                                 <div class="radio-group">
                                     <label class="radio-label">
-                                        <input type="radio" name="build-source" value="branch" checked onchange="toggleBuildSource('branch')">
+                                        <input type="radio" name="build-source" value="tag" checked onchange="toggleBuildSource('tag')">
+                                        <span>Tag</span>
+                                    </label>
+                                    <label class="radio-label">
+                                        <input type="radio" name="build-source" value="branch" onchange="toggleBuildSource('branch')">
                                         <span>Branch</span>
                                     </label>
                                     <label class="radio-label">
@@ -581,21 +585,32 @@
                                     </label>
                                 </div>
                             </div>
-                            
-                            <div id="build-branch-group" class="form-group">
+
+                            <div id="build-tag-group" class="form-group">
+                                <label class="form-label">Version Tag</label>
+                                <div id="build-tags-list" class="tags-list">
+                                    <div class="loading-placeholder">Loading tags...</div>
+                                </div>
+                                <div id="build-selected-tag" class="selected-tag-display" style="display: none;">
+                                    <span class="selected-tag-label">Selected:</span>
+                                    <span id="build-selected-tag-value" class="selected-tag-value"></span>
+                                </div>
+                            </div>
+
+                            <div id="build-branch-group" class="form-group" style="display: none;">
                                 <label class="form-label" for="build-branch-select">Branch</label>
                                 <select id="build-branch-select" class="form-select">
                                     <option value="">Loading branches...</option>
                                 </select>
                             </div>
-                            
+
                             <div id="build-commit-group" class="form-group" style="display: none;">
                                 <label class="form-label" for="build-commit-input">Commit ID</label>
                                 <input type="text" id="build-commit-input" class="form-input" placeholder="e.g., abc1234 or full SHA">
                                 <span class="form-hint">Enter a short or full commit hash (7-40 characters)</span>
                             </div>
-                            
-                            <div class="form-group">
+
+                            <div id="build-version-group" class="form-group" style="display: none;">
                                 <label class="form-label" for="build-version-input">Version</label>
                                 <input type="text" id="build-version-input" class="form-input" placeholder="1.0" value="1.0">
                                 <span class="form-hint">Major.minor version (patch will be auto-incremented)</span>

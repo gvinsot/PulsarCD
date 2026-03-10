@@ -140,24 +140,18 @@ update_image_tags() {
     local output_file="$3"
     local registry_url="${REGISTRY_URL:-${DOCKER_REGISTRY_URL:-$REGISTRY}}"
 
-    # Resolve all environment variables in compose file, then update version tags
-    envsubst < "$compose_file" 2>/dev/null | \
-        sed -e "s|\(${registry_url}/[^:]*\):[^[:space:]\"']*|\1:${version}|g" \
-        > "$output_file"
-
-    # Fallback if envsubst failed
-    if [ ! -s "$output_file" ]; then
-        log_warning "envsubst failed, falling back to sed substitution"
-        sed -e "s|\${REGISTRY_URL:-[^}]*}|${registry_url}|g" \
-            -e "s|\${REGISTRY_URL}|${registry_url}|g" \
-            -e "s|\${DOCKER_REGISTRY_URL}|${registry_url}|g" \
-            -e "s|\${REPO_NAME:-[^}]*}|${REPO_NAME}|g" \
-            -e "s|\${REPO_NAME}|${REPO_NAME}|g" \
-            -e "s|\${VERSION:-[^}]*}|${version}|g" \
-            -e "s|\${VERSION}|${version}|g" \
-            -e "s|\(${registry_url}/[^:]*\):[^[:space:]\"']*|\1:${version}|g" \
-            "$compose_file" > "$output_file"
-    fi
+    # Only resolve deploy-related variables, preserve all others (like DATABASE_URL)
+    # envsubst without args replaces ALL ${VAR} — which destroys runtime variables
+    sed -e "s|\${REGISTRY_URL:-[^}]*}|${registry_url}|g" \
+        -e "s|\${REGISTRY_URL}|${registry_url}|g" \
+        -e "s|\${DOCKER_REGISTRY_URL:-[^}]*}|${registry_url}|g" \
+        -e "s|\${DOCKER_REGISTRY_URL}|${registry_url}|g" \
+        -e "s|\${REPO_NAME:-[^}]*}|${REPO_NAME}|g" \
+        -e "s|\${REPO_NAME}|${REPO_NAME}|g" \
+        -e "s|\${VERSION:-[^}]*}|${version}|g" \
+        -e "s|\${VERSION}|${version}|g" \
+        -e "s|\(${registry_url}/[^:]*\):[^[:space:]\"']*|\1:${version}|g" \
+        "$compose_file" > "$output_file"
 }
 
 # Run a hook script if it exists

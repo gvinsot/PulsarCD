@@ -3401,84 +3401,154 @@ async function submitPipeline() {
 
 let currentBuildRepo = null;
 let currentBuildSshUrl = null;
+let selectedBuildTag = null;
 
 async function buildStack(repoName, sshUrl) {
     currentBuildRepo = repoName;
     currentBuildSshUrl = sshUrl;
-    
+    selectedBuildTag = null;
+
     const modal = document.getElementById('stack-build-modal');
     const title = document.getElementById('stack-build-title');
+    const tagsList = document.getElementById('build-tags-list');
     const branchSelect = document.getElementById('build-branch-select');
     const versionInput = document.getElementById('build-version-input');
     const commitInput = document.getElementById('build-commit-input');
-    
+    const selectedDisplay = document.getElementById('build-selected-tag');
+
     title.textContent = `Build: ${repoName}`;
+    tagsList.innerHTML = '<div class="loading-placeholder">Loading tags...</div>';
     branchSelect.innerHTML = '<option value="">Loading branches...</option>';
     commitInput.value = '';
     versionInput.value = '1.0';
-    
-    // Reset to branch mode
-    document.querySelector('input[name="build-source"][value="branch"]').checked = true;
-    toggleBuildSource('branch');
-    
+    selectedDisplay.style.display = 'none';
+
+    // Reset to tag mode
+    document.querySelector('input[name="build-source"][value="tag"]').checked = true;
+    toggleBuildSource('tag');
+
     modal.classList.add('active');
-    
+
     // Extract owner from ssh_url
     const ownerMatch = sshUrl.match(/[:/]([^/]+)\/[^/]+\.git$/);
     if (!ownerMatch) {
-        branchSelect.innerHTML = '<option value="">Failed to parse repository URL</option>';
+        tagsList.innerHTML = '<div class="error-placeholder">Failed to parse repository URL</div>';
         return;
     }
     const owner = ownerMatch[1];
-    
-    // Load branches
+
+    // Load tags and branches in parallel
     try {
-        const data = await apiGet(`/stacks/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/branches`);
-        if (data && data.branches && data.branches.length > 0) {
-            branchSelect.innerHTML = data.branches.map(b => 
+        const [tagsData, branchesData] = await Promise.all([
+            apiGet(`/stacks/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/tags?limit=20`),
+            apiGet(`/stacks/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/branches`),
+        ]);
+
+        // Render tags
+        if (tagsData && tagsData.tags && tagsData.tags.length > 0) {
+            renderBuildTagsList(tagsData.tags, tagsData.default_branch || 'main');
+            selectBuildTag(tagsData.tags[0].name);
+        } else {
+            tagsList.innerHTML = `
+                <div class="empty-placeholder">
+                    <p>No tags found.</p>
+                    <p class="hint">Use Branch or Commit ID with a manual version.</p>
+                </div>
+            `;
+        }
+
+        // Render branches
+        if (branchesData && branchesData.branches && branchesData.branches.length > 0) {
+            branchSelect.innerHTML = branchesData.branches.map(b =>
                 `<option value="${escapeHtml(b.name)}" ${b.name === 'main' || b.name === 'master' ? 'selected' : ''}>
-                    ${escapeHtml(b.name)}${b.protected ? ' 🔒' : ''}
+                    ${escapeHtml(b.name)}${b.protected ? ' \uD83D\uDD12' : ''}
                 </option>`
             ).join('');
         } else {
             branchSelect.innerHTML = '<option value="main">main</option>';
         }
     } catch (e) {
-        console.error('Failed to load branches:', e);
+        console.error('Failed to load build data:', e);
+        tagsList.innerHTML = '<div class="error-placeholder">Failed to load tags</div>';
         branchSelect.innerHTML = '<option value="main">main (default)</option>';
     }
 }
 
+function renderBuildTagsList(tags, defaultBranch) {
+    const tagsList = document.getElementById('build-tags-list');
+    let html = `
+        <div class="tags-group">
+            <div class="tags-group-header">
+                <span class="branch-name">${escapeHtml(defaultBranch)}</span>
+                <span class="tag-count">${tags.length} tag${tags.length !== 1 ? 's' : ''}</span>
+            </div>
+            <div class="tags-group-items">
+    `;
+    for (const tag of tags) {
+        const timeAgo = formatTimeAgo(tag.created_at);
+        html += `
+            <div class="tag-item" data-tag="${escapeHtml(tag.name)}" onclick="selectBuildTag('${escapeHtml(tag.name)}')">
+                <span class="tag-name">${escapeHtml(tag.name)}</span>
+                <span class="tag-meta">
+                    ${timeAgo ? `<span class="tag-age">${timeAgo}</span>` : ''}
+                    <span class="tag-sha">${escapeHtml(tag.sha.substring(0, 7))}</span>
+                </span>
+            </div>
+        `;
+    }
+    html += '</div></div>';
+    tagsList.innerHTML = html;
+}
+
+function selectBuildTag(tagName) {
+    selectedBuildTag = tagName;
+    document.getElementById('build-tags-list').querySelectorAll('.tag-item').forEach(el => {
+        el.classList.toggle('selected', el.dataset.tag === tagName);
+    });
+    const selectedDisplay = document.getElementById('build-selected-tag');
+    const selectedValue = document.getElementById('build-selected-tag-value');
+    selectedValue.textContent = tagName;
+    selectedDisplay.style.display = 'flex';
+}
+
 function toggleBuildSource(source) {
+    const tagGroup = document.getElementById('build-tag-group');
     const branchGroup = document.getElementById('build-branch-group');
     const commitGroup = document.getElementById('build-commit-group');
-    
-    if (source === 'branch') {
-        branchGroup.style.display = 'block';
-        commitGroup.style.display = 'none';
-    } else {
-        branchGroup.style.display = 'none';
-        commitGroup.style.display = 'block';
-    }
+    const versionGroup = document.getElementById('build-version-group');
+
+    tagGroup.style.display = source === 'tag' ? 'block' : 'none';
+    branchGroup.style.display = source === 'branch' ? 'block' : 'none';
+    commitGroup.style.display = source === 'commit' ? 'block' : 'none';
+    // Show manual version input only for branch/commit (tag already has a version)
+    versionGroup.style.display = (source === 'branch' || source === 'commit') ? 'block' : 'none';
 }
 
 function closeBuildModal() {
     document.getElementById('stack-build-modal').classList.remove('active');
     currentBuildRepo = null;
     currentBuildSshUrl = null;
+    selectedBuildTag = null;
 }
 
 async function submitBuild() {
     if (!currentBuildRepo || !currentBuildSshUrl) return;
-    
+
     const submitBtn = document.getElementById('stack-build-submit');
     const source = document.querySelector('input[name="build-source"]:checked').value;
-    const version = document.getElementById('build-version-input').value || '1.0';
-    
+
+    let tag = null;
     let branch = null;
     let commit = null;
-    
-    if (source === 'branch') {
+    let version = document.getElementById('build-version-input').value || '1.0';
+
+    if (source === 'tag') {
+        if (!selectedBuildTag) {
+            showNotification('error', 'Please select a version tag');
+            return;
+        }
+        tag = selectedBuildTag;
+    } else if (source === 'branch') {
         branch = document.getElementById('build-branch-select').value;
     } else {
         commit = document.getElementById('build-commit-input').value.trim();
@@ -3486,26 +3556,30 @@ async function submitBuild() {
             showNotification('error', 'Please enter a commit ID');
             return;
         }
-        // Basic validation
         if (!/^[a-fA-F0-9]{7,40}$/.test(commit)) {
             showNotification('error', 'Invalid commit ID format. Expected 7-40 hexadecimal characters.');
             return;
         }
     }
-    
+
     // Disable button and show loading
     submitBtn.disabled = true;
     submitBtn.innerHTML = '<span class="btn-loading"></span> Starting...';
-    
+
     try {
-        let url = `/stacks/build?repo_name=${encodeURIComponent(currentBuildRepo)}&ssh_url=${encodeURIComponent(currentBuildSshUrl)}&version=${encodeURIComponent(version)}`;
+        let url = `/stacks/build?repo_name=${encodeURIComponent(currentBuildRepo)}&ssh_url=${encodeURIComponent(currentBuildSshUrl)}`;
+        if (tag) {
+            url += `&tag=${encodeURIComponent(tag)}`;
+        } else {
+            url += `&version=${encodeURIComponent(version)}`;
+        }
         if (branch) {
             url += `&branch=${encodeURIComponent(branch)}`;
         }
         if (commit) {
             url += `&commit=${encodeURIComponent(commit)}`;
         }
-        
+
         const repoName = currentBuildRepo;
         const response = await fetch(`${API_BASE}${url}`, { method: 'POST', headers: authHeaders() });
         if (!response.ok) {

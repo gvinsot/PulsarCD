@@ -1563,32 +1563,39 @@ async def build_stack(
     ssh_url: str = Query(..., description="SSH URL for cloning"),
     version: str = Query(default="1.0", description="Version tag"),
     branch: str = Query(default=None, description="Branch name to build from"),
+    tag: str = Query(default=None, description="Git tag to build from (e.g., v1.0.5)"),
     commit: str = Query(default=None, description="Specific commit hash to build from"),
 ):
     """Build a stack from a GitHub repository. Runs in background, returns action ID."""
     if not github_service.is_configured():
         raise HTTPException(status_code=400, detail="GitHub integration not configured")
-    
+
     owner = None
     if ssh_url:
         match = re.search(r'[:/]([^/]+)/[^/]+\.git$', ssh_url)
         if match:
             owner = match.group(1)
-    
+
+    # If tag is provided, derive version from it
+    if tag:
+        if not re.match(r'^v?\d+(\.\d+){1,2}$', tag):
+            raise HTTPException(status_code=400, detail=f"Invalid tag format: '{tag}'. Expected format: vX.X.X")
+        version = tag.lstrip('v')
+
     if branch and owner:
         is_valid, error_msg = await github_service.validate_branch(owner, repo_name, branch)
         if not is_valid:
             raise HTTPException(status_code=400, detail=error_msg)
-    
+
     if commit and owner:
         if not re.match(r'^[a-fA-F0-9]{7,40}$', commit):
             raise HTTPException(status_code=400, detail=f"Invalid commit hash format: '{commit}'. Expected 7-40 hexadecimal characters.")
         is_valid, error_msg = await github_service.validate_commit(owner, repo_name, commit)
         if not is_valid:
             raise HTTPException(status_code=400, detail=error_msg)
-    
+
     deployer, host_name = _get_deployer_and_host()
-    
+
     # Create background action
     action_id = str(uuid.uuid4())[:8]
     action = BackgroundAction(action_id, "build", repo_name)
@@ -1605,7 +1612,7 @@ async def build_stack(
     async def _run_build():
         try:
             result = await deployer.build(
-                repo_name, ssh_url, version, branch=branch, commit=commit,
+                repo_name, ssh_url, version, branch=branch, tag=tag, commit=commit,
                 output_callback=action.append_output,
                 cancel_event=action.cancel_event,
             )
