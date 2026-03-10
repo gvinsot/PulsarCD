@@ -1087,6 +1087,7 @@ class StackDeployer:
 
     async def build(self, repo_name: str, ssh_url: str, version: str = "1.0",
                    branch: str = None, tag: str = None, commit: str = None,
+                   no_cache: bool = False,
                    output_callback=None, cancel_event=None) -> Dict[str, Any]:
         """Build a stack from a repository.
 
@@ -1136,15 +1137,20 @@ class StackDeployer:
 
             # Build command with optional branch/tag/commit parameters
             # Pass absolute repo_path to avoid path computation mismatch
-            # Script format: build-push.sh <folder> <version> [branch/tag] [commit]
+            # Script format: build-push.sh <folder> <version> [branch/tag] [commit] [--no-cache]
             build_cmd = f"cd {scripts_path} && bash build-push.sh \"{repo_path}\" {version}"
             if checkout_ref:
                 build_cmd += f" {checkout_ref}"
                 if commit:
                     build_cmd += f" {commit}"
+                else:
+                    build_cmd += f" \"\""
             elif commit:
-                # If commit is provided without branch, use current branch
                 build_cmd += f" \"\" {commit}"
+            else:
+                build_cmd += f" \"\" \"\""
+            if no_cache:
+                build_cmd += " --no-cache"
 
             if output_callback and clone_msg:
                 for line in clone_msg.split('\n'):

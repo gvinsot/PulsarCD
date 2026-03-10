@@ -1565,6 +1565,7 @@ async def build_stack(
     branch: str = Query(default=None, description="Branch name to build from"),
     tag: str = Query(default=None, description="Git tag to build from (e.g., v1.0.5)"),
     commit: str = Query(default=None, description="Specific commit hash to build from"),
+    no_cache: bool = Query(default=False, description="Force fresh build without Docker cache"),
 ):
     """Build a stack from a GitHub repository. Runs in background, returns action ID."""
     if not github_service.is_configured():
@@ -1613,6 +1614,7 @@ async def build_stack(
         try:
             result = await deployer.build(
                 repo_name, ssh_url, version, branch=branch, tag=tag, commit=commit,
+                no_cache=no_cache,
                 output_callback=action.append_output,
                 cancel_event=action.cancel_event,
             )

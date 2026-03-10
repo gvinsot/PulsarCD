@@ -615,6 +615,14 @@
                                 <input type="text" id="build-version-input" class="form-input" placeholder="1.0" value="1.0">
                                 <span class="form-hint">Major.minor version (patch will be auto-incremented)</span>
                             </div>
+
+                            <div class="form-group">
+                                <label class="checkbox-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="checkbox" id="build-no-cache" style="width: 16px; height: 16px;">
+                                    <span>No cache</span>
+                                </label>
+                                <span class="form-hint">Force a fresh build without Docker layer cache</span>
+                            </div>
                         </div>
                         <div class="modal-footer">
                             <button class="btn btn-secondary" onclick="closeBuildModal()">Cancel</button>

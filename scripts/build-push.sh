@@ -192,6 +192,7 @@ REPO_FOLDER="$1"
 VERSION="$2"
 BRANCH="${3:-}"
 COMMIT="${4:-}"
+NO_CACHE="${5:-}"
 
 # Validate version format (major.minor or major.minor.patch)
 FULL_VERSION_PROVIDED=false
@@ -496,8 +497,15 @@ echo ""
 # ============================================================================
 log_info "Building Docker images..."
 
+# Build command with optional --no-cache flag
+BUILD_ARGS=""
+if [ "$NO_CACHE" = "--no-cache" ]; then
+    BUILD_ARGS="--no-cache"
+    log_info "Building with --no-cache (forced fresh build)"
+fi
+
 # Build all images using docker compose (env already loaded in Step 3)
-if ! docker compose -f "$COMPOSE_PATH" build; then
+if ! docker compose -f "$COMPOSE_PATH" build $BUILD_ARGS; then
     log_error "Docker build failed!"
     
     # Restore original state

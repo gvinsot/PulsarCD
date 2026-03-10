@@ -3422,6 +3422,7 @@ async function buildStack(repoName, sshUrl) {
     commitInput.value = '';
     versionInput.value = '1.0';
     selectedDisplay.style.display = 'none';
+    document.getElementById('build-no-cache').checked = false;
 
     // Reset to tag mode
     document.querySelector('input[name="build-source"][value="tag"]').checked = true;
@@ -3578,6 +3579,10 @@ async function submitBuild() {
         }
         if (commit) {
             url += `&commit=${encodeURIComponent(commit)}`;
+        }
+        const noCache = document.getElementById('build-no-cache').checked;
+        if (noCache) {
+            url += '&no_cache=true';
         }
 
         const repoName = currentBuildRepo;
