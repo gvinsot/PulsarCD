@@ -939,6 +939,30 @@ class OpenSearchClient:
                 "levels": ["ERROR", "WARN", "INFO", "DEBUG"],
             }
 
+    async def delete_stack_logs(self, stack_name: str) -> int:
+        """Delete all logs and metrics for a given stack (compose_project).
+
+        Returns the number of deleted documents.
+        """
+        total_deleted = 0
+        for index in [self.logs_index, self.metrics_index]:
+            try:
+                result = await self._client.delete_by_query(
+                    index=index,
+                    body={
+                        "query": {
+                            "term": {"compose_project": stack_name}
+                        }
+                    },
+                    conflicts="proceed",
+                )
+                deleted = result.get("deleted", 0)
+                total_deleted += deleted
+                logger.info("Deleted stack data", index=index, stack=stack_name, deleted=deleted)
+            except Exception as e:
+                logger.error("Failed to delete stack data", index=index, stack=stack_name, error=str(e))
+        return total_deleted
+
     async def cleanup_old_data(self, retention_days: int):
         """Delete data older than retention period."""
         cutoff = datetime.utcnow() - timedelta(days=retention_days)

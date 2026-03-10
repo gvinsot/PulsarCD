@@ -44,7 +44,7 @@ github_service: GitHubService = None
 # ============== Swarm Agent Notification ==============
 
 SWARM_API_BASE = "https://swarm.methodinfo.fr/api/swarm"
-SWARM_AGENT_NAME = "qwen"
+SWARM_AGENT_NAME = "QWEN"
 
 
 async def _notify_agent_failure(stage: str, repo_name: str, version: str, error_output: str):
@@ -67,51 +67,19 @@ async def _notify_agent_failure(stage: str, repo_name: str, version: str, error_
         headers = {"Authorization": f"Bearer {settings.swarm.secret_key}"}
 
         async with aiohttp.ClientSession(headers=headers) as session:
-            # Find the QWEN agent
-            async with session.get(
-                f"{SWARM_API_BASE}/agents",
-                params={"project": repo_name, "status": "idle"},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                agents = []
-                if resp.status == 200:
-                    data = await resp.json()
-                    agents = data if isinstance(data, list) else data.get("agents", [])
-
-            # Find qwen agent by name, or fall back to first idle agent
-            agent_id = None
-            for a in agents:
-                name = (a.get("name") or "").lower()
-                if SWARM_AGENT_NAME in name:
-                    agent_id = a.get("id") or a.get("name")
-                    break
-
-            if not agent_id:
-                # Try fetching agent directly by name
-                async with session.get(
-                    f"{SWARM_API_BASE}/agents/{SWARM_AGENT_NAME}",
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as resp:
-                    if resp.status == 200:
-                        agent_data = await resp.json()
-                        agent_id = agent_data.get("id") or agent_data.get("name") or SWARM_AGENT_NAME
-
-            if not agent_id:
-                agent_id = SWARM_AGENT_NAME
-
-            # Post the repair task
+            # Post the repair task directly to the QWEN agent
             async with session.post(
-                f"{SWARM_API_BASE}/agents/{agent_id}/tasks",
+                f"{SWARM_API_BASE}/agents/{SWARM_AGENT_NAME}/tasks",
                 json={"task": task_description, "project": repo_name},
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status in (200, 201):
                     logger.info("Repair task sent to agent",
-                                agent=agent_id, stage=stage, repo=repo_name)
+                                agent=SWARM_AGENT_NAME, stage=stage, repo=repo_name)
                 else:
                     body = await resp.text()
                     logger.warning("Failed to send repair task to agent",
-                                   agent=agent_id, status=resp.status, body=body[:200])
+                                   agent=SWARM_AGENT_NAME, status=resp.status, body=body[:200])
 
     except Exception as e:
         logger.warning("Could not notify swarm agent of failure",
@@ -810,6 +778,14 @@ async def remove_stack(stack_name: str, host: Optional[str] = Query(default=None
         return {"success": True, "message": message, "stack_name": stack_name}
     else:
         raise HTTPException(status_code=500, detail=message)
+
+
+@app.post("/api/stacks/{stack_name}/purge-logs")
+async def purge_stack_logs(stack_name: str) -> Dict[str, Any]:
+    """Delete all logs and metrics for a stack from OpenSearch."""
+    normalized = StackDeployer._repo_to_stack_name(stack_name)
+    deleted = await opensearch.delete_stack_logs(normalized)
+    return {"success": True, "stack_name": normalized, "deleted": deleted}
 
 
 @app.post("/api/services/{service_name}/remove")
@@ -1781,6 +1757,15 @@ async def deploy_stack(
 
     async def _run_deploy():
         try:
+            # Purge old logs before redeploying (new containers = fresh logs)
+            stack_name = StackDeployer._repo_to_stack_name(repo_name)
+            try:
+                deleted = await opensearch.delete_stack_logs(stack_name)
+                if deleted > 0:
+                    action.append_output(f"Purged {deleted} old log/metric entries for stack '{stack_name}'\n")
+            except Exception as e:
+                logger.warning("Failed to purge stack logs before deploy", stack=stack_name, error=str(e))
+
             result = await deployer.deploy(
                 repo_name, ssh_url, version, tag=tag,
                 output_callback=action.append_output,

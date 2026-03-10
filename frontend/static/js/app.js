@@ -1944,6 +1944,27 @@ async function removeStack(stackName, host) {
 }
 
 // Remove deployed stack from Stacks view
+async function purgeStackLogs(repoName) {
+    if (!confirm(`Purge all logs and metrics for "${repoName}"?\n\nThis will permanently delete stored log entries. Running containers are not affected.`)) {
+        return;
+    }
+    try {
+        const url = `/stacks/${encodeURIComponent(repoName)}/purge-logs`;
+        const response = await fetch(`${API_BASE}${url}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() }
+        });
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+            throw new Error(errorData.detail || `HTTP ${response.status}`);
+        }
+        const result = await response.json();
+        showNotification('success', `Purged ${result.deleted} log/metric entries for ${result.stack_name}`);
+    } catch (err) {
+        showNotification('error', `Failed to purge logs: ${err.message}`);
+    }
+}
+
 async function removeDeployedStack(stackName) {
     // Show confirmation
     const confirmMessage = `Are you sure you want to remove the deployed stack "${stackName}"?\n\nThis will remove ALL services and containers in this stack. This action cannot be undone.`;
@@ -3158,6 +3179,12 @@ function renderStacksList() {
                     </div>
 
                     ${isDeployed ? `
+                    <button class="btn btn-sm" onclick="event.stopPropagation(); purgeStackLogs('${escapeHtml(repo.name)}')" title="Purge logs" style="color: var(--text-secondary); border-color: var(--border-color);">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
+                            <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+                        </svg>
+                    </button>
                     <button class="btn btn-sm btn-danger" onclick="removeDeployedStack('${escapeHtml(repo.name)}')" title="Remove deployed stack">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <polyline points="3 6 5 6 21 6"/>
