@@ -50,8 +50,11 @@ SWARM_AGENT_NAME = "QWEN"
 async def _notify_agent_failure(stage: str, repo_name: str, version: str, error_output: str):
     """Notify the QWEN agent of a build/test/deploy failure so it can attempt a fix."""
     if not settings or not settings.swarm.secret_key:
-        logger.debug("Swarm agent notification skipped (no secret key configured)")
+        logger.error("Swarm agent notification skipped: no secret key configured")
         return
+
+    url = f"{SWARM_API_BASE}/agents/{SWARM_AGENT_NAME}/tasks"
+    logger.info("Notifying swarm agent of failure", url=url, stage=stage, repo=repo_name)
 
     try:
         # Get last ~30 lines of output for context
@@ -64,26 +67,34 @@ async def _notify_agent_failure(stage: str, repo_name: str, version: str, error_
             f"```\n{tail}\n```"
         )
 
+        payload = {"task": task_description, "project": repo_name}
         headers = {"Authorization": f"Bearer {settings.swarm.secret_key}"}
 
+        logger.debug("Swarm agent request", url=url, payload_keys=list(payload.keys()),
+                     task_length=len(task_description))
+
         async with aiohttp.ClientSession(headers=headers) as session:
-            # Post the repair task directly to the QWEN agent
             async with session.post(
-                f"{SWARM_API_BASE}/agents/{SWARM_AGENT_NAME}/tasks",
-                json={"task": task_description, "project": repo_name},
-                timeout=aiohttp.ClientTimeout(total=10),
+                url, json=payload, timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
+                body = await resp.text()
                 if resp.status in (200, 201):
                     logger.info("Repair task sent to agent",
-                                agent=SWARM_AGENT_NAME, stage=stage, repo=repo_name)
+                                agent=SWARM_AGENT_NAME, stage=stage, repo=repo_name,
+                                status=resp.status, response=body[:200])
                 else:
-                    body = await resp.text()
-                    logger.warning("Failed to send repair task to agent",
-                                   agent=SWARM_AGENT_NAME, status=resp.status, body=body[:200])
+                    logger.error("Failed to send repair task to agent",
+                                 agent=SWARM_AGENT_NAME, stage=stage, repo=repo_name,
+                                 status=resp.status, url=url, response=body[:500])
 
+    except aiohttp.ClientError as e:
+        logger.error("HTTP error notifying swarm agent",
+                     stage=stage, repo=repo_name, url=url,
+                     error_type=type(e).__name__, error=str(e))
     except Exception as e:
-        logger.warning("Could not notify swarm agent of failure",
-                       stage=stage, repo=repo_name, error=str(e))
+        logger.error("Unexpected error notifying swarm agent",
+                     stage=stage, repo=repo_name, url=url,
+                     error_type=type(e).__name__, error=str(e))
 
 
 # ============== Background Actions (Build/Deploy) ==============
