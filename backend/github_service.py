@@ -1085,6 +1085,15 @@ class StackDeployer:
                 output_callback(line)
         return success, output
 
+    async def has_build_config(self, repo_name: str) -> bool:
+        """Check if the repo's docker-compose.swarm.yml contains build: directives."""
+        repos_path = self.config.repos_path
+        compose_path = f"{repos_path}/{repo_name}/devops/docker-compose.swarm.yml"
+        success, output = await self._run_command(
+            f"grep -qE '^\\s+build:' {compose_path} 2>/dev/null && echo YES || echo NO"
+        )
+        return success and "YES" in output
+
     async def build(self, repo_name: str, ssh_url: str, version: str = "1.0",
                    branch: str = None, tag: str = None, commit: str = None,
                    no_cache: bool = False,

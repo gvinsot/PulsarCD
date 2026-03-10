@@ -3054,6 +3054,13 @@ a.btn {
     color: var(--accent-secondary);
     border: 1px dashed rgba(14, 165, 233, 0.3);
 }
+.pipeline-step.step-skipped {
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    opacity: 0.5;
+    cursor: default;
+    pointer-events: none;
+}
 
 .pipeline-spinner { animation: pipeline-spin 1s linear infinite; }
 @keyframes pipeline-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }

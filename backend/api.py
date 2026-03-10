@@ -2078,6 +2078,37 @@ async def get_stacks_deployed_tags():
     return {"tags": deployed_tags, "latest_built": latest_built}
 
 
+# ============== Build config detection ==============
+
+_buildable_cache: Dict[str, bool] = {}  # {repo_name: has_build_config}
+
+
+@app.get("/api/stacks/buildable")
+async def get_stacks_buildable() -> Dict[str, bool]:
+    """Return which stacks have build: directives in their docker-compose.swarm.yml."""
+    if not github_service.is_configured():
+        return {}
+    if _buildable_cache:
+        return _buildable_cache
+    repos = await github_service.get_starred_repos()
+    deployer, _ = _get_deployer_and_host()
+    for repo in repos:
+        name = repo["name"]
+        try:
+            _buildable_cache[name] = await deployer.has_build_config(name)
+        except Exception:
+            _buildable_cache[name] = True  # assume buildable on error
+    return _buildable_cache
+
+
+def invalidate_buildable_cache(repo_name: str = None):
+    """Clear buildable cache (after clone/pull that may change compose file)."""
+    if repo_name:
+        _buildable_cache.pop(repo_name, None)
+    else:
+        _buildable_cache.clear()
+
+
 # ============== Pipeline (Auto Build → Test → Deploy) ==============
 
 _auto_build_state = {}  # {repo_name: {"last_sha": str, "building": bool, "untagged_commits": int}}
@@ -2175,41 +2206,55 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
             _auto_build_state[repo_name]["building"] = False
         return
 
-    _pipeline_state[repo_name] = {"stage": "build", "status": "running", "build_action_id": None, "test_action_id": None, "deploy_action_id": None, "version": version}
+    # Check if this repo has build: directives in its compose file
+    buildable = _buildable_cache.get(repo_name)
+    if buildable is None:
+        try:
+            buildable = await deployer.has_build_config(repo_name)
+            _buildable_cache[repo_name] = buildable
+        except Exception:
+            buildable = True  # assume buildable on error
+
+    initial_stage = "build" if buildable else "deploy"
+    _pipeline_state[repo_name] = {"stage": initial_stage, "status": "running", "build_action_id": None, "test_action_id": None, "deploy_action_id": None, "version": version, "skip_build": not buildable}
 
     # Determine build version param: exact "1.0.5" or auto-increment "1.0"
     build_version = version if version else "1.0"
 
     async def _run_pipeline():
         built_version = version
+        build_id = None
         try:
-            # ── Step 1: Build ──
-            build_id = str(uuid.uuid4())[:8]
-            build_action = BackgroundAction(build_id, "build", repo_name)
-            _background_actions[build_id] = build_action
-            _pipeline_state[repo_name]["build_action_id"] = build_id
+            # ── Step 1: Build (skip if no build: in compose) ──
+            if buildable:
+                build_id = str(uuid.uuid4())[:8]
+                build_action = BackgroundAction(build_id, "build", repo_name)
+                _background_actions[build_id] = build_action
+                _pipeline_state[repo_name]["build_action_id"] = build_id
 
-            logger.info("Pipeline: starting build", repo=repo_name, action_id=build_id, version=build_version, tag=tag)
-            result = await deployer.build(
-                repo_name, ssh_url, version=build_version,
-                tag=tag,
-                output_callback=build_action.append_output,
-                cancel_event=build_action.cancel_event,
-            )
-            result["host"] = host_name
-            result["auto_triggered"] = True
-            build_action.result = result
-            build_action.status = "completed" if result.get("success") else "failed"
+                logger.info("Pipeline: starting build", repo=repo_name, action_id=build_id, version=build_version, tag=tag)
+                result = await deployer.build(
+                    repo_name, ssh_url, version=build_version,
+                    tag=tag,
+                    output_callback=build_action.append_output,
+                    cancel_event=build_action.cancel_event,
+                )
+                result["host"] = host_name
+                result["auto_triggered"] = True
+                build_action.result = result
+                build_action.status = "completed" if result.get("success") else "failed"
 
-            if not result.get("success"):
-                _pipeline_state[repo_name] = {"stage": "build", "status": "failed", "build_action_id": build_id, "test_action_id": None, "deploy_action_id": None, "version": version}
-                await _notify_agent_failure("build", repo_name, version or "", result.get("output", ""))
-                return
+                if not result.get("success"):
+                    _pipeline_state[repo_name] = {"stage": "build", "status": "failed", "build_action_id": build_id, "test_action_id": None, "deploy_action_id": None, "version": version, "skip_build": False}
+                    await _notify_agent_failure("build", repo_name, version or "", result.get("output", ""))
+                    return
 
-            # Extract version from build output, or use provided version
-            built_version = _extract_version_from_output(build_action.output_lines) or version
-            _pipeline_state[repo_name]["version"] = built_version
-            logger.info("Pipeline: build succeeded", repo=repo_name, version=built_version)
+                # Extract version from build output, or use provided version
+                built_version = _extract_version_from_output(build_action.output_lines) or version
+                _pipeline_state[repo_name]["version"] = built_version
+                logger.info("Pipeline: build succeeded", repo=repo_name, version=built_version)
+            else:
+                logger.info("Pipeline: skipping build (no build: in compose)", repo=repo_name)
 
             # ── Step 2: Test ──
             test_id = str(uuid.uuid4())[:8]

@@ -2265,6 +2265,7 @@ let stacksDeployedTags = {};
 let stacksLatestBuilt = {};
 let stacksPipelineState = {};
 let stacksAutoBuildState = {};
+let stacksBuildable = {};  // {repo_name: bool} — whether compose has build: directives
 
 async function loadStacks() {
     // Check GitHub status
@@ -2305,13 +2306,14 @@ async function refreshStacks() {
     listEl.innerHTML = '<div class="loading-placeholder">Loading starred repositories...</div>';
     
     // Load repos, deployed tags, pipeline state, auto-build state, and containers in parallel
-    const [reposData, tagsData, containersData, hostMetrics, pipelineData, autoBuildData] = await Promise.all([
+    const [reposData, tagsData, containersData, hostMetrics, pipelineData, autoBuildData, buildableData] = await Promise.all([
         apiGet('/stacks/repos'),
         apiGet('/stacks/deployed-tags'),
         apiGet('/containers/grouped?refresh=true&group_by=stack'),
         apiGet('/hosts/metrics'),
         apiGet('/stacks/pipeline/status'),
         apiGet('/stacks/auto-build/status'),
+        apiGet('/stacks/buildable'),
     ]);
 
     if (!reposData || !reposData.repos) {
@@ -2326,6 +2328,7 @@ async function refreshStacks() {
     stacksHostMetrics = hostMetrics || {};
     stacksPipelineState = (pipelineData && pipelineData.pipelines) ? pipelineData.pipelines : {};
     stacksAutoBuildState = (autoBuildData && autoBuildData.state) ? autoBuildData.state : {};
+    stacksBuildable = buildableData || {};
     
     if (stacksRepos.length === 0) {
         listEl.innerHTML = '<div class="empty-placeholder">No starred repositories found</div>';
@@ -2875,41 +2878,43 @@ function renderStacksList() {
         // Pipeline step states
         const pipeline = stacksPipelineState[repo.name];
         const stageOrder = { build: 1, test: 2, deploy: 3, done: 4 };
-        let versionStep = 'idle', buildStep = 'idle', testStep = 'idle', deployStep = 'idle';
+        const isBuildable = stacksBuildable[repo.name] !== false;  // default true if unknown
+        let versionStep = 'idle', buildStep = isBuildable ? 'idle' : 'skipped', testStep = 'idle', deployStep = 'idle';
 
         // Whether build/test steps were part of this pipeline
         const hadBuild = pipeline ? !!pipeline.build_action_id : false;
         const hadTest = pipeline ? !!pipeline.test_action_id : false;
 
+        const skipBuild = !isBuildable || (pipeline && pipeline.skip_build);
         if (pipeline && pipeline.status === 'running') {
             const cs = stageOrder[pipeline.stage] || 0;
             versionStep = 'success';
-            buildStep = cs === 1 ? 'running' : (hadBuild && cs > 1 ? 'success' : (cs > 1 ? 'idle' : 'pending'));
-            testStep = cs === 2 ? 'running' : (hadTest && cs > 2 ? 'success' : (hadBuild && cs > 2 ? 'success' : (cs > 2 ? 'idle' : 'pending')));
+            buildStep = skipBuild ? 'skipped' : (cs === 1 ? 'running' : (hadBuild && cs > 1 ? 'success' : (cs > 1 ? 'idle' : 'pending')));
+            testStep = cs === 2 ? 'running' : (hadTest && cs > 2 ? 'success' : (cs > 2 ? 'idle' : 'pending'));
             deployStep = cs === 3 ? 'running' : 'pending';
         } else if (pipeline && pipeline.status === 'failed') {
             const cs = stageOrder[pipeline.stage] || 0;
             versionStep = 'success';
-            buildStep = cs === 1 ? 'failed' : (hadBuild && cs > 1 ? 'success' : (cs > 1 ? 'idle' : 'pending'));
-            testStep = cs === 2 ? 'failed' : (hadTest && cs > 2 ? 'success' : (hadBuild && cs > 2 ? 'success' : (cs > 2 ? 'idle' : 'pending')));
+            buildStep = skipBuild ? 'skipped' : (cs === 1 ? 'failed' : (hadBuild && cs > 1 ? 'success' : (cs > 1 ? 'idle' : 'pending')));
+            testStep = cs === 2 ? 'failed' : (hadTest && cs > 2 ? 'success' : (cs > 2 ? 'idle' : 'pending'));
             deployStep = cs === 3 ? 'failed' : (cs > 3 ? 'success' : 'pending');
         } else if (pipeline && pipeline.stage === 'done') {
             versionStep = 'success';
-            buildStep = hadBuild ? 'success' : 'idle';
-            testStep = hadTest ? 'success' : (hadBuild ? 'success' : 'idle');
+            buildStep = skipBuild ? 'skipped' : (hadBuild ? 'success' : 'idle');
+            testStep = hadTest ? 'success' : 'idle';
             deployStep = 'success';
         } else if (pipeline && pipeline.status === 'success') {
             const cs = stageOrder[pipeline.stage] || 0;
             versionStep = 'success';
-            buildStep = hadBuild && cs >= 1 ? 'success' : (cs >= 1 ? 'idle' : 'pending');
-            testStep = hadTest && cs >= 2 ? 'success' : (hadBuild && cs >= 2 ? 'success' : (cs >= 2 ? 'idle' : 'pending'));
+            buildStep = skipBuild ? 'skipped' : (hadBuild && cs >= 1 ? 'success' : (cs >= 1 ? 'idle' : 'pending'));
+            testStep = hadTest && cs >= 2 ? 'success' : (cs >= 2 ? 'idle' : 'pending');
             deployStep = cs >= 3 ? 'success' : 'pending';
         } else if (hasUpdate) {
-            versionStep = 'success'; buildStep = 'success'; testStep = 'success'; deployStep = 'pending';
+            versionStep = 'success'; buildStep = skipBuild ? 'skipped' : 'success'; testStep = 'success'; deployStep = 'pending';
         } else if (untaggedCount > 0) {
-            versionStep = 'pending'; buildStep = 'pending'; testStep = 'pending'; deployStep = 'pending';
+            versionStep = 'pending'; buildStep = skipBuild ? 'skipped' : 'pending'; testStep = 'pending'; deployStep = 'pending';
         } else if (isDeployed) {
-            versionStep = 'success'; buildStep = 'success'; testStep = 'success'; deployStep = 'success';
+            versionStep = 'success'; buildStep = skipBuild ? 'skipped' : 'success'; testStep = 'success'; deployStep = 'success';
         }
 
         const pipelineVersion = (pipeline && pipeline.version) ? pipeline.version : (latestBuilt ? normalizeVersion(latestBuilt) : (deployedTag || '–'));
@@ -3127,10 +3132,10 @@ function renderStacksList() {
                             <span>${escapeHtml(pipelineVersion)}</span>
                         </div>
                         <span class="pipeline-arrow">\u2192</span>
-                        <div class="pipeline-step step-${buildStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'build')" title="Build">
-                            ${stepIcon(buildStep)}
+                        <div class="pipeline-step step-${buildStep}" ${skipBuild ? 'title="Build: skipped (no build config)"' : `onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'build')" title="Build" style="cursor:pointer"`}>
+                            ${skipBuild ? `<span class="step-icon">–</span>` : stepIcon(buildStep)}
                             <span>Build</span>
-                            ${buildActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${buildActionId}', 'Build Logs', '${escapeHtml(repo.name)}')" title="View build logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
+                            ${!skipBuild && buildActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${buildActionId}', 'Build Logs', '${escapeHtml(repo.name)}')" title="View build logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
                         </div>
                         <span class="pipeline-arrow">\u2192</span>
                         <div class="pipeline-step step-${testStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'test')" title="Test">
