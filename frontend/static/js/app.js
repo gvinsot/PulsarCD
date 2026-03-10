@@ -2666,6 +2666,10 @@ function updateStackDom(repoName, stackName, services) {
  * Updates status dots, CPU/memory stats in-place for existing containers,
  * and adds/removes container items as needed.
  */
+// Track consecutive misses per container to avoid flickering on transient failures
+const _containerMissCount = {};
+const CONTAINER_MISS_THRESHOLD = 3; // Remove after 3 consecutive missed polls
+
 function updateContainerItems(containerListEl, containers, stackName) {
     const existingItems = containerListEl.querySelectorAll('.container-item:not(.container-item-empty)');
     const existingById = {};
@@ -2678,10 +2682,20 @@ function updateContainerItems(containerListEl, containers, stackName) {
 
     const newIds = new Set(containers.map(c => c.id));
 
-    // Remove containers that no longer exist
+    // Remove containers only after they've been missing for multiple consecutive polls
     for (const [id, el] of Object.entries(existingById)) {
         if (!newIds.has(id)) {
-            el.remove();
+            _containerMissCount[id] = (_containerMissCount[id] || 0) + 1;
+            if (_containerMissCount[id] >= CONTAINER_MISS_THRESHOLD) {
+                el.remove();
+                delete _containerMissCount[id];
+            } else {
+                // Grey out the container to hint it may be stale
+                const statusDot = el.querySelector('.container-status');
+                if (statusDot) statusDot.className = 'container-status exited';
+            }
+        } else {
+            delete _containerMissCount[id]; // Reset miss counter
         }
     }
 

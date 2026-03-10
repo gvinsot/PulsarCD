@@ -7,6 +7,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+import aiohttp
+
 import jwt
 import structlog
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -38,6 +40,83 @@ settings: Settings = None
 opensearch: OpenSearchClient = None
 collector: Collector = None
 github_service: GitHubService = None
+
+# ============== Swarm Agent Notification ==============
+
+SWARM_API_BASE = "https://swarm.methodinfo.fr/api/swarm"
+SWARM_AGENT_NAME = "qwen"
+
+
+async def _notify_agent_failure(stage: str, repo_name: str, version: str, error_output: str):
+    """Notify the QWEN agent of a build/test/deploy failure so it can attempt a fix."""
+    if not settings or not settings.swarm.secret_key:
+        logger.debug("Swarm agent notification skipped (no secret key configured)")
+        return
+
+    try:
+        # Get last ~30 lines of output for context
+        output_lines = error_output.strip().split('\n') if error_output else []
+        tail = '\n'.join(output_lines[-30:]) if len(output_lines) > 30 else error_output
+
+        task_description = (
+            f"{stage.upper()} FAILED for project '{repo_name}' (version: {version}).\n"
+            f"Investigate and fix the {stage} failure. Here is the error output:\n"
+            f"```\n{tail}\n```"
+        )
+
+        headers = {"Authorization": f"Bearer {settings.swarm.secret_key}"}
+
+        async with aiohttp.ClientSession(headers=headers) as session:
+            # Find the QWEN agent
+            async with session.get(
+                f"{SWARM_API_BASE}/agents",
+                params={"project": repo_name, "status": "idle"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                agents = []
+                if resp.status == 200:
+                    data = await resp.json()
+                    agents = data if isinstance(data, list) else data.get("agents", [])
+
+            # Find qwen agent by name, or fall back to first idle agent
+            agent_id = None
+            for a in agents:
+                name = (a.get("name") or "").lower()
+                if SWARM_AGENT_NAME in name:
+                    agent_id = a.get("id") or a.get("name")
+                    break
+
+            if not agent_id:
+                # Try fetching agent directly by name
+                async with session.get(
+                    f"{SWARM_API_BASE}/agents/{SWARM_AGENT_NAME}",
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    if resp.status == 200:
+                        agent_data = await resp.json()
+                        agent_id = agent_data.get("id") or agent_data.get("name") or SWARM_AGENT_NAME
+
+            if not agent_id:
+                agent_id = SWARM_AGENT_NAME
+
+            # Post the repair task
+            async with session.post(
+                f"{SWARM_API_BASE}/agents/{agent_id}/tasks",
+                json={"task": task_description, "project": repo_name},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status in (200, 201):
+                    logger.info("Repair task sent to agent",
+                                agent=agent_id, stage=stage, repo=repo_name)
+                else:
+                    body = await resp.text()
+                    logger.warning("Failed to send repair task to agent",
+                                   agent=agent_id, status=resp.status, body=body[:200])
+
+    except Exception as e:
+        logger.warning("Could not notify swarm agent of failure",
+                       stage=stage, repo=repo_name, error=str(e))
+
 
 # ============== Background Actions (Build/Deploy) ==============
 
@@ -1639,6 +1718,7 @@ async def build_stack(
                     "deploy_action_id": prev.get("deploy_action_id"),
                     "version": version,
                 }
+                await _notify_agent_failure("build", repo_name, version, result.get("output", ""))
         except Exception as e:
             import traceback
             error_detail = f"{type(e).__name__}: {e}"
@@ -1653,6 +1733,7 @@ async def build_stack(
                 "deploy_action_id": prev.get("deploy_action_id"),
                 "version": version,
             }
+            await _notify_agent_failure("build", repo_name, version, error_detail)
 
     action.task = asyncio.create_task(_run_build())
 
@@ -1725,6 +1806,7 @@ async def deploy_stack(
                     "deploy_action_id": action_id,
                     "version": deploy_version,
                 }
+                await _notify_agent_failure("deploy", repo_name, deploy_version, result.get("output", ""))
         except Exception as e:
             import traceback
             error_detail = f"{type(e).__name__}: {e}"
@@ -1739,6 +1821,7 @@ async def deploy_stack(
                 "deploy_action_id": action_id,
                 "version": deploy_version,
             }
+            await _notify_agent_failure("deploy", repo_name, deploy_version, error_detail)
 
     action.task = asyncio.create_task(_run_deploy())
 
@@ -1825,6 +1908,7 @@ async def test_stack(
                     "deploy_action_id": prev.get("deploy_action_id"),
                     "version": version,
                 }
+                await _notify_agent_failure("test", repo_name, version, result.get("output", ""))
         except Exception as e:
             import traceback
             error_detail = f"{type(e).__name__}: {e}"
@@ -1839,6 +1923,7 @@ async def test_stack(
                 "deploy_action_id": prev.get("deploy_action_id"),
                 "version": version,
             }
+            await _notify_agent_failure("test", repo_name, version, error_detail)
 
     action.task = asyncio.create_task(_run_test())
 
@@ -2139,6 +2224,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
 
             if not result.get("success"):
                 _pipeline_state[repo_name] = {"stage": "build", "status": "failed", "build_action_id": build_id, "test_action_id": None, "deploy_action_id": None, "version": version}
+                await _notify_agent_failure("build", repo_name, version or "", result.get("output", ""))
                 return
 
             # Extract version from build output, or use provided version
@@ -2167,6 +2253,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
             if not test_result.get("success"):
                 _pipeline_state[repo_name] = {"stage": "test", "status": "failed", "build_action_id": build_id, "test_action_id": test_id, "deploy_action_id": None, "version": built_version}
                 logger.warning("Pipeline: test failed", repo=repo_name)
+                await _notify_agent_failure("test", repo_name, built_version or "", test_result.get("output", ""))
                 return
 
             _pipeline_state[repo_name] = {"stage": "test", "status": "success", "build_action_id": build_id, "test_action_id": test_id, "deploy_action_id": None, "version": built_version}
@@ -2197,6 +2284,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                 logger.info("Pipeline: deploy succeeded", repo=repo_name, version=built_version)
             else:
                 _pipeline_state[repo_name] = {"stage": "deploy", "status": "failed", "build_action_id": build_id, "test_action_id": test_id, "deploy_action_id": deploy_id, "version": built_version}
+                await _notify_agent_failure("deploy", repo_name, built_version or "", deploy_result.get("output", ""))
 
         except Exception as e:
             logger.exception("Pipeline failed", repo=repo_name, error=str(e))

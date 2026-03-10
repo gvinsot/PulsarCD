@@ -118,6 +118,11 @@ class MCPConfig(BaseModel):
     api_key: str = ""  # Dedicated MCP API key (auto-generated if empty)
 
 
+class SwarmConfig(BaseModel):
+    """Swarm agent API configuration."""
+    secret_key: str = ""  # API key for swarm.methodinfo.fr (Bearer token)
+
+
 class Settings(BaseSettings):
     """Application settings."""
     app_name: str = "LogsCrawler"
@@ -147,6 +152,9 @@ class Settings(BaseSettings):
 
     # MCP
     mcp: MCPConfig = MCPConfig()
+
+    # Swarm agent API
+    swarm: SwarmConfig = SwarmConfig()
 
     # Hosts (configured via LOGSCRAWLER_HOSTS env var)
     hosts: List[HostConfig] = []

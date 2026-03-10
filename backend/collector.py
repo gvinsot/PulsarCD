@@ -357,14 +357,7 @@ class Collector:
                                 manager_node_hostname = node.get("hostname")
                                 break
                     
-                    # Clear cache for swarm nodes before filling with new data
-                    swarm_hostnames = set(containers_by_node.keys())
-                    if manager_node_hostname:
-                        swarm_hostnames.add(manager_node_hostname)
-                    for hostname in list(self._containers_cache.keys()):
-                        if hostname in swarm_hostnames or hostname == self._swarm_manager_host:
-                            del self._containers_cache[hostname]
-                    
+                    # Replace cache entries only with new data (no premature deletion)
                     for node_hostname, host_containers in containers_by_node.items():
                         if manager_node_hostname and node_hostname == manager_node_hostname:
                             self._containers_cache[self._swarm_manager_host] = host_containers
@@ -396,12 +389,13 @@ class Collector:
         return containers
     
     async def _fetch_and_cache_containers(self, host_name: str, client: HostClientProtocol):
-        """Fetch and cache containers from a host."""
+        """Fetch and cache containers from a host. Preserves stale cache on failure."""
         try:
             containers = await client.get_containers()
             self._containers_cache[host_name] = containers
         except Exception as e:
-            logger.error("Failed to fetch containers", host=host_name, error=str(e))
+            logger.error("Failed to fetch containers, keeping stale cache", host=host_name, error=str(e))
+            # Don't clear cache — keep previous data so containers don't flicker in UI
     
     def _get_exec_client(self, host: str) -> Optional[HostClientProtocol]:
         """Get the client to use for exec operations on a container.
