@@ -2486,15 +2486,26 @@ async function updateStacksContainerStates() {
             const oldStackContainers = stacksContainers[stackName] || {};
             const newStackContainers = newContainersByStack[stackName] || {};
 
+            // If this stack had no containers in the poll response at all,
+            // keep the old data — it's likely a transient fetch failure, not a real removal
+            if (!newContainersByStack[stackName] && Object.keys(oldStackContainers).length > 0) {
+                continue; // Skip update, keep existing data
+            }
+
             // Merge: keep existing service keys (from swarm manager), update containers
             const mergedServices = { ...oldStackContainers };
             for (const [svc, containers] of Object.entries(newStackContainers)) {
                 mergedServices[svc] = containers;
             }
-            // Clear services that had containers but now have none
+            // Only clear a service if the stack WAS present in the response but
+            // this specific service was not (meaning it was genuinely removed)
             for (const svc of Object.keys(mergedServices)) {
                 if (!newStackContainers[svc] && mergedServices[svc].length > 0) {
-                    mergedServices[svc] = [];
+                    // Check if at least one other service in this stack was updated
+                    // If yes, this service was genuinely removed; if no, it's a partial response
+                    if (Object.keys(newStackContainers).length > 0) {
+                        mergedServices[svc] = [];
+                    }
                 }
             }
             stacksContainers[stackName] = mergedServices;

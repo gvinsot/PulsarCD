@@ -312,22 +312,24 @@ class Collector:
     
     async def get_all_containers(self, refresh: bool = False) -> List[ContainerInfo]:
         """Get all containers from all hosts (including every Docker Swarm node)."""
-        # When refreshing, ensure swarm node list is up to date so Containers tab shows all nodes
-        if refresh and self._swarm_autodiscover_enabled:
-            await self._discover_swarm_nodes()
-            # Invalidate cache after discovering nodes to force fetching from all nodes
-            self._containers_cache_time = None
-
-        # Use cache if available and not stale (30 seconds)
+        # Use cache if available and not stale (30 seconds for normal, 10 seconds for refresh)
+        cache_ttl = timedelta(seconds=10) if refresh else timedelta(seconds=30)
         if (
-            not refresh
-            and self._containers_cache_time
-            and (datetime.utcnow() - self._containers_cache_time) < timedelta(seconds=30)
+            self._containers_cache_time
+            and (datetime.utcnow() - self._containers_cache_time) < cache_ttl
+            and self._containers_cache
         ):
             containers = []
             for host_containers in self._containers_cache.values():
                 containers.extend(host_containers)
             return containers
+
+        # Periodically rediscover swarm nodes (at most every 60 seconds)
+        if refresh and self._swarm_autodiscover_enabled:
+            now = datetime.utcnow()
+            if not hasattr(self, '_last_swarm_discover') or (now - self._last_swarm_discover) > timedelta(seconds=60):
+                await self._discover_swarm_nodes()
+                self._last_swarm_discover = now
 
         # When swarm autodiscover is enabled, fetch all swarm containers in one go from the
         # manager (Tasks API). This builds ContainerInfo from task/service data instead of

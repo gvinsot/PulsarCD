@@ -1393,6 +1393,7 @@ class DockerAPIClient:
                 }
                 if stack:
                     labels["com.docker.stack.namespace"] = stack
+                    labels["com.docker.swarm.stack.namespace"] = stack
 
                 container = ContainerInfo(
                     id=task["container_id"],
