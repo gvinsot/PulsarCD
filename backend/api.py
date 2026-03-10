@@ -780,14 +780,6 @@ async def remove_stack(stack_name: str, host: Optional[str] = Query(default=None
         raise HTTPException(status_code=500, detail=message)
 
 
-@app.post("/api/stacks/{stack_name}/purge-logs")
-async def purge_stack_logs(stack_name: str) -> Dict[str, Any]:
-    """Delete all logs and metrics for a stack from OpenSearch."""
-    normalized = StackDeployer._repo_to_stack_name(stack_name)
-    deleted = await opensearch.delete_stack_logs(normalized)
-    return {"success": True, "stack_name": normalized, "deleted": deleted}
-
-
 @app.post("/api/services/{service_name}/remove")
 async def remove_service(
     service_name: str,
@@ -1757,15 +1749,6 @@ async def deploy_stack(
 
     async def _run_deploy():
         try:
-            # Purge old logs before redeploying (new containers = fresh logs)
-            stack_name = StackDeployer._repo_to_stack_name(repo_name)
-            try:
-                deleted = await opensearch.delete_stack_logs(stack_name)
-                if deleted > 0:
-                    action.append_output(f"Purged {deleted} old log/metric entries for stack '{stack_name}'\n")
-            except Exception as e:
-                logger.warning("Failed to purge stack logs before deploy", stack=stack_name, error=str(e))
-
             result = await deployer.deploy(
                 repo_name, ssh_url, version, tag=tag,
                 output_callback=action.append_output,
