@@ -3077,7 +3077,6 @@ function renderStacksList() {
                     ${escapeHtml(repo.name)}
                     ${deployedTag ? `<span class="stack-badge deployed" title="Deployed version">${escapeHtml(deployedTag)}</span>` : '<span class="stack-badge" style="background: var(--bg-tertiary); color: var(--text-muted);">Not deployed</span>'}
                     ${hasUpdate ? `<span class="stack-badge update-available" title="New version available">${escapeHtml(latestBuilt)}</span>` : ''}
-                    ${untaggedCount > 0 ? `<span class="stack-badge" style="background: var(--warning-bg, #664d03); color: var(--warning-text, #ffcd39);" title="${untaggedCount} untagged commit${untaggedCount > 1 ? 's' : ''}">${untaggedCount} untagged</span>` : ''}
                     ${isDeployed ? `<span class="group-count">${Object.keys(stackContainers).length} svc, ${containerCount} ct</span>` : ''}
                     ${isDeployed && tooltipLines.length > 0 ? `
                     <span class="stack-monitoring-tooltip">
