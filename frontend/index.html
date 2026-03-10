@@ -687,7 +687,11 @@
                                 <label class="form-label">Source</label>
                                 <div class="radio-group">
                                     <label class="radio-label">
-                                        <input type="radio" name="test-source" value="branch" checked onchange="toggleTestSource('branch')">
+                                        <input type="radio" name="test-source" value="tag" checked onchange="toggleTestSource('tag')">
+                                        <span>Tag</span>
+                                    </label>
+                                    <label class="radio-label">
+                                        <input type="radio" name="test-source" value="branch" onchange="toggleTestSource('branch')">
                                         <span>Branch</span>
                                     </label>
                                     <label class="radio-label">
@@ -697,7 +701,18 @@
                                 </div>
                             </div>
 
-                            <div id="test-branch-group" class="form-group">
+                            <div id="test-tag-group" class="form-group">
+                                <label class="form-label">Version Tag</label>
+                                <div id="test-tags-list" class="tags-list">
+                                    <div class="loading-placeholder">Loading tags...</div>
+                                </div>
+                                <div id="test-selected-tag" class="selected-tag-display" style="display: none;">
+                                    <span class="selected-tag-label">Selected:</span>
+                                    <span id="test-selected-tag-value" class="selected-tag-value"></span>
+                                </div>
+                            </div>
+
+                            <div id="test-branch-group" class="form-group" style="display: none;">
                                 <label class="form-label" for="test-branch-select">Branch</label>
                                 <select id="test-branch-select" class="form-select">
                                     <option value="">Loading branches...</option>

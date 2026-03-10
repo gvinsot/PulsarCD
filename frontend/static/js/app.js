@@ -3538,38 +3538,63 @@ async function submitBuild() {
 let currentTestRepo = null;
 let currentTestSshUrl = null;
 
+let selectedTestTag = null;
+
 async function testStack(repoName, sshUrl) {
     currentTestRepo = repoName;
     currentTestSshUrl = sshUrl;
+    selectedTestTag = null;
 
     const modal = document.getElementById('stack-test-modal');
     const title = document.getElementById('stack-test-title');
+    const tagsList = document.getElementById('test-tags-list');
     const branchSelect = document.getElementById('test-branch-select');
     const commitInput = document.getElementById('test-commit-input');
+    const selectedDisplay = document.getElementById('test-selected-tag');
 
     title.textContent = `Test: ${repoName}`;
+    tagsList.innerHTML = '<div class="loading-placeholder">Loading tags...</div>';
     branchSelect.innerHTML = '<option value="">Loading branches...</option>';
     commitInput.value = '';
+    selectedDisplay.style.display = 'none';
 
-    // Reset to branch mode
-    document.querySelector('input[name="test-source"][value="branch"]').checked = true;
-    toggleTestSource('branch');
+    // Reset to tag mode
+    document.querySelector('input[name="test-source"][value="tag"]').checked = true;
+    toggleTestSource('tag');
 
     modal.classList.add('active');
 
     // Extract owner from ssh_url
     const ownerMatch = sshUrl.match(/[:/]([^/]+)\/[^/]+\.git$/);
     if (!ownerMatch) {
-        branchSelect.innerHTML = '<option value="">Failed to parse repository URL</option>';
+        tagsList.innerHTML = '<div class="error-placeholder">Failed to parse repository URL</div>';
         return;
     }
     const owner = ownerMatch[1];
 
-    // Load branches
+    // Load tags and branches in parallel
     try {
-        const data = await apiGet(`/stacks/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/branches`);
-        if (data && data.branches && data.branches.length > 0) {
-            branchSelect.innerHTML = data.branches.map(b =>
+        const [tagsData, branchesData] = await Promise.all([
+            apiGet(`/stacks/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/tags?limit=20`),
+            apiGet(`/stacks/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/branches`),
+        ]);
+
+        // Render tags
+        if (tagsData && tagsData.tags && tagsData.tags.length > 0) {
+            renderTestTagsList(tagsData.tags, tagsData.default_branch || 'main');
+            selectTestTag(tagsData.tags[0].name);
+        } else {
+            tagsList.innerHTML = `
+                <div class="empty-placeholder">
+                    <p>No tags found.</p>
+                    <p class="hint">Use Branch or Commit ID instead.</p>
+                </div>
+            `;
+        }
+
+        // Render branches
+        if (branchesData && branchesData.branches && branchesData.branches.length > 0) {
+            branchSelect.innerHTML = branchesData.branches.map(b =>
                 `<option value="${escapeHtml(b.name)}" ${b.name === 'main' || b.name === 'master' ? 'selected' : ''}>
                     ${escapeHtml(b.name)}${b.protected ? ' \uD83D\uDD12' : ''}
                 </option>`
@@ -3578,28 +3603,64 @@ async function testStack(repoName, sshUrl) {
             branchSelect.innerHTML = '<option value="main">main</option>';
         }
     } catch (e) {
-        console.error('Failed to load branches:', e);
+        console.error('Failed to load test data:', e);
+        tagsList.innerHTML = '<div class="error-placeholder">Failed to load tags</div>';
         branchSelect.innerHTML = '<option value="main">main (default)</option>';
     }
 }
 
+function renderTestTagsList(tags, defaultBranch) {
+    const tagsList = document.getElementById('test-tags-list');
+    let html = `
+        <div class="tags-group">
+            <div class="tags-group-header">
+                <span class="branch-name">${escapeHtml(defaultBranch)}</span>
+                <span class="tag-count">${tags.length} tag${tags.length !== 1 ? 's' : ''}</span>
+            </div>
+            <div class="tags-group-items">
+    `;
+    for (const tag of tags) {
+        const timeAgo = formatTimeAgo(tag.created_at);
+        html += `
+            <div class="tag-item" data-tag="${escapeHtml(tag.name)}" onclick="selectTestTag('${escapeHtml(tag.name)}')">
+                <span class="tag-name">${escapeHtml(tag.name)}</span>
+                <span class="tag-meta">
+                    ${timeAgo ? `<span class="tag-age">${timeAgo}</span>` : ''}
+                    <span class="tag-sha">${escapeHtml(tag.sha.substring(0, 7))}</span>
+                </span>
+            </div>
+        `;
+    }
+    html += '</div></div>';
+    tagsList.innerHTML = html;
+}
+
+function selectTestTag(tagName) {
+    selectedTestTag = tagName;
+    document.getElementById('test-tags-list').querySelectorAll('.tag-item').forEach(el => {
+        el.classList.toggle('selected', el.dataset.tag === tagName);
+    });
+    const selectedDisplay = document.getElementById('test-selected-tag');
+    const selectedValue = document.getElementById('test-selected-tag-value');
+    selectedValue.textContent = tagName;
+    selectedDisplay.style.display = 'flex';
+}
+
 function toggleTestSource(source) {
+    const tagGroup = document.getElementById('test-tag-group');
     const branchGroup = document.getElementById('test-branch-group');
     const commitGroup = document.getElementById('test-commit-group');
 
-    if (source === 'branch') {
-        branchGroup.style.display = 'block';
-        commitGroup.style.display = 'none';
-    } else {
-        branchGroup.style.display = 'none';
-        commitGroup.style.display = 'block';
-    }
+    tagGroup.style.display = source === 'tag' ? 'block' : 'none';
+    branchGroup.style.display = source === 'branch' ? 'block' : 'none';
+    commitGroup.style.display = source === 'commit' ? 'block' : 'none';
 }
 
 function closeTestModal() {
     document.getElementById('stack-test-modal').classList.remove('active');
     currentTestRepo = null;
     currentTestSshUrl = null;
+    selectedTestTag = null;
 }
 
 async function submitTest() {
@@ -3608,10 +3669,17 @@ async function submitTest() {
     const submitBtn = document.getElementById('stack-test-submit');
     const source = document.querySelector('input[name="test-source"]:checked').value;
 
+    let tag = null;
     let branch = null;
     let commit = null;
 
-    if (source === 'branch') {
+    if (source === 'tag') {
+        if (!selectedTestTag) {
+            showNotification('error', 'Please select a version tag');
+            return;
+        }
+        tag = selectedTestTag;
+    } else if (source === 'branch') {
         branch = document.getElementById('test-branch-select').value;
     } else {
         commit = document.getElementById('test-commit-input').value.trim();
@@ -3631,6 +3699,9 @@ async function submitTest() {
 
     try {
         let url = `/stacks/test?repo_name=${encodeURIComponent(currentTestRepo)}&ssh_url=${encodeURIComponent(currentTestSshUrl)}`;
+        if (tag) {
+            url += `&tag=${encodeURIComponent(tag)}`;
+        }
         if (branch) {
             url += `&branch=${encodeURIComponent(branch)}`;
         }

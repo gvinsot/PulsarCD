@@ -1220,7 +1220,10 @@ class StackDeployer:
             repo_path = f"{repos_path}/{repo_name}"
 
             # Pass absolute repo_path to avoid path computation mismatch
+            # Script format: deploy-service.sh <folder> <version> [branch/tag]
             deploy_cmd = f"cd {scripts_path} && bash deploy-service.sh \"{repo_path}\" {deploy_version}"
+            if tag:
+                deploy_cmd += f" {tag}"
 
             if output_callback and clone_msg:
                 for line in clone_msg.split('\n'):

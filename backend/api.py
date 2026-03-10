@@ -1741,6 +1741,7 @@ async def test_stack(
     repo_name: str = Query(..., description="Repository name"),
     ssh_url: str = Query(..., description="SSH URL for cloning"),
     branch: str = Query(default=None, description="Branch name to test from"),
+    tag: str = Query(default=None, description="Git tag to test from (e.g., v1.0.5)"),
     commit: str = Query(default=None, description="Specific commit hash to test from"),
 ):
     """Run tests for a stack. Runs in background, returns action ID."""
@@ -1758,6 +1759,10 @@ async def test_stack(
         if not is_valid:
             raise HTTPException(status_code=400, detail=error_msg)
 
+    if tag and owner:
+        if not re.match(r'^v?\d+(\.\d+){1,2}$', tag):
+            raise HTTPException(status_code=400, detail=f"Invalid tag format: '{tag}'. Expected format: vX.X.X")
+
     if commit and owner:
         if not re.match(r'^[a-fA-F0-9]{7,40}$', commit):
             raise HTTPException(status_code=400, detail=f"Invalid commit hash format: '{commit}'. Expected 7-40 hexadecimal characters.")
@@ -1773,7 +1778,8 @@ async def test_stack(
     _background_actions[action_id] = action
 
     prev = _pipeline_state.get(repo_name, {})
-    version = prev.get("version", "")
+    # Use tag version if provided, otherwise keep previous version
+    version = tag.lstrip('v') if tag else prev.get("version", "")
 
     # Update pipeline state
     _pipeline_state[repo_name] = {
@@ -1786,7 +1792,7 @@ async def test_stack(
     async def _run_test():
         try:
             result = await deployer.test(
-                repo_name, ssh_url, branch=branch, commit=commit,
+                repo_name, ssh_url, branch=branch, tag=tag, commit=commit,
                 output_callback=action.append_output,
                 cancel_event=action.cancel_event,
             )
@@ -2257,7 +2263,32 @@ async def auto_build_poller():
                                     untagged=untagged_count)
                         state["building"] = True
                         state["last_sha"] = latest_sha
-                        await _trigger_pipeline(name, ssh_url)
+
+                        # Determine version and tag for the pipeline
+                        latest_tag_info = untagged_data.get("latest_tag")
+                        if untagged_count > 0:
+                            # New commit is untagged — auto-tag it
+                            try:
+                                next_ver = await github_service.get_next_version(owner, name)
+                                new_tag = f"v{next_ver}"
+                                tag_result = await github_service.create_tag(owner, name, new_tag, latest_sha)
+                                if tag_result.get("success"):
+                                    logger.info("Auto-tagged new commit", repo=name, tag=new_tag, sha=latest_sha[:7])
+                                    await _trigger_pipeline(name, ssh_url, version=next_ver, tag=new_tag)
+                                else:
+                                    logger.error("Failed to auto-tag", repo=name, error=tag_result.get("error"))
+                                    state["building"] = False
+                            except Exception as tag_err:
+                                logger.error("Auto-tag failed", repo=name, error=str(tag_err))
+                                state["building"] = False
+                        elif latest_tag_info:
+                            # Latest commit already has a tag
+                            tag_name = latest_tag_info.get("name", "")
+                            version = tag_name.lstrip("v")
+                            await _trigger_pipeline(name, ssh_url, version=version, tag=tag_name)
+                        else:
+                            # No tags at all — use default version
+                            await _trigger_pipeline(name, ssh_url)
 
         except Exception as e:
             logger.error("Auto-build poller error", error=str(e))
