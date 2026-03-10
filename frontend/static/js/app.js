@@ -2439,12 +2439,8 @@ async function updateStacksContainerStates() {
                 needsRerender = true;
             }
         }
-        if (needsRerender) {
-            renderStacksList();
-            return;
-        }
-
-        // Build a map: stackName -> serviceName -> containers
+        // Always update stacksContainers from statesData BEFORE any render,
+        // so that both full re-render and incremental update use fresh data.
         const newContainersByStack = {};
         for (const c of statesData) {
             let stackName = null;
@@ -2492,26 +2488,19 @@ async function updateStacksContainerStates() {
                 continue; // Skip update, keep existing data
             }
 
-            // Merge: keep existing service keys (from swarm manager), update containers
-            const mergedServices = { ...oldStackContainers };
-            for (const [svc, containers] of Object.entries(newStackContainers)) {
-                mergedServices[svc] = containers;
-            }
-            // Only clear a service if the stack WAS present in the response but
-            // this specific service was not (meaning it was genuinely removed)
-            for (const svc of Object.keys(mergedServices)) {
-                if (!newStackContainers[svc] && mergedServices[svc].length > 0) {
-                    // Check if at least one other service in this stack was updated
-                    // If yes, this service was genuinely removed; if no, it's a partial response
-                    if (Object.keys(newStackContainers).length > 0) {
-                        mergedServices[svc] = [];
-                    }
-                }
-            }
-            stacksContainers[stackName] = mergedServices;
+            // Replace with fresh data from this poll (no stale merge)
+            stacksContainers[stackName] = newStackContainers;
+        }
 
-            // Update DOM in-place for this stack
-            updateStackDom(repo.name, stackName, mergedServices);
+        if (needsRerender) {
+            renderStacksList();
+            return;
+        }
+
+        // Incremental DOM update for each stack
+        for (const repo of stacksRepos) {
+            const stackName = repoToStackName(repo.name);
+            updateStackDom(repo.name, stackName, stacksContainers[stackName] || {});
         }
     } catch (e) {
         console.error('Failed to update stacks container states:', e);

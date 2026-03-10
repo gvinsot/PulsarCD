@@ -592,25 +592,7 @@ echo ""
 # ============================================================================
 log_info "Deploying stack: $STACK_NAME"
 
-# If stack already exists, remove it first to purge old service logs
-if docker stack ls 2>/dev/null | grep -q "^${STACK_NAME}\s"; then
-    log_info "Removing existing stack '$STACK_NAME' to purge old logs..."
-    docker stack rm "$STACK_NAME" 2>/dev/null || true
-    # Wait for all containers/networks to be cleaned up
-    log_info "Waiting for stack removal to complete..."
-    WAIT_COUNT=0
-    while docker stack ps "$STACK_NAME" 2>/dev/null | grep -q .; do
-        sleep 2
-        WAIT_COUNT=$((WAIT_COUNT + 1))
-        if [ "$WAIT_COUNT" -ge 30 ]; then
-            log_warning "Timed out waiting for stack removal after 60s, proceeding anyway"
-            break
-        fi
-    done
-    log_success "Old stack removed"
-fi
-
-# Deploy the stack
+# Deploy the stack (rolling update if it already exists)
 docker stack deploy -c "$DEPLOY_COMPOSE" "$STACK_NAME" --with-registry-auth || {
     log_error "Failed to deploy stack!"
     rm -f "$DEPLOY_COMPOSE"
