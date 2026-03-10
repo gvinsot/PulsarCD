@@ -1085,8 +1085,8 @@ class StackDeployer:
                 output_callback(line)
         return success, output
 
-    async def build(self, repo_name: str, ssh_url: str, version: str = "1.0", 
-                   branch: str = None, commit: str = None,
+    async def build(self, repo_name: str, ssh_url: str, version: str = "1.0",
+                   branch: str = None, tag: str = None, commit: str = None,
                    output_callback=None, cancel_event=None) -> Dict[str, Any]:
         """Build a stack from a repository.
 
@@ -1095,6 +1095,7 @@ class StackDeployer:
             ssh_url: SSH URL for cloning if needed
             version: Version tag for the build
             branch: Optional branch name to build from
+            tag: Optional git tag to build from (takes priority over branch)
             commit: Optional specific commit hash to build from
             output_callback: Optional callable(str) for streaming output
             cancel_event: Optional asyncio.Event for cancellation
@@ -1103,11 +1104,13 @@ class StackDeployer:
             Dict with success status, output, and timing info
         """
         start_time = datetime.utcnow()
+        # Tag takes priority over branch for checkout
+        checkout_ref = tag or branch
         result = {
             "action": "build",
             "repo": repo_name,
             "version": version,
-            "branch": branch,
+            "branch": checkout_ref,
             "commit": commit,
             "success": False,
             "output": "",
@@ -1131,12 +1134,12 @@ class StackDeployer:
             repos_path = self.config.repos_path
             repo_path = f"{repos_path}/{repo_name}"
 
-            # Build command with optional branch/commit parameters
+            # Build command with optional branch/tag/commit parameters
             # Pass absolute repo_path to avoid path computation mismatch
-            # Script format: build-push.sh <folder> <version> [branch] [commit]
+            # Script format: build-push.sh <folder> <version> [branch/tag] [commit]
             build_cmd = f"cd {scripts_path} && bash build-push.sh \"{repo_path}\" {version}"
-            if branch:
-                build_cmd += f" {branch}"
+            if checkout_ref:
+                build_cmd += f" {checkout_ref}"
                 if commit:
                     build_cmd += f" {commit}"
             elif commit:
@@ -1245,7 +1248,7 @@ class StackDeployer:
         return result
 
     async def test(self, repo_name: str, ssh_url: str,
-                   branch: str = None, commit: str = None,
+                   branch: str = None, tag: str = None, commit: str = None,
                    output_callback=None, cancel_event=None) -> Dict[str, Any]:
         """Run tests for a stack by executing the 'test' build target from docker-compose.swarm.yml.
 
@@ -1253,6 +1256,7 @@ class StackDeployer:
             repo_name: Name of the repository
             ssh_url: SSH URL for cloning if needed
             branch: Optional branch name to test from
+            tag: Optional git tag to test from (takes priority over branch)
             commit: Optional specific commit hash to test from
             output_callback: Optional callable(str) for streaming output
             cancel_event: Optional asyncio.Event for cancellation
@@ -1261,10 +1265,12 @@ class StackDeployer:
             Dict with success status, output, and timing info
         """
         start_time = datetime.utcnow()
+        # Tag takes priority over branch for checkout
+        checkout_ref = tag or branch
         result = {
             "action": "test",
             "repo": repo_name,
-            "branch": branch,
+            "branch": checkout_ref,
             "commit": commit,
             "success": False,
             "output": "",
@@ -1285,10 +1291,10 @@ class StackDeployer:
             repos_path = self.config.repos_path
             repo_path = f"{repos_path}/{repo_name}"
 
-            # Script format: test.sh <folder> [branch] [commit]
+            # Script format: test.sh <folder> [branch/tag] [commit]
             test_cmd = f"cd {scripts_path} && bash test.sh \"{repo_path}\""
-            if branch:
-                test_cmd += f" {branch}"
+            if checkout_ref:
+                test_cmd += f" {checkout_ref}"
                 if commit:
                     test_cmd += f" {commit}"
             elif commit:

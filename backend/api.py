@@ -2113,7 +2113,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
             logger.info("Pipeline: starting build", repo=repo_name, action_id=build_id, version=build_version, tag=tag)
             result = await deployer.build(
                 repo_name, ssh_url, version=build_version,
-                branch=tag,  # git tag works as a branch ref for checkout
+                tag=tag,
                 output_callback=build_action.append_output,
                 cancel_event=build_action.cancel_event,
             )
@@ -2137,9 +2137,10 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
             _background_actions[test_id] = test_action
             _pipeline_state[repo_name] = {"stage": "test", "status": "running", "build_action_id": build_id, "test_action_id": test_id, "deploy_action_id": None, "version": built_version}
 
-            logger.info("Pipeline: starting test", repo=repo_name, action_id=test_id)
+            logger.info("Pipeline: starting test", repo=repo_name, action_id=test_id, tag=tag)
             test_result = await deployer.test(
                 repo_name, ssh_url,
+                tag=tag,
                 output_callback=test_action.append_output,
                 cancel_event=test_action.cancel_event,
             )
@@ -2166,7 +2167,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
             deploy_tag = tag if tag else (f"v{built_version}" if built_version else None)
             logger.info("Pipeline: starting deploy", repo=repo_name, action_id=deploy_id, tag=deploy_tag)
             deploy_result = await deployer.deploy(
-                repo_name, ssh_url, version=build_version,
+                repo_name, ssh_url, version=built_version,
                 tag=deploy_tag,
                 output_callback=deploy_action.append_output,
                 cancel_event=deploy_action.cancel_event,
