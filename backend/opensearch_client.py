@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import structlog
-from opensearchpy import AsyncOpenSearch, helpers
+from opensearchpy import AsyncOpenSearch, ConflictError, helpers
 
 from .config import OpenSearchConfig
 from .models import (
@@ -945,7 +945,7 @@ class OpenSearchClient:
         
         for index in [self.logs_index, self.metrics_index, self.host_metrics_index]:
             try:
-                await self._client.delete_by_query(
+                result = await self._client.delete_by_query(
                     index=index,
                     body={
                         "query": {
@@ -954,6 +954,24 @@ class OpenSearchClient:
                     },
                     conflicts="proceed",
                 )
-                logger.info("Cleaned up old data", index=index, cutoff=cutoff.isoformat())
+                deleted = result.get("deleted", 0)
+                conflicts = result.get("version_conflicts", 0)
+                if conflicts:
+                    logger.info("Cleaned up old data (some version conflicts ignored)",
+                               index=index, deleted=deleted, conflicts=conflicts)
+                else:
+                    logger.info("Cleaned up old data", index=index, deleted=deleted)
+            except ConflictError as e:
+                # Version conflicts during cleanup are expected — new logs are being
+                # indexed while old ones are deleted. Extract stats from the error body.
+                import json
+                try:
+                    body = json.loads(str(e.info))
+                    deleted = body.get("deleted", 0)
+                    conflicts = body.get("version_conflicts", 0)
+                    logger.info("Cleanup completed with version conflicts",
+                               index=index, deleted=deleted, conflicts=conflicts)
+                except Exception:
+                    logger.info("Cleanup completed with minor version conflicts", index=index)
             except Exception as e:
                 logger.error("Cleanup failed", index=index, error=str(e))
