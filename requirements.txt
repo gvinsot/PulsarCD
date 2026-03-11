@@ -32,4 +32,4 @@ pyyaml>=6.0.1
 structlog>=24.1.0
 
 # Vector similarity (optional — error detector falls back to hashing if unavailable)
-zvec>=0.3.0
+zvec>=0.2.0
