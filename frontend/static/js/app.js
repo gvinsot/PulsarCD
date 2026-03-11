@@ -2959,29 +2959,37 @@ function renderStacksList() {
         const hadBuild = pipeline ? !!pipeline.build_action_id : false;
         const hadTest = pipeline ? !!pipeline.test_action_id : false;
 
+        // If the pipeline version matches the latest built version, build+test were already done
+        // (e.g. manual deploy of a version that went through the full pipeline previously)
+        const pipelineVersionNorm = pipeline && pipeline.version ? normalizeVersion(pipeline.version) : null;
+        const latestBuiltNorm = latestBuilt ? normalizeVersion(latestBuilt) : null;
+        const versionAlreadyBuilt = !!(latestBuiltNorm && pipelineVersionNorm && pipelineVersionNorm === latestBuiltNorm);
+        const effectiveHadBuild = hadBuild || versionAlreadyBuilt;
+        const effectiveHadTest = hadTest || versionAlreadyBuilt;
+
         const skipBuild = !isBuildable || (pipeline && pipeline.skip_build);
         if (pipeline && pipeline.status === 'running') {
             const cs = stageOrder[pipeline.stage] || 0;
             versionStep = 'success';
-            buildStep = skipBuild ? 'skipped' : (cs === 1 ? 'running' : (hadBuild && cs > 1 ? 'success' : (cs > 1 ? 'idle' : 'pending')));
-            testStep = cs === 2 ? 'running' : (hadTest && cs > 2 ? 'success' : (cs > 2 ? 'idle' : 'pending'));
+            buildStep = skipBuild ? 'skipped' : (cs === 1 ? 'running' : (effectiveHadBuild && cs > 1 ? 'success' : (cs > 1 ? 'idle' : 'pending')));
+            testStep = cs === 2 ? 'running' : (effectiveHadTest && cs > 2 ? 'success' : (cs > 2 ? 'idle' : 'pending'));
             deployStep = cs === 3 ? 'running' : 'pending';
         } else if (pipeline && pipeline.status === 'failed') {
             const cs = stageOrder[pipeline.stage] || 0;
             versionStep = 'success';
-            buildStep = skipBuild ? 'skipped' : (cs === 1 ? 'failed' : (hadBuild && cs > 1 ? 'success' : (cs > 1 ? 'idle' : 'pending')));
-            testStep = cs === 2 ? 'failed' : (hadTest && cs > 2 ? 'success' : (cs > 2 ? 'idle' : 'pending'));
+            buildStep = skipBuild ? 'skipped' : (cs === 1 ? 'failed' : (effectiveHadBuild && cs > 1 ? 'success' : (cs > 1 ? 'idle' : 'pending')));
+            testStep = cs === 2 ? 'failed' : (effectiveHadTest && cs > 2 ? 'success' : (cs > 2 ? 'idle' : 'pending'));
             deployStep = cs === 3 ? 'failed' : (cs > 3 ? 'success' : 'pending');
         } else if (pipeline && pipeline.stage === 'done') {
             versionStep = 'success';
-            buildStep = skipBuild ? 'skipped' : (hadBuild ? 'success' : 'idle');
-            testStep = hadTest ? 'success' : 'idle';
+            buildStep = skipBuild ? 'skipped' : (effectiveHadBuild ? 'success' : 'idle');
+            testStep = effectiveHadTest ? 'success' : 'idle';
             deployStep = 'success';
         } else if (pipeline && pipeline.status === 'success') {
             const cs = stageOrder[pipeline.stage] || 0;
             versionStep = 'success';
-            buildStep = skipBuild ? 'skipped' : (hadBuild && cs >= 1 ? 'success' : (cs >= 1 ? 'idle' : 'pending'));
-            testStep = hadTest && cs >= 2 ? 'success' : (cs >= 2 ? 'idle' : 'pending');
+            buildStep = skipBuild ? 'skipped' : (effectiveHadBuild && cs >= 1 ? 'success' : (cs >= 1 ? 'idle' : 'pending'));
+            testStep = effectiveHadTest && cs >= 2 ? 'success' : (cs >= 2 ? 'idle' : 'pending');
             deployStep = cs >= 3 ? 'success' : 'pending';
         } else if (hasUpdate) {
             versionStep = 'success'; buildStep = skipBuild ? 'skipped' : 'success'; testStep = 'success'; deployStep = 'pending';
