@@ -518,6 +518,59 @@ a.btn {
     white-space: nowrap;
 }
 
+/* Recurring error detail modal */
+.rerr-meta-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+.rerr-meta-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    min-width: 100px;
+    padding-top: 2px;
+}
+.rerr-meta-value {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+.rerr-count-badge {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--status-error);
+}
+.rerr-services {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+.rerr-service-chip {
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    font-size: 0.78rem;
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    font-family: var(--font-mono);
+}
+.rerr-full-message {
+    margin: 0;
+    padding: 12px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 240px;
+    overflow-y: auto;
+}
+
 /* Containers View */
 #containers-view.active {
     flex-direction: column;

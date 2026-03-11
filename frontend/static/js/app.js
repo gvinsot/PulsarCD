@@ -813,6 +813,8 @@ async function loadDashboard() {
     ]);
 }
 
+let recurringErrorsData = [];
+
 async function loadRecurringErrors() {
     const data = await apiGet('/dashboard/recurring-errors?limit=5');
     const el = document.getElementById('recurring-errors-list');
@@ -821,15 +823,18 @@ async function loadRecurringErrors() {
     const card = el.closest('.recurring-errors-card');
     if (!data || data.length === 0) {
         if (card) card.style.display = 'none';
+        recurringErrorsData = [];
         return;
     }
-    if (card) card.style.display = '';
+    recurringErrorsData = data;
 
-    el.innerHTML = data.map(p => {
-        const services = p.services.slice(0, 3).join(', ') + (p.services.length > 3 ? ` +${p.services.length - 3}` : '');
+    // Build HTML first, then reveal card (avoids showing empty card if render fails)
+    el.innerHTML = data.map((p, i) => {
+        const svcs = p.services || [];
+        const services = svcs.slice(0, 3).join(', ') + (svcs.length > 3 ? ` +${svcs.length - 3}` : '');
         const age = formatRelativeTime(p.notified_at || p.last_seen);
         return `
-        <div class="recurring-error-item" onclick="searchErrorPattern(${JSON.stringify(p.sample_message.substring(0, 80))})">
+        <div class="recurring-error-item" onclick="showRecurringErrorDetail(${i})">
             <div class="recurring-error-header">
                 <span class="recurring-error-count">${p.count}×</span>
                 <span class="recurring-error-services">${escapeHtml(services)}</span>
@@ -838,10 +843,38 @@ async function loadRecurringErrors() {
             <div class="recurring-error-message">${escapeHtml(p.sample_message)}</div>
         </div>`;
     }).join('');
+    if (card) card.style.display = '';
 }
 
-function searchErrorPattern(message) {
-    // Navigate to logs view with this message as search query
+function showRecurringErrorDetail(index) {
+    const p = recurringErrorsData[index];
+    if (!p) return;
+
+    const svcs = p.services || [];
+    document.getElementById('recurring-error-modal-count').textContent =
+        `${p.count} occurrence${p.count !== 1 ? 's' : ''}`;
+    document.getElementById('recurring-error-modal-services').innerHTML =
+        svcs.length
+            ? svcs.map(s => `<span class="rerr-service-chip">${escapeHtml(s)}</span>`).join('')
+            : '<span style="color:var(--text-muted)">Unknown</span>';
+    document.getElementById('recurring-error-modal-first-seen').textContent =
+        formatRelativeTime(p.first_seen);
+    document.getElementById('recurring-error-modal-last-seen').textContent =
+        formatRelativeTime(p.last_seen);
+    document.getElementById('recurring-error-modal-message').textContent = p.sample_message;
+
+    const modal = document.getElementById('recurring-error-modal');
+    modal.dataset.message = p.sample_message;
+    modal.classList.add('open');
+}
+
+function closeRecurringErrorModal() {
+    document.getElementById('recurring-error-modal').classList.remove('open');
+}
+
+function searchRecurringError() {
+    const message = document.getElementById('recurring-error-modal').dataset.message || '';
+    closeRecurringErrorModal();
     const trimmed = message.trim().substring(0, 60);
     showView('logs');
     setTimeout(() => {

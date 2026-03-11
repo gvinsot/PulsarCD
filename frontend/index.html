@@ -884,6 +884,45 @@
                 <div id="terminal-container" class="terminal-wrapper"></div>
             </section>
 
+            <!-- Recurring Error Detail Modal -->
+            <div id="recurring-error-modal" class="modal" onclick="if(event.target===this)closeRecurringErrorModal()">
+                <div class="modal-content modal-md">
+                    <div class="modal-header">
+                        <h2>Recurring Error</h2>
+                        <button class="modal-close" onclick="closeRecurringErrorModal()">&times;</button>
+                    </div>
+                    <div class="modal-body" style="padding:20px;display:flex;flex-direction:column;gap:16px">
+                        <div class="rerr-meta-row">
+                            <span class="rerr-meta-label">Occurrences</span>
+                            <span id="recurring-error-modal-count" class="rerr-count-badge"></span>
+                        </div>
+                        <div class="rerr-meta-row">
+                            <span class="rerr-meta-label">Components</span>
+                            <div id="recurring-error-modal-services" class="rerr-services"></div>
+                        </div>
+                        <div class="rerr-meta-row">
+                            <span class="rerr-meta-label">First seen</span>
+                            <span id="recurring-error-modal-first-seen" class="rerr-meta-value"></span>
+                        </div>
+                        <div class="rerr-meta-row">
+                            <span class="rerr-meta-label">Last seen</span>
+                            <span id="recurring-error-modal-last-seen" class="rerr-meta-value"></span>
+                        </div>
+                        <div>
+                            <div class="rerr-meta-label" style="margin-bottom:6px">Error message</div>
+                            <pre id="recurring-error-modal-message" class="rerr-full-message"></pre>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" onclick="closeRecurringErrorModal()">Close</button>
+                        <button class="btn btn-primary" onclick="searchRecurringError()">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="margin-right:6px;vertical-align:-1px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                            Search in logs
+                        </button>
+                    </div>
+                </div>
+            </div>
+
             <!-- Container Detail Modal -->
             <div id="container-modal" class="modal">
                 <div class="modal-content modal-fullscreen">
@@ -1001,6 +1040,6 @@
         </main>
     </div>
     
-    <script src="/static/js/app.js?v=11"></script>
+    <script src="/static/js/app.js?v=12"></script>
 </body>
 </html>
