@@ -372,16 +372,24 @@ class RecurringErrorDetector:
         )
 
         url = f"{self._swarm_api_base}/agents/{self._swarm_agent_name}/tasks"
-        headers = {"Authorization": f"Bearer {self._swarm_secret_key}"}
+        headers = {
+            "Authorization": f"Bearer {self._swarm_secret_key}",
+            "Content-Type": "application/json",
+        }
         payload = {
             "task": task_description,
             "project": services_list.split(',')[0].strip(),
         }
 
+        logger.info("Sending recurring error task to agent",
+                    url=url, agent=self._swarm_agent_name,
+                    count=pattern.count, services=services_list)
+
         try:
-            async with aiohttp.ClientSession(headers=headers) as session:
+            async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    url, json=payload, timeout=aiohttp.ClientTimeout(total=10),
+                    url, json=payload, headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=10),
                 ) as resp:
                     body = await resp.text()
                     if resp.status in (200, 201):
