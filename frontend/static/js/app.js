@@ -4772,7 +4772,9 @@ async function cancelAction(actionId) {
 // ============== Action Logs Modal ==============
 
 let currentActionLogsId = null;
-let actionLogsEventSource = null;
+let actionLogsPollTimer = null;
+let actionLogsPollOffset = 0;
+let actionLogsFirstRender = true;
 
 function openActionLogs(actionId, actionType, repoName) {
     currentActionLogsId = actionId;
@@ -4786,20 +4788,19 @@ function openActionLogs(actionId, actionType, repoName) {
 
     modal.classList.add('active');
 
-    // Start SSE stream
-    startActionLogsStream(actionId);
+    startActionLogsPoll(actionId);
 }
 
 function closeActionLogsModal() {
-    stopActionLogsStream();
+    stopActionLogsPoll();
     document.getElementById('action-logs-modal').classList.remove('active');
     currentActionLogsId = null;
 }
 
-function stopActionLogsStream() {
-    if (actionLogsEventSource) {
-        actionLogsEventSource.close();
-        actionLogsEventSource = null;
+function stopActionLogsPoll() {
+    if (actionLogsPollTimer) {
+        clearTimeout(actionLogsPollTimer);
+        actionLogsPollTimer = null;
     }
 }
 
@@ -4813,50 +4814,52 @@ function appendLogLine(content, line) {
     content.appendChild(lineEl);
 }
 
-function startActionLogsStream(actionId) {
-    stopActionLogsStream();
+async function startActionLogsPoll(actionId) {
+    stopActionLogsPoll();
+    actionLogsPollOffset = 0;
+    actionLogsFirstRender = true;
 
-    const token = getAuthToken();
-    const url = `${API_BASE}/stacks/actions/${actionId}/logs/stream?token=${encodeURIComponent(token || '')}`;
-    const es = new EventSource(url);
-    actionLogsEventSource = es;
-    let firstLine = true;
+    async function poll() {
+        if (actionId !== currentActionLogsId) return;
 
-    es.onmessage = (event) => {
-        if (actionId !== currentActionLogsId) { es.close(); return; }
+        try {
+            const data = await apiFetch(`/stacks/actions/${actionId}/logs?offset=${actionLogsPollOffset}`);
+            if (actionId !== currentActionLogsId) return;
 
-        const content = document.getElementById('action-logs-content');
-        const data = JSON.parse(event.data);
+            const content = document.getElementById('action-logs-content');
 
-        if (data.type === 'line') {
-            if (firstLine) {
-                content.innerHTML = '';
-                firstLine = false;
+            if (data.lines && data.lines.length > 0) {
+                if (actionLogsFirstRender) {
+                    content.innerHTML = '';
+                    actionLogsFirstRender = false;
+                }
+                for (const line of data.lines) {
+                    appendLogLine(content, line);
+                }
+                actionLogsPollOffset += data.lines.length;
+                content.scrollTop = content.scrollHeight;
             }
-            appendLogLine(content, data.line);
-            content.scrollTop = content.scrollHeight;
-        } else if (data.type === 'done') {
-            const statusLine = document.createElement('div');
-            statusLine.className = `log-line ${data.status === 'completed' ? 'log-success' : 'log-error'}`;
-            statusLine.textContent = `\n--- ${data.status.toUpperCase()} ---`;
-            content.appendChild(statusLine);
-            content.scrollTop = content.scrollHeight;
-            if (firstLine) {
-                content.innerHTML = '';
+
+            if (data.status !== 'running') {
+                if (actionLogsFirstRender) {
+                    content.innerHTML = '';
+                    actionLogsFirstRender = false;
+                }
+                const statusLine = document.createElement('div');
+                statusLine.className = `log-line ${data.status === 'completed' ? 'log-success' : 'log-error'}`;
+                statusLine.textContent = `--- ${data.status.toUpperCase()} ---`;
                 content.appendChild(statusLine);
+                content.scrollTop = content.scrollHeight;
+                return; // done
             }
-            es.close();
-            actionLogsEventSource = null;
+        } catch (e) {
+            // transient error — keep polling
         }
-    };
 
-    es.onerror = () => {
-        // EventSource will auto-reconnect; if modal closed, stop
-        if (actionId !== currentActionLogsId) {
-            es.close();
-            actionLogsEventSource = null;
-        }
-    };
+        actionLogsPollTimer = setTimeout(poll, 1000);
+    }
+
+    poll();
 }
 
 // ============== Stack Output ==============

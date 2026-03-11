@@ -145,6 +145,14 @@ services:
         - "traefik.http.routers.logscrawler-ws.service=logscrawler"
         - "traefik.http.routers.logscrawler-ws.priority=100"
 
+        # HTTPS Router (SSE log streams) - bypasses WAF which buffers streaming responses
+        - "traefik.http.routers.logscrawler-sse.rule=Host(`${TRAEFIK_HOST}`) && PathRegexp(`^/api/stacks/actions/.+/logs/stream`)"
+        - "traefik.http.routers.logscrawler-sse.entrypoints=websecure"
+        - "traefik.http.routers.logscrawler-sse.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.logscrawler-sse.middlewares=security-headers@file"
+        - "traefik.http.routers.logscrawler-sse.service=logscrawler"
+        - "traefik.http.routers.logscrawler-sse.priority=50"
+
         # HTTP Router (redirect to HTTPS)
         - "traefik.http.routers.logscrawler-http.rule=Host(`${TRAEFIK_HOST}`)"
         - "traefik.http.routers.logscrawler-http.entrypoints=web"
