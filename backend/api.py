@@ -530,26 +530,10 @@ async def get_vram_timeseries_by_host(
 
 @app.get("/api/dashboard/recurring-errors")
 async def get_recurring_errors(limit: int = Query(default=5, ge=1, le=50)) -> List[Dict[str, Any]]:
-    """Return the most recent recurring error patterns detected by the error detector."""
+    """Return the most recent notified recurring error patterns."""
     if not error_detector:
         return []
-    patterns = sorted(
-        error_detector._patterns.values(),
-        key=lambda p: p.last_seen,
-        reverse=True,
-    )[:limit]
-    return [
-        {
-            "fingerprint": p.fingerprint,
-            "sample_message": p.sample_message,
-            "count": p.count,
-            "services": sorted(p.services),
-            "first_seen": p.first_seen.isoformat(),
-            "last_seen": p.last_seen.isoformat(),
-            "notified": p.notified,
-        }
-        for p in patterns
-    ]
+    return error_detector._notification_history[:limit]
 
 
 # ============== Containers ==============

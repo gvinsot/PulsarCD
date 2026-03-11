@@ -131,6 +131,8 @@ class RecurringErrorDetector:
         self._patterns: Dict[str, ErrorPattern] = {}
         # fingerprint -> datetime of last notification; re-notify only after 1 hour
         self._notified_fingerprints: Dict[str, datetime] = {}
+        # Persistent history of the last 20 notified patterns (survives the 1h eviction window)
+        self._notification_history: List[dict] = []
         self._running = False
         self._last_scan_ts: Optional[datetime] = None
 
@@ -409,6 +411,23 @@ class RecurringErrorDetector:
                                     count=pattern.count,
                                     services=services_list)
                         pattern.notified = True
+                        # Add to persistent history (keep last 20)
+                        entry = {
+                            "fingerprint": pattern.fingerprint,
+                            "sample_message": pattern.sample_message,
+                            "count": pattern.count,
+                            "services": sorted(pattern.services),
+                            "first_seen": pattern.first_seen.isoformat(),
+                            "last_seen": pattern.last_seen.isoformat(),
+                            "notified_at": datetime.utcnow().isoformat(),
+                        }
+                        # Update existing entry if same fingerprint, else prepend
+                        self._notification_history = [
+                            e for e in self._notification_history
+                            if e["fingerprint"] != pattern.fingerprint
+                        ]
+                        self._notification_history.insert(0, entry)
+                        self._notification_history = self._notification_history[:20]
                     else:
                         logger.error("Failed to send recurring error task",
                                      status=resp.status, url=url, response=body[:500])

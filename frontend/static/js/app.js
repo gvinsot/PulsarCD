@@ -825,17 +825,13 @@ async function loadRecurringErrors() {
 
     el.innerHTML = data.map(p => {
         const services = p.services.slice(0, 3).join(', ') + (p.services.length > 3 ? ` +${p.services.length - 3}` : '');
-        const age = formatRelativeTime(p.last_seen);
-        const notifiedBadge = p.notified
-            ? `<span style="font-size:0.7rem;padding:1px 6px;border-radius:10px;background:rgba(14,165,233,0.15);color:var(--accent-secondary);margin-left:6px">notified</span>`
-            : '';
+        const age = formatRelativeTime(p.notified_at || p.last_seen);
         return `
         <div class="recurring-error-item" onclick="searchErrorPattern(${JSON.stringify(p.sample_message.substring(0, 80))})">
             <div class="recurring-error-header">
                 <span class="recurring-error-count">${p.count}×</span>
                 <span class="recurring-error-services">${escapeHtml(services)}</span>
                 <span class="recurring-error-age">${age}</span>
-                ${notifiedBadge}
             </div>
             <div class="recurring-error-message">${escapeHtml(p.sample_message)}</div>
         </div>`;
