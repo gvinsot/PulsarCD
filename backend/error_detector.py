@@ -47,7 +47,7 @@ _STRIP_PATTERNS = [
     (re.compile(r'\b[0-9a-fA-F]{8,}\b'), '<HEX>'),          # hex IDs
     (re.compile(r'\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[.\d]*Z?\b'), '<TS>'),  # timestamps
     (re.compile(r'\b\d+\.\d+\.\d+\.\d+(:\d+)?\b'), '<IP>'),  # IPs
-    (re.compile(r'\b\d{5,}\b'), '<NUM>'),                      # large numbers
+    (re.compile(r'\b\d+\b'), '<NUM>'),                         # any number (retry counts, timeouts, etc.)
     (re.compile(r'/[a-zA-Z0-9_./-]{20,}'), '<PATH>'),         # long paths
     (re.compile(r'"[^"]{60,}"'), '<STR>'),                     # long strings
 ]
@@ -335,7 +335,6 @@ class RecurringErrorDetector:
             return groups
 
         groups: Dict[str, List[dict]] = {}
-        fp_map: Dict[str, str] = {}  # zvec_id -> fingerprint
 
         for err in errors:
             vec = self._text_to_vector(err["message"])
@@ -348,20 +347,20 @@ class RecurringErrorDetector:
                     topk=1
                 )
                 if results and results[0].score >= self._similarity_threshold:
-                    # Merge into existing group
-                    existing_fp = fp_map.get(results[0].id, fp)
+                    # Extract fingerprint from doc_id ("err_<fp>_<timestamp>")
+                    parts = results[0].id.split('_')
+                    existing_fp = parts[1] if len(parts) >= 3 else fp
                     groups.setdefault(existing_fp, []).append(err)
                     continue
             except Exception:
                 pass
 
-            # New pattern — insert into zvec
+            # New pattern — insert into zvec (fp embedded in doc_id for cross-scan lookup)
             doc_id = f"err_{fp}_{int(time.time() * 1000)}"
             try:
                 self._zvec_collection.insert([
                     zvec.Doc(id=doc_id, vectors={"embedding": vec})
                 ])
-                fp_map[doc_id] = fp
             except Exception:
                 pass
 
