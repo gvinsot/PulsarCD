@@ -818,10 +818,12 @@ async function loadRecurringErrors() {
     const el = document.getElementById('recurring-errors-list');
     if (!el) return;
 
+    const card = el.closest('.recurring-errors-card');
     if (!data || data.length === 0) {
-        el.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-muted);font-size:0.85rem">No recurring errors detected</div>';
+        if (card) card.style.display = 'none';
         return;
     }
+    if (card) card.style.display = '';
 
     el.innerHTML = data.map(p => {
         const services = p.services.slice(0, 3).join(', ') + (p.services.length > 3 ? ` +${p.services.length - 3}` : '');
