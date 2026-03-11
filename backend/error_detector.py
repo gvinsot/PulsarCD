@@ -97,12 +97,14 @@ class RecurringErrorDetector:
 
     Architecture:
     - Runs every `scan_interval` seconds (default 60s)
-    - Queries OpenSearch for recent ERROR/FATAL/CRITICAL logs
-    - Normalizes messages and groups by fingerprint
+    - First scan: fetches the last `initial_lookback_hours` of errors (default 12h)
+    - Subsequent scans: incremental — only fetches errors since the last scan
+      (no double-counting from overlapping windows)
+    - Normalizes messages and groups by fingerprint / zvec similarity
+    - Patterns accumulate counts across scans and are evicted after
+      `pattern_ttl_hours` of inactivity (default 12h)
     - When a pattern hits the threshold (count >= min_occurrences),
-      posts a task to the QWEN agent via the swarm API
-    - Uses zvec for similarity-based deduplication when available,
-      falls back to text hashing otherwise
+      posts a task to the QWEN agent; re-notifies at most once per hour
     """
 
     def __init__(
@@ -112,8 +114,9 @@ class RecurringErrorDetector:
         swarm_agent_name: str,
         swarm_secret_key: str,
         scan_interval: int = 60,
-        lookback_minutes: int = 10,
+        initial_lookback_hours: int = 12,
         min_occurrences: int = 5,
+        pattern_ttl_hours: int = 12,
         zvec_similarity_threshold: float = 0.92,
         zvec_db_path: str = "/tmp/logscrawler_zvec",
     ):
@@ -122,8 +125,9 @@ class RecurringErrorDetector:
         self._swarm_agent_name = swarm_agent_name
         self._swarm_secret_key = swarm_secret_key
         self._scan_interval = scan_interval
-        self._lookback_minutes = lookback_minutes
+        self._initial_lookback_hours = initial_lookback_hours
         self._min_occurrences = min_occurrences
+        self._pattern_ttl_hours = pattern_ttl_hours
         self._similarity_threshold = zvec_similarity_threshold
         self._zvec_db_path = zvec_db_path
 
@@ -146,7 +150,8 @@ class RecurringErrorDetector:
         self._running = True
         logger.info("Recurring error detector starting",
                      interval=self._scan_interval,
-                     lookback=self._lookback_minutes,
+                     initial_lookback_hours=self._initial_lookback_hours,
+                     pattern_ttl_hours=self._pattern_ttl_hours,
                      threshold=self._min_occurrences)
         asyncio.create_task(self._scan_loop())
 
@@ -170,16 +175,28 @@ class RecurringErrorDetector:
             await asyncio.sleep(self._scan_interval)
 
     async def _scan(self):
-        """One scan cycle: fetch recent errors, fingerprint, detect patterns."""
+        """One scan cycle: fetch new errors, fingerprint, detect patterns."""
         now = datetime.utcnow()
-        since = now - timedelta(minutes=self._lookback_minutes)
 
-        # Query OpenSearch for recent error logs
+        if self._last_scan_ts is None:
+            # First scan: bootstrap with the full initial lookback window
+            since = now - timedelta(hours=self._initial_lookback_hours)
+            logger.info("Error detector first scan", lookback_hours=self._initial_lookback_hours)
+        else:
+            # Incremental: only fetch errors that arrived since the last scan
+            # to avoid double-counting errors across overlapping scan windows
+            since = self._last_scan_ts
+
+        # Query OpenSearch for new error logs
         errors = await self._fetch_recent_errors(since)
         if not errors:
+            self._last_scan_ts = now
             return
 
-        logger.debug("Error detector scanning", error_count=len(errors))
+        logger.debug("Error detector scanning",
+                     error_count=len(errors),
+                     since=since.isoformat(),
+                     incremental=self._last_scan_ts is not None)
 
         # Group by fingerprint
         zvec = _get_zvec()
@@ -217,8 +234,8 @@ class RecurringErrorDetector:
                     await self._notify_recurring_error(pattern)
                     self._notified_fingerprints[fp] = now
 
-        # Evict old patterns (older than 1 hour) to avoid unbounded memory growth
-        cutoff = now - timedelta(hours=1)
+        # Evict patterns not seen within the TTL window
+        cutoff = now - timedelta(hours=self._pattern_ttl_hours)
         stale = [fp for fp, p in self._patterns.items() if p.last_seen < cutoff]
         for fp in stale:
             del self._patterns[fp]
@@ -242,7 +259,7 @@ class RecurringErrorDetector:
                         ]
                     }
                 },
-                "size": 200,
+                "size": 2000,
                 "sort": [{"timestamp": "desc"}],
                 "_source": ["message", "container_name", "compose_project",
                             "compose_service", "host", "timestamp", "level"],
