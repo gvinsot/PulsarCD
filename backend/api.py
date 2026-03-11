@@ -47,6 +47,11 @@ error_detector = None
 
 SWARM_API_BASE = "https://swarm.methodinfo.fr/api/swarm"
 SWARM_AGENT_NAME = "QWEN"
+_NOTIFICATION_COOLDOWN = timedelta(hours=1)
+
+# Maps "stage:repo_name" -> datetime of last successful notification
+# Prevents sending the same failure task more than once per hour
+_notified_failures: Dict[str, datetime] = {}
 
 
 _ERROR_LINE_RE = re.compile(
@@ -100,6 +105,21 @@ async def _notify_agent_failure(stage: str, repo_name: str, version: str, error_
         logger.error("Swarm agent notification skipped: no secret key configured")
         return
 
+    # Dedup: skip if the same stage+repo was already notified within the cooldown window
+    dedup_key = f"{stage}:{repo_name}"
+    now = datetime.utcnow()
+    last_sent = _notified_failures.get(dedup_key)
+    if last_sent and (now - last_sent) < _NOTIFICATION_COOLDOWN:
+        logger.info("Swarm agent notification skipped (cooldown)",
+                    stage=stage, repo=repo_name,
+                    next_allowed_in=str(_NOTIFICATION_COOLDOWN - (now - last_sent)))
+        return
+
+    # Purge stale entries to avoid unbounded growth
+    stale = [k for k, ts in _notified_failures.items() if (now - ts) >= _NOTIFICATION_COOLDOWN]
+    for k in stale:
+        del _notified_failures[k]
+
     url = f"{SWARM_API_BASE}/agents/{SWARM_AGENT_NAME}/tasks"
     logger.info("Notifying swarm agent of failure", url=url, stage=stage, repo=repo_name)
 
@@ -127,6 +147,7 @@ async def _notify_agent_failure(stage: str, repo_name: str, version: str, error_
             ) as resp:
                 body = await resp.text()
                 if resp.status in (200, 201):
+                    _notified_failures[dedup_key] = now
                     logger.info("Repair task sent to agent",
                                 agent=SWARM_AGENT_NAME, stage=stage, repo=repo_name,
                                 status=resp.status, response=body[:200])

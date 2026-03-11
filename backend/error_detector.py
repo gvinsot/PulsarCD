@@ -12,7 +12,7 @@ import re
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import aiohttp
 import structlog
@@ -129,7 +129,8 @@ class RecurringErrorDetector:
 
         # State
         self._patterns: Dict[str, ErrorPattern] = {}
-        self._notified_fingerprints: Set[str] = set()  # avoid re-notifying
+        # fingerprint -> datetime of last notification; re-notify only after 1 hour
+        self._notified_fingerprints: Dict[str, datetime] = {}
         self._running = False
         self._last_scan_ts: Optional[datetime] = None
 
@@ -205,18 +206,21 @@ class RecurringErrorDetector:
                     s = occ.get("compose_project") or occ.get("container_name", "unknown")
                     self._patterns[fp].add_occurrence(s, occ["message"])
 
-        # Check thresholds and notify
+        # Check thresholds and notify (with 1-hour cooldown per fingerprint)
+        cooldown = timedelta(hours=1)
         for fp, pattern in list(self._patterns.items()):
-            if pattern.count >= self._min_occurrences and fp not in self._notified_fingerprints:
-                await self._notify_recurring_error(pattern)
-                self._notified_fingerprints.add(fp)
+            if pattern.count >= self._min_occurrences:
+                last_notified = self._notified_fingerprints.get(fp)
+                if last_notified is None or (now - last_notified) >= cooldown:
+                    await self._notify_recurring_error(pattern)
+                    self._notified_fingerprints[fp] = now
 
         # Evict old patterns (older than 1 hour) to avoid unbounded memory growth
         cutoff = now - timedelta(hours=1)
         stale = [fp for fp, p in self._patterns.items() if p.last_seen < cutoff]
         for fp in stale:
             del self._patterns[fp]
-            self._notified_fingerprints.discard(fp)
+            self._notified_fingerprints.pop(fp, None)
 
         self._last_scan_ts = now
 
