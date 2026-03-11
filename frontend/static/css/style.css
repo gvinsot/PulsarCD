@@ -466,6 +466,58 @@ a.btn {
     height: 100% !important;
 }
 
+/* Recurring errors widget */
+.recurring-errors-card {
+    grid-column: 1 / -1;  /* Full width */
+    height: auto;
+}
+
+.recurring-error-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    cursor: pointer;
+    transition: background 0.15s;
+    margin-bottom: 6px;
+}
+.recurring-error-item:last-child { margin-bottom: 0; }
+.recurring-error-item:hover { background: var(--bg-tertiary); }
+
+.recurring-error-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.8rem;
+}
+.recurring-error-count {
+    font-weight: 700;
+    color: var(--status-error);
+    min-width: 28px;
+}
+.recurring-error-services {
+    color: var(--text-secondary);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.recurring-error-age {
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.recurring-error-message {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 /* Containers View */
 #containers-view.active {
     flex-direction: column;

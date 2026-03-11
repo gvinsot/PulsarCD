@@ -801,15 +801,58 @@ async function loadDashboard() {
         }
     }
     
-    // Load charts (with error handling for each)
+    // Load charts and recurring errors in parallel
     await Promise.all([
         loadErrorsChart().catch(e => console.error('Failed to load errors chart:', e)),
         loadHttpChart().catch(e => console.error('Failed to load http chart:', e)),
         loadCpuChart().catch(e => console.error('Failed to load cpu chart:', e)),
         loadGpuChart().catch(e => console.error('Failed to load gpu chart:', e)),
         loadMemoryChart().catch(e => console.error('Failed to load memory chart:', e)),
-        loadVramChart().catch(e => console.error('Failed to load vram chart:', e))
+        loadVramChart().catch(e => console.error('Failed to load vram chart:', e)),
+        loadRecurringErrors().catch(e => console.error('Failed to load recurring errors:', e)),
     ]);
+}
+
+async function loadRecurringErrors() {
+    const data = await apiGet('/dashboard/recurring-errors?limit=5');
+    const el = document.getElementById('recurring-errors-list');
+    if (!el) return;
+
+    if (!data || data.length === 0) {
+        el.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-muted);font-size:0.85rem">No recurring errors detected</div>';
+        return;
+    }
+
+    el.innerHTML = data.map(p => {
+        const services = p.services.slice(0, 3).join(', ') + (p.services.length > 3 ? ` +${p.services.length - 3}` : '');
+        const age = formatRelativeTime(p.last_seen);
+        const notifiedBadge = p.notified
+            ? `<span style="font-size:0.7rem;padding:1px 6px;border-radius:10px;background:rgba(14,165,233,0.15);color:var(--accent-secondary);margin-left:6px">notified</span>`
+            : '';
+        return `
+        <div class="recurring-error-item" onclick="searchErrorPattern(${JSON.stringify(p.sample_message.substring(0, 80))})">
+            <div class="recurring-error-header">
+                <span class="recurring-error-count">${p.count}×</span>
+                <span class="recurring-error-services">${escapeHtml(services)}</span>
+                <span class="recurring-error-age">${age}</span>
+                ${notifiedBadge}
+            </div>
+            <div class="recurring-error-message">${escapeHtml(p.sample_message)}</div>
+        </div>`;
+    }).join('');
+}
+
+function searchErrorPattern(message) {
+    // Navigate to logs view with this message as search query
+    const trimmed = message.trim().substring(0, 60);
+    showView('logs');
+    setTimeout(() => {
+        const searchInput = document.getElementById('log-search');
+        if (searchInput) {
+            searchInput.value = trimmed;
+            searchLogs();
+        }
+    }, 100);
 }
 
 async function refreshDashboard() {
