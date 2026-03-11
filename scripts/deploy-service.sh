@@ -267,7 +267,7 @@ if [ -n "$BRANCH" ] || [ -n "$COMMIT" ]; then
 
     # Fetch latest changes
     log_info "Fetching latest changes from remote..."
-    git fetch --all --prune --tags
+    git fetch --all --prune --tags --force
 
     # Checkout the branch or tag
     if [ -n "$BRANCH" ]; then
@@ -348,7 +348,7 @@ else
 
             # Fetch latest
             log_info "Fetching latest changes from remote..."
-            git fetch --all --prune --tags
+            git fetch --all --prune --tags --force
 
             log_info "Resetting to latest remote version for branch: $CURRENT_BRANCH"
             git reset --hard "origin/$CURRENT_BRANCH" 2>/dev/null || log_warning "Could not reset to origin/$CURRENT_BRANCH (may be a local-only branch)"
