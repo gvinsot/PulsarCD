@@ -371,6 +371,12 @@ class RecurringErrorDetector:
             f"3. ALERTER ADMIN: If MCP is available, send a message to the admin for manual review\n"
         )
 
+        # Safety cap: truncate to 128 KB
+        max_bytes = 128 * 1024
+        encoded = task_description.encode('utf-8')
+        if len(encoded) > max_bytes:
+            task_description = encoded[:max_bytes].decode('utf-8', errors='ignore') + '\n... [truncated]'
+
         url = f"{self._swarm_api_base}/agents/{self._swarm_agent_name}/tasks"
         headers = {
             "Authorization": f"Bearer {self._swarm_secret_key}",

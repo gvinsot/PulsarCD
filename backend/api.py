@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
@@ -48,6 +49,51 @@ SWARM_API_BASE = "https://swarm.methodinfo.fr/api/swarm"
 SWARM_AGENT_NAME = "QWEN"
 
 
+_ERROR_LINE_RE = re.compile(
+    r'\b(error|ERROR|Error|FAIL|failed|FAILED|exception|Exception|Traceback|traceback|fatal|FATAL|critical|CRITICAL)\b'
+)
+_MAX_TASK_BYTES = 128 * 1024  # 128 KB hard limit for the task payload
+
+
+def _build_error_output(output: str, max_bytes: int) -> str:
+    """Build a compact output that prioritizes error lines + last 50 lines of context.
+
+    Guarantees the result fits in max_bytes (UTF-8) while ensuring error lines
+    are always included even if they appear in the middle of a long output.
+    """
+    if not output or not output.strip():
+        return "(no output)"
+
+    lines = output.strip().splitlines()
+
+    # Collect error lines (preserving original order, deduplicating)
+    error_lines = [l for l in lines if _ERROR_LINE_RE.search(l)]
+
+    # Last 50 lines for context
+    context_lines = lines[-50:]
+
+    # Merge: error lines first, then context lines; deduplicate preserving order
+    seen: set = set()
+    merged: list = []
+    for line in error_lines + context_lines:
+        if line not in seen:
+            seen.add(line)
+            merged.append(line)
+
+    result = '\n'.join(merged)
+
+    # Hard-truncate to max_bytes
+    encoded = result.encode('utf-8')
+    if len(encoded) > max_bytes:
+        truncated = encoded[:max_bytes - 60].decode('utf-8', errors='ignore')
+        last_nl = truncated.rfind('\n')
+        if last_nl > max_bytes // 2:
+            truncated = truncated[:last_nl]
+        result = truncated + f'\n... [truncated — {len(lines)} lines total]'
+
+    return result
+
+
 async def _notify_agent_failure(stage: str, repo_name: str, version: str, error_output: str):
     """Notify the QWEN agent of a build/test/deploy failure so it can attempt a fix."""
     if not settings or not settings.swarm.secret_key:
@@ -58,21 +104,22 @@ async def _notify_agent_failure(stage: str, repo_name: str, version: str, error_
     logger.info("Notifying swarm agent of failure", url=url, stage=stage, repo=repo_name)
 
     try:
-        # Get last ~30 lines of output for context
-        output_lines = error_output.strip().split('\n') if error_output else []
-        tail = '\n'.join(output_lines[-30:]) if len(output_lines) > 30 else error_output
-
-        task_description = (
+        header = (
             f"{stage.upper()} FAILED for project '{repo_name}' (version: {version}).\n"
             f"Investigate and fix the {stage} failure. Here is the error output:\n"
-            f"```\n{tail}\n```"
+            f"```\n"
         )
+        footer = "\n```"
+        available = _MAX_TASK_BYTES - len(header.encode('utf-8')) - len(footer.encode('utf-8'))
+        output_section = _build_error_output(error_output, available)
+        task_description = header + output_section + footer
 
         payload = {"task": task_description, "project": repo_name}
         headers = {"Authorization": f"Bearer {settings.swarm.secret_key}"}
 
-        logger.debug("Swarm agent request", url=url, payload_keys=list(payload.keys()),
-                     task_length=len(task_description))
+        logger.info("Swarm agent request", url=url, stage=stage, repo=repo_name,
+                    task_bytes=len(task_description.encode('utf-8')),
+                    error_lines=output_section.count('\n') + 1)
 
         async with aiohttp.ClientSession(headers=headers) as session:
             async with session.post(
@@ -1631,8 +1678,6 @@ async def get_commit_diff(owner: str, repo: str, sha: str):
 
     return await github_service.get_commit_diff(owner, repo, sha)
 
-
-import re
 
 def _get_deployer_and_host():
     """Helper to get deployer instance and host name."""
