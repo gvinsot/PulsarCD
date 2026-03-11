@@ -248,6 +248,7 @@ async def lifespan(app: FastAPI):
             swarm_api_base=SWARM_API_BASE,
             swarm_agent_name=SWARM_AGENT_NAME,
             swarm_secret_key=settings.swarm.secret_key,
+            github_service=github_service,
         )
         await error_detector.start()
         logger.info("Recurring error detector started")

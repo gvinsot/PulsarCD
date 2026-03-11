@@ -113,9 +113,10 @@ class RecurringErrorDetector:
         swarm_api_base: str,
         swarm_agent_name: str,
         swarm_secret_key: str,
+        github_service=None,
         scan_interval: int = 60,
         initial_lookback_hours: int = 12,
-        min_occurrences: int = 5,
+        min_occurrences: int = 10,
         pattern_ttl_hours: int = 12,
         zvec_similarity_threshold: float = 0.92,
         zvec_db_path: str = "/tmp/logscrawler_zvec",
@@ -124,6 +125,7 @@ class RecurringErrorDetector:
         self._swarm_api_base = swarm_api_base
         self._swarm_agent_name = swarm_agent_name
         self._swarm_secret_key = swarm_secret_key
+        self._github_service = github_service
         self._scan_interval = scan_interval
         self._initial_lookback_hours = initial_lookback_hours
         self._min_occurrences = min_occurrences
@@ -372,6 +374,20 @@ class RecurringErrorDetector:
     # QWEN agent notification
     # ------------------------------------------------------------------
 
+    async def _resolve_project_name(self, compose_name: str) -> str:
+        """Resolve a Docker compose project name to the correct-cased GitHub repo name."""
+        if not self._github_service:
+            return compose_name
+        try:
+            repos = await self._github_service.get_starred_repos()
+            lower = compose_name.lower()
+            for repo in repos:
+                if repo["name"].lower() == lower:
+                    return repo["name"]
+        except Exception:
+            pass
+        return compose_name
+
     async def _notify_recurring_error(self, pattern: ErrorPattern):
         """Post a recurring error task to the QWEN agent."""
         if not self._swarm_secret_key:
@@ -399,6 +415,10 @@ class RecurringErrorDetector:
         if len(encoded) > max_bytes:
             task_description = encoded[:max_bytes].decode('utf-8', errors='ignore') + '\n... [truncated]'
 
+        # Resolve the primary service name to its correct-cased GitHub project name
+        raw_project = sorted(pattern.services)[0] if pattern.services else ""
+        project_name = await self._resolve_project_name(raw_project)
+
         url = f"{self._swarm_api_base}/agents/{self._swarm_agent_name}/tasks"
         headers = {
             "Authorization": f"Bearer {self._swarm_secret_key}",
@@ -406,7 +426,7 @@ class RecurringErrorDetector:
         }
         payload = {
             "task": task_description,
-            "project": services_list.split(',')[0].strip(),
+            "project": project_name,
         }
 
         logger.info("Sending recurring error task to agent",
