@@ -578,25 +578,24 @@ async def list_containers_grouped(
                 swarm_manager_host = host_config.name
                 break
         
-        # Get stack information from manager if available
+        # Build stack_services_map only for name resolution (not pre-population)
         stack_services_map: Dict[str, List[str]] = {}
         if swarm_manager_host:
             manager_client = collector.clients.get(swarm_manager_host)
             if manager_client:
                 try:
                     stack_services_map = await manager_client.get_swarm_stacks()
-                    logger.info("Retrieved stacks from Swarm manager", host=swarm_manager_host, stacks=list(stack_services_map.keys()))
                 except Exception as e:
                     logger.warning("Failed to get stacks from Swarm manager", host=swarm_manager_host, error=str(e))
-        
-        # Initialize grouped structure with all known stacks and services from manager
-        # This ensures stacks/services are shown even if they have no containers
+
+        # Pre-populate from stack_services_map so services with 0 running replicas
+        # (scaled down, starting up) are still shown in the UI.
+        # docker stack services reflects the current desired state — removed services
+        # are no longer listed there, so this won't show stale removed services.
         grouped: Dict[str, Dict[str, List[ContainerInfo]]] = {}
         for stack_name, services in stack_services_map.items():
             grouped[stack_name] = {}
             for service_full_name in services:
-                # Use the full service name as key (e.g., "logscrawler_backend")
-                # This matches what Docker returns in com.docker.swarm.service.name label
                 grouped[stack_name][service_full_name] = []
         
         # Group containers by their stack
