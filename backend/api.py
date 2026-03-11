@@ -40,6 +40,7 @@ settings: Settings = None
 opensearch: OpenSearchClient = None
 collector: Collector = None
 github_service: GitHubService = None
+error_detector = None
 
 # ============== Swarm Agent Notification ==============
 
@@ -137,7 +138,7 @@ _background_actions: Dict[str, BackgroundAction] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    global settings, opensearch, collector, github_service
+    global settings, opensearch, collector, github_service, error_detector
     
     # Startup
     logger.info("Starting LogsCrawler API")
@@ -171,6 +172,18 @@ async def lifespan(app: FastAPI):
     # Initialize GitHub service
     github_service = GitHubService(settings.github)
 
+    # Start recurring error detector
+    if settings.swarm.secret_key:
+        from .error_detector import RecurringErrorDetector
+        error_detector = RecurringErrorDetector(
+            opensearch_client=opensearch,
+            swarm_api_base=SWARM_API_BASE,
+            swarm_agent_name=SWARM_AGENT_NAME,
+            swarm_secret_key=settings.swarm.secret_key,
+        )
+        await error_detector.start()
+        logger.info("Recurring error detector started")
+
     # Start auto-build poller
     global _auto_build_task
     if github_service.is_configured():
@@ -189,6 +202,8 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down LogsCrawler API")
+    if error_detector:
+        await error_detector.stop()
     if _auto_build_task:
         _auto_build_task.cancel()
         try:

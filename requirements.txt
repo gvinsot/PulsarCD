@@ -30,3 +30,6 @@ mcp>=1.9.0
 python-dateutil>=2.8.2
 pyyaml>=6.0.1
 structlog>=24.1.0
+
+# Vector similarity (optional — error detector falls back to hashing if unavailable)
+zvec>=0.3.0
