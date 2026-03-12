@@ -260,6 +260,9 @@ def load_config() -> Settings:
     if not settings.mcp.api_key:
         settings.mcp.api_key = uuid.uuid4().hex
 
+    # Swarm agent API settings
+    load_env(settings.swarm, "secret_key", "PULSARCD_SWARM__SECRET_KEY")
+
     # Run user
     load_env(settings, "run_user", "PULSARCD_RUN_USER")
 
