@@ -29,7 +29,7 @@
     --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
     
     /* Spacing */
-    --topbar-height: 56px;
+    --topbar-height: 64px;
     
     /* Effects */
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
@@ -74,7 +74,7 @@ body {
 
 /* Top Bar */
 .topbar {
-    background: rgba(15, 20, 25, 0.8);
+    background: rgba(15, 23, 42, 0.7);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     border-bottom: 1px solid var(--border-color);
@@ -86,7 +86,7 @@ body {
 .topbar-inner {
     max-width: 1800px;
     margin: 0 auto;
-    padding: 0 16px;
+    padding: 0 24px;
     height: var(--topbar-height);
     display: flex;
     align-items: center;
@@ -96,7 +96,7 @@ body {
 .topbar-left {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 12px;
 }
 
 .topbar-right {
@@ -109,8 +109,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 36px;
-    height: 36px;
+    padding: 8px;
     border: none;
     background: transparent;
     color: var(--text-secondary);
@@ -129,8 +128,8 @@ body {
 }
 
 .topbar-btn svg {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
 }
 
 .logo {
@@ -143,8 +142,8 @@ body {
 }
 
 .logo-icon {
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
     background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
     border-radius: var(--radius-md);
     display: flex;
@@ -154,8 +153,8 @@ body {
 }
 
 .logo-icon svg {
-    width: 18px;
-    height: 18px;
+    width: 20px;
+    height: 20px;
     color: var(--bg-primary);
 }
 
@@ -188,18 +187,18 @@ body {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
     overflow: hidden;
-    margin-left: 4px;
+    margin-left: 8px;
 }
 
 .nav-item {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 14px;
+    padding: 8px 12px;
     color: var(--text-secondary);
     text-decoration: none;
     font-weight: 500;
-    font-size: 0.85rem;
+    font-size: 0.875rem;
     transition: var(--transition);
     white-space: nowrap;
 }
@@ -1032,6 +1031,10 @@ a.btn {
 .stat-mini svg {
     opacity: 0.7;
     flex-shrink: 0;
+}
+
+.stat-mini-gpu {
+    color: var(--accent-purple, #a78bfa);
 }
 
 /* Logs Search */

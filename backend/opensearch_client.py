@@ -95,6 +95,8 @@ class OpenSearchClient:
                     "network_tx_bytes": {"type": "long"},
                     "block_read_bytes": {"type": "long"},
                     "block_write_bytes": {"type": "long"},
+                    "gpu_percent": {"type": "float"},
+                    "gpu_memory_used_mb": {"type": "float"},
                 }
             },
             "settings": {
@@ -228,7 +230,7 @@ class OpenSearchClient:
                             "top_hits": {
                                 "size": 1,
                                 "sort": [{"timestamp": "desc"}],
-                                "_source": ["cpu_percent", "memory_percent", "memory_usage_mb", "container_id"]
+                                "_source": ["cpu_percent", "memory_percent", "memory_usage_mb", "gpu_percent", "gpu_memory_used_mb", "container_id"]
                             }
                         }
                     }
@@ -250,6 +252,8 @@ class OpenSearchClient:
                         "cpu_percent": round(source.get("cpu_percent", 0) or 0, 1),
                         "memory_percent": round(source.get("memory_percent", 0) or 0, 1),
                         "memory_usage_mb": round(source.get("memory_usage_mb", 0) or 0, 1),
+                        "gpu_percent": round(source.get("gpu_percent"), 1) if source.get("gpu_percent") is not None else None,
+                        "gpu_memory_used_mb": round(source.get("gpu_memory_used_mb"), 1) if source.get("gpu_memory_used_mb") is not None else None,
                     }
             
             return result

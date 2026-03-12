@@ -1141,8 +1141,8 @@ class StackDeployer:
                 return result
 
             # Run build script with optional branch and commit
-            scripts_path = self.config.scripts_path
             repos_path = self.config.repos_path
+            scripts_path = f"{repos_path}/PulsarCD/scripts"
             repo_path = f"{repos_path}/{repo_name}"
 
             # Build command with optional branch/tag/commit parameters
@@ -1231,8 +1231,8 @@ class StackDeployer:
                 return result
 
             # Run deploy script
-            scripts_path = self.config.scripts_path
             repos_path = self.config.repos_path
+            scripts_path = f"{repos_path}/PulsarCD/scripts"
             repo_path = f"{repos_path}/{repo_name}"
 
             # Pass absolute repo_path to avoid path computation mismatch
@@ -1306,8 +1306,8 @@ class StackDeployer:
                 return result
 
             # Run test script
-            scripts_path = self.config.scripts_path
             repos_path = self.config.repos_path
+            scripts_path = f"{repos_path}/PulsarCD/scripts"
             repo_path = f"{repos_path}/{repo_name}"
 
             # Script format: test.sh <folder> [branch/tag] [commit]

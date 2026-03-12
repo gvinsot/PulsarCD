@@ -1457,6 +1457,21 @@ async function loadContainers(forceRefresh = false) {
                 const containerAge = c.created ? formatTimeAgo(c.created) : '';
                 
                 const containerNameHtml = escapeHtml(c.name);
+
+                // Per-container GPU stats
+                let gpuMiniHtml = '';
+                if (c.gpu_memory_used_mb != null) {
+                    const gpuSmDisplay = c.gpu_percent != null ? `${c.gpu_percent}%` : '';
+                    const gpuMemDisplay = formatMemory(c.gpu_memory_used_mb);
+                    gpuMiniHtml = `
+                            <span class="stat-mini stat-mini-gpu" title="GPU${gpuSmDisplay ? ' SM ' + gpuSmDisplay : ''} — VRAM ${gpuMemDisplay}">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                                    <rect x="2" y="6" width="20" height="12" rx="2"/>
+                                    <path d="M6 10h4v4H6zM14 10h4v4h-4z"/>
+                                </svg>
+                                ${gpuMemDisplay}
+                            </span>`;
+                }
                 
                 topLevelHtml += `
                     <div class="container-item" onclick="openContainer('${escapeHtml(c.host)}', '${escapeHtml(c.id)}', ${JSON.stringify(c).replace(/"/g, '&quot;')})">
@@ -1482,7 +1497,7 @@ async function loadContainers(forceRefresh = false) {
                                     <path d="M2 20h20M6 16V8a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8"/>
                                 </svg>
                                 ${memDisplay}
-                            </span>
+                            </span>${gpuMiniHtml}
                         </div>
                         ` : ''}
                         <div class="container-actions">
@@ -2855,7 +2870,7 @@ function updateContainerItems(containerListEl, containers, stackName) {
             }
 
             // Update CPU/memory stats
-            const statMinis = existingEl.querySelectorAll('.stat-mini');
+            const statMinis = existingEl.querySelectorAll('.stat-mini:not(.stat-mini-gpu)');
             if (statMinis.length >= 2) {
                 const cpuDisplay = c.cpu_percent != null ? `${c.cpu_percent}%` : '-';
                 const memDisplay = c.memory_percent != null
@@ -2866,6 +2881,32 @@ function updateContainerItems(containerListEl, containers, stackName) {
                 if (cpuTextNode) cpuTextNode.textContent = '\n                                    ' + cpuDisplay + '\n                                ';
                 const memTextNode = statMinis[1].lastChild;
                 if (memTextNode) memTextNode.textContent = '\n                                    ' + memDisplay + '\n                                ';
+            }
+
+            // Update GPU stat
+            const gpuMini = existingEl.querySelector('.stat-mini-gpu');
+            if (c.gpu_memory_used_mb != null) {
+                const gpuMemDisplay = formatMemory(c.gpu_memory_used_mb);
+                const gpuSmDisplay = c.gpu_percent != null ? `${c.gpu_percent}%` : '';
+                if (gpuMini) {
+                    gpuMini.title = `GPU${gpuSmDisplay ? ' SM ' + gpuSmDisplay : ''} — VRAM ${gpuMemDisplay}`;
+                    const gpuTextNode = gpuMini.lastChild;
+                    if (gpuTextNode) gpuTextNode.textContent = '\n                                    ' + gpuMemDisplay + '\n                                ';
+                } else {
+                    const statsSection = existingEl.querySelector('.container-stats-mini');
+                    if (statsSection) {
+                        statsSection.insertAdjacentHTML('beforeend', `
+                                <span class="stat-mini stat-mini-gpu" title="GPU${gpuSmDisplay ? ' SM ' + gpuSmDisplay : ''} — VRAM ${gpuMemDisplay}">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                                        <rect x="2" y="6" width="20" height="12" rx="2"/>
+                                        <path d="M6 10h4v4H6zM14 10h4v4h-4z"/>
+                                    </svg>
+                                    ${gpuMemDisplay}
+                                </span>`);
+                    }
+                }
+            } else if (gpuMini) {
+                gpuMini.remove();
             }
 
             // Show/hide stats section based on running status
@@ -3164,6 +3205,21 @@ function renderStacksList() {
                         ? `${c.memory_percent}%${c.memory_usage_mb ? ` (${c.memory_usage_mb}MB)` : ''}`
                         : '-';
                     const containerAge = c.created ? formatTimeAgo(c.created) : '';
+
+                    // Per-container GPU stats
+                    let gpuMiniHtml = '';
+                    if (c.gpu_memory_used_mb != null) {
+                        const gpuSmDisplay = c.gpu_percent != null ? `${c.gpu_percent}%` : '';
+                        const gpuMemDisplay = formatMemory(c.gpu_memory_used_mb);
+                        gpuMiniHtml = `
+                                <span class="stat-mini stat-mini-gpu" title="GPU${gpuSmDisplay ? ' SM ' + gpuSmDisplay : ''} — VRAM ${gpuMemDisplay}">
+                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                                        <rect x="2" y="6" width="20" height="12" rx="2"/>
+                                        <path d="M6 10h4v4H6zM14 10h4v4h-4z"/>
+                                    </svg>
+                                    ${gpuMemDisplay}
+                                </span>`;
+                    }
                     
                     containersHtml += `
                         <div class="container-item" onclick="openContainer('${escapeHtml(c.host)}', '${escapeHtml(c.id)}', ${JSON.stringify(c).replace(/"/g, '&quot;')})">
@@ -3189,7 +3245,7 @@ function renderStacksList() {
                                         <path d="M2 20h20M6 16V8a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8"/>
                                     </svg>
                                     ${memDisplay}
-                                </span>
+                                </span>${gpuMiniHtml}
                             </div>
                             ` : ''}
                             <div class="container-actions">

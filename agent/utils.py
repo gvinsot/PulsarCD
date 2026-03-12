@@ -457,6 +457,67 @@ def parse_nvidia_smi_csv(stdout: str) -> Tuple[Optional[float], Optional[float],
 
 # ============== Disk Metrics ==============
 
+def get_gpu_process_metrics() -> List[Dict[str, Any]]:
+    """Get per-process GPU metrics using nvidia-smi.
+
+    Returns a list of dicts with keys: pid, gpu_memory_used_mb, gpu_sm_percent.
+    Falls back to empty list if nvidia-smi is unavailable or fails.
+    """
+    processes: Dict[int, Dict[str, Any]] = {}
+
+    # 1) Per-process VRAM via --query-compute-apps
+    try:
+        result = run_host_command(
+            ["nvidia-smi", "--query-compute-apps=pid,used_gpu_memory",
+             "--format=csv,noheader,nounits"],
+            timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            for line in result.stdout.strip().split("\n"):
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 2:
+                    try:
+                        pid = int(parts[0])
+                        mem_mb = float(parts[1])
+                        processes[pid] = {"pid": pid, "gpu_memory_used_mb": mem_mb, "gpu_sm_percent": None}
+                    except ValueError:
+                        continue
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    except Exception as e:
+        logger.debug("nvidia-smi query-compute-apps failed", error=str(e))
+        return []
+
+    if not processes:
+        return []
+
+    # 2) Per-process GPU SM utilization via pmon
+    try:
+        result = run_host_command(
+            ["nvidia-smi", "pmon", "-c", "1", "-s", "u"],
+            timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            for line in result.stdout.strip().split("\n"):
+                line = line.strip()
+                if line.startswith("#") or not line:
+                    continue
+                parts = line.split()
+                # Format: gpu pid type sm mem enc dec ...
+                if len(parts) >= 4:
+                    try:
+                        pid = int(parts[1])
+                        sm_val = parts[3]
+                        if pid in processes and sm_val != "-":
+                            processes[pid]["gpu_sm_percent"] = float(sm_val)
+                    except ValueError:
+                        continue
+    except Exception as e:
+        logger.debug("nvidia-smi pmon failed, VRAM-only mode", error=str(e))
+
+    return list(processes.values())
+
+
 def get_disk_metrics() -> Tuple[float, float, float]:
     """Get disk usage metrics for the root filesystem.
     

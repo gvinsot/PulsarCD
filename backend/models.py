@@ -33,6 +33,8 @@ class ContainerInfo(BaseModel):
     cpu_percent: Optional[float] = None
     memory_percent: Optional[float] = None
     memory_usage_mb: Optional[float] = None
+    gpu_percent: Optional[float] = None
+    gpu_memory_used_mb: Optional[float] = None
 
 
 class ContainerStats(BaseModel):
@@ -49,6 +51,8 @@ class ContainerStats(BaseModel):
     network_tx_bytes: int = 0
     block_read_bytes: int = 0
     block_write_bytes: int = 0
+    gpu_percent: Optional[float] = None
+    gpu_memory_used_mb: Optional[float] = None
 
 
 class HostMetrics(BaseModel):

@@ -88,8 +88,6 @@ class GitHubConfig(BaseModel):
     useremail: Optional[str] = None
     # Path where repos are cloned on the host
     repos_path: str = "~/repos"
-    # Path to deployment scripts (PulsarCD/scripts folder)
-    scripts_path: str = "~/repos/PulsarCD/scripts"
     # SSH configuration for executing commands on the host
     # Required when PulsarCD runs in a container and needs to run git/build on the host
     ssh_host: Optional[str] = None
@@ -270,7 +268,6 @@ def load_config() -> Settings:
     load_env(settings.github, "username", "PULSARCD_GITHUB__USERNAME")
     load_env(settings.github, "useremail", "PULSARCD_GITHUB__USEREMAIL")
     load_env(settings.github, "repos_path", "PULSARCD_GITHUB__REPOS_PATH")
-    load_env(settings.github, "scripts_path", "PULSARCD_GITHUB__SCRIPTS_PATH")
     load_env(settings.github, "ssh_host", "PULSARCD_GITHUB__SSH_HOST")
     load_env(settings.github, "ssh_user", "PULSARCD_GITHUB__SSH_USER")
     load_env(settings.github, "ssh_port", "PULSARCD_GITHUB__SSH_PORT", int)

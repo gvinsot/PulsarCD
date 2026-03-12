@@ -127,6 +127,26 @@ class DockerCollector:
 
         return containers
 
+    async def get_container_pids(self, container_id: str) -> List[int]:
+        """Get host PIDs for a running container via Docker API top endpoint."""
+        data, status = await self._request("GET", f"/containers/{container_id}/top")
+        if status != 200 or not data:
+            return []
+        pids = []
+        processes = data.get("Processes") or []
+        titles = data.get("Titles") or []
+        try:
+            pid_idx = titles.index("PID")
+        except ValueError:
+            pid_idx = 1  # Fallback: PID is usually the second column
+        for proc in processes:
+            if pid_idx < len(proc):
+                try:
+                    pids.append(int(proc[pid_idx]))
+                except ValueError:
+                    continue
+        return pids
+
     async def get_container_stats(self, container_id: str, container_name: str) -> Optional[Dict[str, Any]]:
         """Get container resource statistics."""
         data, status = await self._request("GET", f"/containers/{container_id}/stats?stream=false")
@@ -416,6 +436,8 @@ class DockerCollector:
         """Collect host metrics and all container stats.
 
         Each part is collected independently so partial data is still returned.
+        Per-container GPU metrics are collected by mapping nvidia-smi process PIDs
+        to Docker container PIDs.
         """
         # Host metrics - always return at least a skeleton
         try:
@@ -437,6 +459,18 @@ class DockerCollector:
                 "gpu_memory_total_mb": None,
             }
 
+        # Collect per-process GPU metrics once (before iterating containers)
+        gpu_processes = []
+        try:
+            gpu_processes = utils.get_gpu_process_metrics()
+        except Exception as e:
+            logger.debug("Per-process GPU metrics unavailable", error=str(e))
+
+        # Build PID -> GPU metrics lookup
+        gpu_by_pid: Dict[int, Dict] = {}
+        for gp in gpu_processes:
+            gpu_by_pid[gp["pid"]] = gp
+
         # Container stats - skip individual failures
         container_stats = []
         try:
@@ -447,6 +481,26 @@ class DockerCollector:
                 try:
                     stats = await self.get_container_stats(container["id"], container["name"])
                     if stats:
+                        # Enrich with per-container GPU metrics
+                        if gpu_by_pid:
+                            try:
+                                pids = await self.get_container_pids(container["id"])
+                                container_gpu_mem = 0.0
+                                container_gpu_sm_values = []
+                                for pid in pids:
+                                    gm = gpu_by_pid.get(pid)
+                                    if gm:
+                                        container_gpu_mem += gm.get("gpu_memory_used_mb") or 0
+                                        sm = gm.get("gpu_sm_percent")
+                                        if sm is not None:
+                                            container_gpu_sm_values.append(sm)
+                                if container_gpu_mem > 0:
+                                    stats["gpu_memory_used_mb"] = round(container_gpu_mem, 1)
+                                if container_gpu_sm_values:
+                                    stats["gpu_percent"] = round(sum(container_gpu_sm_values) / len(container_gpu_sm_values), 1)
+                            except Exception as e:
+                                logger.debug("Failed to get GPU for container",
+                                             container=container.get("name"), error=str(e))
                         container_stats.append(stats)
                 except Exception as e:
                     logger.warning("Failed to collect stats for container",

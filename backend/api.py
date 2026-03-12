@@ -622,6 +622,8 @@ async def list_containers_grouped(
             container.cpu_percent = stats.get("cpu_percent")
             container.memory_percent = stats.get("memory_percent")
             container.memory_usage_mb = stats.get("memory_usage_mb")
+            container.gpu_percent = stats.get("gpu_percent")
+            container.gpu_memory_used_mb = stats.get("gpu_memory_used_mb")
     
     if group_by == "stack":
         # Group by Docker Swarm stack -> service

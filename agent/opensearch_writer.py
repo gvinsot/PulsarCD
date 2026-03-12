@@ -86,6 +86,8 @@ class OpenSearchWriter:
                     "network_tx_bytes": {"type": "long"},
                     "block_read_bytes": {"type": "long"},
                     "block_write_bytes": {"type": "long"},
+                    "gpu_percent": {"type": "float"},
+                    "gpu_memory_used_mb": {"type": "float"},
                 }
             },
             "settings": {
