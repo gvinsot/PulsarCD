@@ -86,11 +86,17 @@ body {
 .topbar-inner {
     max-width: 1800px;
     margin: 0 auto;
-    padding: 0 24px;
+    padding: 0 16px;
     height: var(--topbar-height);
     display: flex;
     align-items: center;
     justify-content: space-between;
+}
+
+@media (min-width: 640px) {
+    .topbar-inner {
+        padding: 0 24px;
+    }
 }
 
 .topbar-left {
@@ -135,7 +141,7 @@ body {
 .logo {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 12px;
     padding: 0;
     margin: 0;
     border: none;
@@ -145,11 +151,11 @@ body {
     width: 36px;
     height: 36px;
     background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-    border-radius: var(--radius-md);
+    border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: var(--shadow-glow);
+    box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.2);
 }
 
 .logo-icon svg {
@@ -185,7 +191,7 @@ body {
     align-items: center;
     gap: 0;
     border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
+    border-radius: 8px;
     overflow: hidden;
     margin-left: 8px;
 }
@@ -201,6 +207,7 @@ body {
     font-size: 0.875rem;
     transition: var(--transition);
     white-space: nowrap;
+    cursor: pointer;
 }
 
 .nav-item svg {
