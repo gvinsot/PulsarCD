@@ -34,13 +34,13 @@ COPY frontend/ ./frontend/
 FROM base AS test
 
 # Install test dependencies
-RUN pip install --no-cache-dir pytest
+RUN pip install --no-cache-dir pytest pytest-asyncio "httpx>=0.23.0,<0.28.0"
 
 # Copy test files
 COPY tests/ ./tests/
 
 # Run tests on container start
-CMD ["python", "-m", "pytest", "tests/", "-v", "--tb=short"]
+CMD ["python", "-m", "pytest", "tests/", "-v", "--tb=short", "-p", "no:warnings"]
 
 # ============================================================================
 # Stage: production (default) - Run the application

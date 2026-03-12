@@ -4861,11 +4861,31 @@ async function startActionLogsPoll(actionId) {
     async function poll() {
         if (actionId !== currentActionLogsId) return;
 
+        const content = document.getElementById('action-logs-content');
+
         try {
-            const data = await apiGet(`/stacks/actions/${actionId}/logs?offset=${actionLogsPollOffset}`);
+            const response = await fetch(`${API_BASE}/stacks/actions/${actionId}/logs?offset=${actionLogsPollOffset}`, { headers: authHeaders() });
+
             if (actionId !== currentActionLogsId) return;
 
-            const content = document.getElementById('action-logs-content');
+            if (response.status === 401) {
+                showLogin();
+                return;
+            }
+
+            if (response.status === 404) {
+                content.innerHTML = '<div class="log-line log-error">Action introuvable — le serveur a peut-être redémarré.</div>';
+                return;
+            }
+
+            if (!response.ok) {
+                // Transient error — retry
+                actionLogsPollTimer = setTimeout(poll, 2000);
+                return;
+            }
+
+            const data = await response.json();
+            if (actionId !== currentActionLogsId) return;
 
             if (data.lines && data.lines.length > 0) {
                 if (actionLogsFirstRender) {
@@ -4892,7 +4912,7 @@ async function startActionLogsPoll(actionId) {
                 return; // done
             }
         } catch (e) {
-            // transient error — keep polling
+            // Network error — retry
         }
 
         actionLogsPollTimer = setTimeout(poll, 1000);

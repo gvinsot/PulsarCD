@@ -1,29 +1,24 @@
-"""
-Dummy tests for LogsCrawler.
-These verify that the test infrastructure works correctly.
-Replace with real tests as needed.
-"""
+"""Smoke tests: verify the test infrastructure itself works."""
 
-
-def test_dummy_passes():
-    """Basic sanity check - always passes."""
-    assert True
+import sys
 
 
 def test_python_version():
-    """Verify we're running on Python 3.11+."""
-    import sys
     assert sys.version_info >= (3, 11)
 
 
-def test_backend_package_importable():
-    """Verify the backend package can be found."""
+def test_backend_importable():
     import importlib
-    spec = importlib.util.find_spec("backend")
-    assert spec is not None, "backend package should be importable"
+    assert importlib.util.find_spec("backend") is not None
 
 
-def test_required_modules_available():
-    """Verify key dependencies are installed."""
-    import aiohttp  # noqa: F401
-    import opensearchpy  # noqa: F401
+def test_fastapi_importable():
+    import fastapi  # noqa: F401
+
+
+def test_pytest_asyncio_importable():
+    import pytest_asyncio  # noqa: F401
+
+
+def test_httpx_importable():
+    import httpx  # noqa: F401

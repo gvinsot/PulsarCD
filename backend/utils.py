@@ -46,7 +46,8 @@ def parse_size_mb(size_str: str) -> float:
         "TIB": 1024 * 1024,
     }
     
-    for suffix, mult in multipliers.items():
+    # Sort by suffix length descending so "MB" is tried before "B", "GIB" before "B", etc.
+    for suffix, mult in sorted(multipliers.items(), key=lambda x: len(x[0]), reverse=True):
         if size_str.endswith(suffix):
             try:
                 return float(size_str[:-len(suffix)].strip()) * mult
