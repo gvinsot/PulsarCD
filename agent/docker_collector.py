@@ -167,7 +167,8 @@ class DockerCollector:
             precpu_stats = data.get("precpu_stats", {})
 
             cpu_percent = 0.0
-            num_cpus = cpu_stats.get("online_cpus") or len(cpu_stats.get("cpu_usage", {}).get("percpu_usage", [])) or 1
+            percpu = cpu_stats.get("cpu_usage", {}).get("percpu_usage")
+            num_cpus = cpu_stats.get("online_cpus") or (len(percpu) if percpu else 0) or 1
 
             cpu_usage = cpu_stats.get("cpu_usage", {})
             precpu_usage = precpu_stats.get("cpu_usage", {})

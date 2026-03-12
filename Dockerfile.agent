@@ -10,13 +10,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# Install AMD ROCm SMI for GPU monitoring (non-fatal if repo unavailable)
-RUN curl -fsSL https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor -o /usr/share/keyrings/rocm-archive-keyring.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/rocm-archive-keyring.gpg] https://repo.radeon.com/rocm/apt/latest jammy main" > /etc/apt/sources.list.d/rocm.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends rocm-smi-lib \
-    && rm -rf /var/lib/apt/lists/* \
-    || (echo "ROCm install skipped (non-AMD host or repo unavailable)" && rm -rf /var/lib/apt/lists/*)
+# Install AMD ROCm SMI for GPU monitoring (amd64 only — not available on ARM)
+RUN if [ "$(dpkg --print-architecture)" = "amd64" ]; then \
+        curl -fsSL https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor -o /usr/share/keyrings/rocm-archive-keyring.gpg \
+        && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/rocm-archive-keyring.gpg] https://repo.radeon.com/rocm/apt/latest jammy main" > /etc/apt/sources.list.d/rocm.list \
+        && apt-get update \
+        && apt-get install -y --no-install-recommends rocm-smi-lib \
+        && rm -rf /var/lib/apt/lists/* \
+        || (echo "ROCm install skipped (repo unavailable)" && rm -rf /var/lib/apt/lists/*); \
+    else \
+        echo "ROCm install skipped (ARM architecture — not supported)"; \
+    fi
 
 # Add ROCm to PATH (no-op if not installed)
 ENV PATH="/opt/rocm/bin:${PATH}"
