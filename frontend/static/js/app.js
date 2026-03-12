@@ -103,23 +103,13 @@ document.addEventListener('DOMContentLoaded', () => {
 // ============== Mobile Menu ==============
 
 function toggleMobileMenu() {
-    const sidebar = document.querySelector('.sidebar');
-    const overlay = document.querySelector('.sidebar-overlay');
-    
-    sidebar.classList.toggle('mobile-open');
-    overlay.classList.toggle('active');
-    
-    // Prevent body scroll when menu is open
-    document.body.style.overflow = sidebar.classList.contains('mobile-open') ? 'hidden' : '';
+    const dropdown = document.getElementById('mobile-nav-dropdown');
+    dropdown.classList.toggle('open');
 }
 
 function closeMobileMenu() {
-    const sidebar = document.querySelector('.sidebar');
-    const overlay = document.querySelector('.sidebar-overlay');
-    
-    sidebar.classList.remove('mobile-open');
-    overlay.classList.remove('active');
-    document.body.style.overflow = '';
+    const dropdown = document.getElementById('mobile-nav-dropdown');
+    if (dropdown) dropdown.classList.remove('open');
 }
 
 function initNavigation() {
