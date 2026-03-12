@@ -1464,7 +1464,7 @@ async function loadContainers(forceRefresh = false) {
                             <span class="container-status ${c.status}"></span>
                             <div>
                                 <div class="container-name">${containerNameHtml}</div>
-                                <div class="container-image">${escapeHtml(c.image)}${containerAge ? ` <span class="container-age">• ${containerAge}</span>` : ''}</div>
+                                <div class="container-image">${formatImageName(c.image)}${containerAge ? ` <span class="container-age">• ${containerAge}</span>` : ''}</div>
                             </div>
                         </div>
                         ${c.status === 'running' ? `
@@ -3171,7 +3171,7 @@ function renderStacksList() {
                                 <span class="container-status ${c.status}"></span>
                                 <div>
                                     <div class="container-name">${escapeHtml(c.name)} <span style="color: var(--text-muted); font-size: 0.85em;">(${escapeHtml(c.host)})</span></div>
-                                    <div class="container-image">${escapeHtml(c.image)}${containerAge ? ` <span class="container-age">• ${containerAge}</span>` : ''}</div>
+                                    <div class="container-image">${formatImageName(c.image)}${containerAge ? ` <span class="container-age">• ${containerAge}</span>` : ''}</div>
                                 </div>
                             </div>
                             ${c.status === 'running' ? `
@@ -5128,6 +5128,16 @@ function normalizeVersion(v) {
 /** Convert repo name to Docker stack name (mirrors deploy-service.sh get_stack_name). */
 function repoToStackName(name) {
     return name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+function formatImageName(image) {
+    if (!image) return '';
+    const escaped = escapeHtml(image);
+    const shaIndex = escaped.indexOf('@sha256:');
+    if (shaIndex === -1) return escaped;
+    const name = escaped.substring(0, shaIndex);
+    const sha = escaped.substring(shaIndex);
+    return `${name}<span class="image-sha" title="${sha}">${sha}</span>`;
 }
 
 function escapeHtml(str) {
