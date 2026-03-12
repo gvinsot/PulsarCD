@@ -102,8 +102,13 @@ def _build_error_output(output: str, max_bytes: int) -> str:
 
 async def _notify_agent_failure(stage: str, repo_name: str, version: str, error_output: str):
     """Notify the QWEN agent of a build/test/deploy failure so it can attempt a fix."""
+    logger.info("_notify_agent_failure called",
+                stage=stage, repo=repo_name, version=version,
+                error_output_len=len(error_output))
     if not settings or not settings.swarm.secret_key:
-        logger.error("Swarm agent notification skipped: no secret key configured")
+        logger.error("Swarm agent notification skipped: no secret key configured",
+                     has_settings=settings is not None,
+                     has_secret_key=bool(settings and settings.swarm.secret_key))
         return
 
     # Dedup: skip if the same stage+repo was already notified within the cooldown window

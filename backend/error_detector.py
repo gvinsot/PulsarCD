@@ -194,6 +194,9 @@ class RecurringErrorDetector:
         # Query OpenSearch for new error logs
         errors = await self._fetch_recent_errors(since)
         if not errors:
+            logger.debug("Error detector scan: 0 new errors",
+                         since=since.isoformat(),
+                         active_patterns=len(self._patterns))
             self._last_scan_ts = now
             return
 
@@ -239,8 +242,18 @@ class RecurringErrorDetector:
             if pattern.count >= self._min_occurrences:
                 last_notified = self._notified_fingerprints.get(fp)
                 if last_notified is None or (now - last_notified) >= cooldown:
+                    logger.info("Error pattern threshold reached, will notify",
+                                fingerprint=fp,
+                                count=pattern.count,
+                                threshold=self._min_occurrences,
+                                services=sorted(pattern.services),
+                                sample=pattern.sample_message[:200])
                     await self._notify_recurring_error(pattern)
                     self._notified_fingerprints[fp] = now
+                else:
+                    logger.debug("Error pattern above threshold but in cooldown",
+                                 fingerprint=fp, count=pattern.count,
+                                 next_allowed_in=str(cooldown - (now - last_notified)))
 
         # Evict patterns not seen within the TTL window
         cutoff = now - timedelta(hours=self._pattern_ttl_hours)
@@ -461,6 +474,8 @@ class RecurringErrorDetector:
         self._notification_history = self._notification_history[:20]
 
         if not self._swarm_secret_key:
+            logger.warning("Swarm task NOT sent: no secret_key configured",
+                           fingerprint=pattern.fingerprint, count=pattern.count)
             return
 
         services_list = ', '.join(sorted(pattern.services)[:10])
@@ -512,7 +527,10 @@ class RecurringErrorDetector:
 
         logger.info("Sending recurring error task to agent",
                     url=url, agent=self._swarm_agent_name,
-                    count=pattern.count, services=services_list)
+                    project=project_name,
+                    count=pattern.count, services=services_list,
+                    task_bytes=len(task_description.encode('utf-8')),
+                    fingerprint=pattern.fingerprint)
 
         try:
             async with aiohttp.ClientSession() as session:
