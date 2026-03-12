@@ -476,8 +476,10 @@ class RecurringErrorDetector:
                 break
 
         if not project_name:
-            logger.debug("Skipping recurring error notification — no matching GitHub repo",
-                         services=sorted(pattern.services))
+            logger.warning("Skipping recurring error notification — no matching GitHub repo for any affected service",
+                           services=sorted(pattern.services),
+                           fingerprint=pattern.fingerprint,
+                           count=pattern.count)
             return
 
         url = f"{self._swarm_api_base}/agents/{self._swarm_agent_name}/tasks"
