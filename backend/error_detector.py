@@ -120,6 +120,7 @@ class RecurringErrorDetector:
         pattern_ttl_hours: int = 12,
         zvec_similarity_threshold: float = 0.92,
         zvec_db_path: str = "/tmp/logscrawler_zvec",
+        burst_window_seconds: int = 10,
     ):
         self._opensearch = opensearch_client
         self._swarm_api_base = swarm_api_base
@@ -132,6 +133,7 @@ class RecurringErrorDetector:
         self._pattern_ttl_hours = pattern_ttl_hours
         self._similarity_threshold = zvec_similarity_threshold
         self._zvec_db_path = zvec_db_path
+        self._burst_window_seconds = burst_window_seconds
 
         # State
         self._patterns: Dict[str, ErrorPattern] = {}
@@ -195,6 +197,10 @@ class RecurringErrorDetector:
             self._last_scan_ts = now
             return
 
+        # Deduplicate bursts: for each project, drop errors that are within
+        # burst_window_seconds of a preceding error on the same project.
+        errors = self._deduplicate_bursts(errors)
+
         logger.debug("Error detector scanning",
                      error_count=len(errors),
                      since=since.isoformat(),
@@ -244,6 +250,48 @@ class RecurringErrorDetector:
             self._notified_fingerprints.pop(fp, None)
 
         self._last_scan_ts = now
+
+    # ------------------------------------------------------------------
+    # Burst deduplication
+    # ------------------------------------------------------------------
+
+    def _deduplicate_bursts(self, errors: List[dict]) -> List[dict]:
+        """Remove errors that are temporally too close to a preceding error on the same project.
+
+        When a service crashes it can emit dozens of errors within seconds.
+        Counting each one separately inflates the pattern count and triggers
+        spurious notifications.  We keep only the first error per project within
+        each burst_window_seconds sliding window.
+        """
+        window = timedelta(seconds=self._burst_window_seconds)
+        # last accepted timestamp per project key
+        last_seen_per_project: Dict[str, datetime] = {}
+        result = []
+
+        # Process in chronological order so the first event of a burst wins
+        for err in reversed(errors):  # OpenSearch returns desc, reverse → asc
+            project = err.get("compose_project") or err.get("container_name", "unknown")
+            ts_raw = err.get("timestamp")
+            try:
+                ts = datetime.fromisoformat(ts_raw) if isinstance(ts_raw, str) else datetime.utcnow()
+            except Exception:
+                ts = datetime.utcnow()
+
+            last = last_seen_per_project.get(project)
+            if last is None or (ts - last) >= window:
+                result.append(err)
+                last_seen_per_project[project] = ts
+            # else: drop — too close to the previous error on this project
+
+        dropped = len(errors) - len(result)
+        if dropped:
+            logger.debug("Error detector: burst deduplication dropped errors",
+                         original=len(errors), kept=len(result), dropped=dropped,
+                         window_seconds=self._burst_window_seconds)
+
+        # Restore descending order to match the rest of the pipeline
+        result.reverse()
+        return result
 
     # ------------------------------------------------------------------
     # OpenSearch queries
@@ -374,10 +422,14 @@ class RecurringErrorDetector:
     # QWEN agent notification
     # ------------------------------------------------------------------
 
-    async def _resolve_project_name(self, compose_name: str) -> str:
-        """Resolve a Docker compose project name to the correct-cased GitHub repo name."""
+    async def _resolve_project_name(self, compose_name: str) -> Optional[str]:
+        """Resolve a Docker compose project name to the correct-cased GitHub repo name.
+
+        Returns None if the name cannot be matched to a known starred repo,
+        so that notifications are not sent for unknown/infrastructure projects.
+        """
         if not self._github_service:
-            return compose_name
+            return None
         try:
             repos = await self._github_service.get_starred_repos()
             lower = compose_name.lower()
@@ -386,7 +438,7 @@ class RecurringErrorDetector:
                     return repo["name"]
         except Exception:
             pass
-        return compose_name
+        return None
 
     async def _notify_recurring_error(self, pattern: ErrorPattern):
         """Post a recurring error task to the QWEN agent."""
@@ -415,9 +467,18 @@ class RecurringErrorDetector:
         if len(encoded) > max_bytes:
             task_description = encoded[:max_bytes].decode('utf-8', errors='ignore') + '\n... [truncated]'
 
-        # Resolve the primary service name to its correct-cased GitHub project name
-        raw_project = sorted(pattern.services)[0] if pattern.services else ""
-        project_name = await self._resolve_project_name(raw_project)
+        # Resolve the primary service name to its correct-cased GitHub project name.
+        # Try each affected service in sorted order until one resolves.
+        project_name: Optional[str] = None
+        for svc in sorted(pattern.services):
+            project_name = await self._resolve_project_name(svc)
+            if project_name:
+                break
+
+        if not project_name:
+            logger.debug("Skipping recurring error notification — no matching GitHub repo",
+                         services=sorted(pattern.services))
+            return
 
         url = f"{self._swarm_api_base}/agents/{self._swarm_agent_name}/tasks"
         headers = {
