@@ -588,18 +588,18 @@ class Collector:
                     service_name = container.labels.get("com.docker.swarm.service.name")
                 
                 if service_name:
-                    manager_client = self.clients.get(self._swarm_manager_host)
-                    if manager_client:
-                        if container_action == ContainerAction.RESTART:
+                    if container_action == ContainerAction.RESTART:
+                        manager_client = self.clients.get(self._swarm_manager_host)
+                        if manager_client:
                             return await manager_client.force_update_service(service_name)
-                        elif container_action in (ContainerAction.STOP, ContainerAction.REMOVE):
-                            # For stop/remove on a Swarm container, scale down or remove service
-                            return False, (
-                                f"Cannot {action} a Swarm container on a worker node directly. "
-                                f"Use 'Remove' on the service '{service_name}' instead."
-                            )
-                        else:
-                            return False, f"Action '{action}' not supported for Swarm containers on worker nodes"
+                    elif container_action in (ContainerAction.STOP, ContainerAction.REMOVE):
+                        # For stop/remove on a Swarm container, scale down or remove service
+                        return False, (
+                            f"Cannot {action} a Swarm container on a worker node directly. "
+                            f"Use 'Remove' on the service '{service_name}' instead."
+                        )
+                    else:
+                        return False, f"Action '{action}' not supported for Swarm containers on worker nodes"
 
         # Standard path: use routing client
         client = self._get_exec_client(host)

@@ -792,10 +792,23 @@ async def execute_container_action(request: ActionRequest) -> ActionResult:
     If an agent is online for the target host, the action is queued for the agent.
     Otherwise, the action is executed directly via the collector (SSH/Docker API).
     """
-    # Check if an agent is online for this host
-    agent_id = request.host  # Agent ID matches host name
+    # Check if an agent is online for this host.
+    # The agent registers with its own hostname which may differ from the Docker node
+    # hostname stored in ContainerInfo.host (e.g. FQDN vs short name, or configured
+    # name vs actual hostname).  Try an exact match first, then fall back to a
+    # case-insensitive short-hostname comparison across all online agents.
+    agent_id = request.host
     agent_online = await actions_queue.is_agent_online(agent_id)
-    
+
+    if not agent_online:
+        short_host = request.host.split('.')[0].lower()
+        for agent in await actions_queue.get_agents():
+            if await actions_queue.is_agent_online(agent.agent_id):
+                if agent.agent_id.split('.')[0].lower() == short_host:
+                    agent_id = agent.agent_id
+                    agent_online = True
+                    break
+
     if agent_online:
         # Use the actions queue - agent will pick up and execute the action
         action_obj = await actions_queue.create_action(

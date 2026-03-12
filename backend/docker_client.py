@@ -610,13 +610,32 @@ class DockerAPIClient:
             current_force = task_template.get("ForceUpdate", 0)
             task_template["ForceUpdate"] = current_force + 1
             
+            # Build registry auth header so workers can re-pull if needed
+            # (same logic as update_service_image)
+            extra_headers = {}
+            try:
+                import os, base64
+                docker_config_path = os.path.expanduser("~/.docker/config.json")
+                if os.path.exists(docker_config_path):
+                    with open(docker_config_path, 'r') as _f:
+                        _cfg = json.load(_f)
+                    _auths = _cfg.get("auths", {})
+                    if _auths:
+                        _auth_payload = json.dumps({"auths": _auths}).encode()
+                        extra_headers["X-Registry-Auth"] = base64.b64encode(_auth_payload).decode()
+            except Exception:
+                pass
+
             # Update the service
+            request_kwargs = {"json": spec}
+            if extra_headers:
+                request_kwargs["headers"] = extra_headers
             update_data, update_status = await self._request(
                 "POST",
                 f"/services/{safe_name}/update?version={version}",
-                json=spec,
+                **request_kwargs,
             )
-            
+
             if update_status == 200:
                 return True, f"Service '{service_name}' restarted successfully (force update)"
             else:
