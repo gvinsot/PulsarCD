@@ -179,7 +179,7 @@ body {
 
 .logo-subtitle {
     font-size: 0.75rem;
-    color: var(--text-muted);
+    color: #64748b;
     margin-top: -2px;
     font-weight: 400;
 }
