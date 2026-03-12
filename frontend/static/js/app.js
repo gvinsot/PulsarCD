@@ -4862,7 +4862,7 @@ async function startActionLogsPoll(actionId) {
         if (actionId !== currentActionLogsId) return;
 
         try {
-            const data = await apiFetch(`/stacks/actions/${actionId}/logs?offset=${actionLogsPollOffset}`);
+            const data = await apiGet(`/stacks/actions/${actionId}/logs?offset=${actionLogsPollOffset}`);
             if (actionId !== currentActionLogsId) return;
 
             const content = document.getElementById('action-logs-content');
