@@ -2943,6 +2943,11 @@ function renderStacksList() {
     const listEl = document.getElementById('stacks-list');
     const expandedStacks = getExpandedStacks();
     
+    // Update stacks count in topbar
+    const deployedCount = Object.keys(stacksDeployedTags).length;
+    const countEl = document.getElementById('stacks-count');
+    if (countEl) countEl.textContent = `${deployedCount} stack${deployedCount !== 1 ? 's' : ''} deployed`;
+
     // Use containers-grouped class for similar styling to Computers view
     listEl.className = 'containers-grouped';
     

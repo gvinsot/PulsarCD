@@ -16,11 +16,11 @@ from .config import GitHubConfig
 logger = structlog.get_logger()
 
 # Cache TTLs
-STARRED_REPOS_CACHE_TTL = timedelta(minutes=5)
+STARRED_REPOS_CACHE_TTL = timedelta(minutes=1)
 BRANCHES_CACHE_TTL = timedelta(minutes=5)
-COMMITS_CACHE_TTL = timedelta(minutes=2)
+COMMITS_CACHE_TTL = timedelta(seconds=30)
 COMMIT_DIFF_CACHE_TTL = timedelta(minutes=10)
-TAGS_CACHE_TTL = timedelta(minutes=5)
+TAGS_CACHE_TTL = timedelta(minutes=2)
 
 # File path for persistent tag date cache
 TAG_DATE_CACHE_FILE = Path(__file__).parent.parent / ".tag_date_cache.json"
@@ -264,6 +264,7 @@ class GitHubService:
                             "language": repo["language"],
                             "stargazers_count": repo["stargazers_count"],
                             "updated_at": repo["updated_at"],
+                            "pushed_at": repo.get("pushed_at", ""),
                             "owner": repo["owner"]["login"],
                             "private": repo["private"],
                         })

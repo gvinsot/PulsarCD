@@ -2226,7 +2226,7 @@ async def trigger_pipeline_endpoint(
         logger.info("Auto-tagged commit for pipeline", repo=repo_name, tag=new_tag, commit=commit[:7])
         await _trigger_pipeline(repo_name, ssh_url, version=next_version, tag=new_tag)
         return {"status": "started", "repo": repo_name, "tag": new_tag, "version": next_version, "auto_tagged": True}
-AUTO_BUILD_POLL_INTERVAL = 120  # seconds (was 20s, increased to avoid GitHub rate limits)
+AUTO_BUILD_POLL_INTERVAL = 30  # seconds – repo checks are batched so this is cheap
 
 # Pipeline stages in order
 PIPELINE_STAGES = ["build", "test", "deploy", "done"]
@@ -2382,84 +2382,102 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
 async def auto_build_poller():
     """Periodically check starred repos for new commits on default branch and trigger pipeline.
 
-    Also tracks untagged commits count per repo so the frontend can show
-    that there are new commits awaiting a build.
+    Optimisations:
+    - Uses `pushed_at` from the starred-repos list to skip unchanged repos (0 extra API calls).
+    - Checks remaining repos concurrently via asyncio.gather.
     """
     await asyncio.sleep(10)
+
+    # Track last known pushed_at per repo to cheaply skip unchanged ones
+    _pushed_at_cache: dict[str, str] = {}
+
+    async def _check_repo(repo: dict):
+        """Check a single repo for new commits. Designed to run concurrently."""
+        owner, name, ssh_url = repo["owner"], repo["name"], repo["ssh_url"]
+
+        try:
+            commits_task = github_service.get_repo_commits(owner, name, per_page=1)
+            untagged_task = github_service.get_untagged_commits(owner, name, limit=20)
+            commits_data, untagged_data = await asyncio.gather(commits_task, untagged_task)
+        except Exception as e:
+            logger.warning("Failed to fetch commit data for repo", repo=name, error=str(e))
+            return
+
+        commits = commits_data.get("commits", [])
+        if not commits:
+            return
+
+        latest_sha = commits[0]["sha"]
+        untagged_count = len(untagged_data.get("untagged_commits", []))
+        state = _auto_build_state.get(name)
+
+        if state is None:
+            _auto_build_state[name] = {
+                "last_sha": latest_sha,
+                "building": False,
+                "untagged_commits": untagged_count,
+            }
+            if untagged_count > 0:
+                logger.info("Repo initialized with untagged commits",
+                            repo=name, untagged=untagged_count)
+            return
+
+        # Always update untagged count
+        state["untagged_commits"] = untagged_count
+
+        if latest_sha != state["last_sha"] and not state.get("building"):
+            logger.info("New commit detected, triggering pipeline",
+                        repo=name,
+                        old_sha=state["last_sha"][:7],
+                        new_sha=latest_sha[:7],
+                        untagged=untagged_count)
+            state["building"] = True
+            state["last_sha"] = latest_sha
+
+            latest_tag_info = untagged_data.get("latest_tag")
+            if untagged_count > 0:
+                try:
+                    next_ver = await github_service.get_next_version(owner, name)
+                    new_tag = f"v{next_ver}"
+                    tag_result = await github_service.create_tag(owner, name, new_tag, latest_sha)
+                    if tag_result.get("success"):
+                        logger.info("Auto-tagged new commit", repo=name, tag=new_tag, sha=latest_sha[:7])
+                        await _trigger_pipeline(name, ssh_url, version=next_ver, tag=new_tag)
+                    else:
+                        logger.error("Failed to auto-tag", repo=name, error=tag_result.get("error"))
+                        state["building"] = False
+                except Exception as tag_err:
+                    logger.error("Auto-tag failed", repo=name, error=str(tag_err))
+                    state["building"] = False
+            elif latest_tag_info:
+                tag_name = latest_tag_info.get("name", "")
+                version = tag_name.lstrip("v")
+                await _trigger_pipeline(name, ssh_url, version=version, tag=tag_name)
+            else:
+                await _trigger_pipeline(name, ssh_url)
 
     while True:
         try:
             if github_service and github_service.is_configured():
                 repos = await github_service.get_starred_repos()
 
+                # Fast-filter: skip repos whose pushed_at hasn't changed
+                repos_to_check = []
                 for repo in repos:
-                    owner, name, ssh_url = repo["owner"], repo["name"], repo["ssh_url"]
-
-                    try:
-                        # Fetch latest commit and untagged count in parallel
-                        commits_task = github_service.get_repo_commits(owner, name, per_page=1)
-                        untagged_task = github_service.get_untagged_commits(owner, name, limit=20)
-                        commits_data, untagged_data = await asyncio.gather(commits_task, untagged_task)
-                    except Exception as e:
-                        logger.warning("Failed to fetch commit data for repo", repo=name, error=str(e))
+                    name = repo["name"]
+                    pushed_at = repo.get("pushed_at", "")
+                    prev = _pushed_at_cache.get(name)
+                    if prev is not None and prev == pushed_at:
+                        # No push since last poll – skip expensive per-repo calls
                         continue
+                    _pushed_at_cache[name] = pushed_at
+                    repos_to_check.append(repo)
 
-                    commits = commits_data.get("commits", [])
-                    if not commits:
-                        continue
-
-                    latest_sha = commits[0]["sha"]
-                    untagged_count = len(untagged_data.get("untagged_commits", []))
-                    state = _auto_build_state.get(name)
-
-                    if state is None:
-                        _auto_build_state[name] = {
-                            "last_sha": latest_sha,
-                            "building": False,
-                            "untagged_commits": untagged_count,
-                        }
-                        if untagged_count > 0:
-                            logger.info("Repo initialized with untagged commits",
-                                        repo=name, untagged=untagged_count)
-                        continue
-
-                    # Always update untagged count
-                    state["untagged_commits"] = untagged_count
-
-                    if latest_sha != state["last_sha"] and not state.get("building"):
-                        logger.info("New commit detected, triggering pipeline",
-                                    repo=name,
-                                    old_sha=state["last_sha"][:7],
-                                    new_sha=latest_sha[:7],
-                                    untagged=untagged_count)
-                        state["building"] = True
-                        state["last_sha"] = latest_sha
-
-                        # Determine version and tag for the pipeline
-                        latest_tag_info = untagged_data.get("latest_tag")
-                        if untagged_count > 0:
-                            # New commit is untagged — auto-tag it
-                            try:
-                                next_ver = await github_service.get_next_version(owner, name)
-                                new_tag = f"v{next_ver}"
-                                tag_result = await github_service.create_tag(owner, name, new_tag, latest_sha)
-                                if tag_result.get("success"):
-                                    logger.info("Auto-tagged new commit", repo=name, tag=new_tag, sha=latest_sha[:7])
-                                    await _trigger_pipeline(name, ssh_url, version=next_ver, tag=new_tag)
-                                else:
-                                    logger.error("Failed to auto-tag", repo=name, error=tag_result.get("error"))
-                                    state["building"] = False
-                            except Exception as tag_err:
-                                logger.error("Auto-tag failed", repo=name, error=str(tag_err))
-                                state["building"] = False
-                        elif latest_tag_info:
-                            # Latest commit already has a tag
-                            tag_name = latest_tag_info.get("name", "")
-                            version = tag_name.lstrip("v")
-                            await _trigger_pipeline(name, ssh_url, version=version, tag=tag_name)
-                        else:
-                            # No tags at all — use default version
-                            await _trigger_pipeline(name, ssh_url)
+                if repos_to_check:
+                    logger.info("Checking repos for changes",
+                                total=len(repos), checking=len(repos_to_check))
+                    # Check all changed repos concurrently (batch)
+                    await asyncio.gather(*[_check_repo(r) for r in repos_to_check])
 
         except Exception as e:
             logger.error("Auto-build poller error", error=str(e))

@@ -25,7 +25,7 @@
     --border-light: #30363d;
     
     /* Typography */
-    --font-sans: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
     
     /* Spacing */
@@ -160,13 +160,23 @@ body {
 }
 
 .logo-text {
-    font-size: 1.1rem;
+    font-size: 1.125rem;
     font-weight: 700;
     letter-spacing: -0.02em;
-    background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    color: #f1f5f9;
+    font-family: var(--font-sans);
+}
+
+.logo-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.logo-subtitle {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: -2px;
+    font-weight: 400;
 }
 
 /* Navigation */
