@@ -1,6 +1,6 @@
 
 
-# LogsCrawler
+# PulsarCD
 
 ![Dashboard Screenshot](screenshot.png)
 *Dashboard: Real-time metrics, error tracking, and resource monitoring*
@@ -8,11 +8,11 @@
 ![Stacks Management](screenshot2.png)
 *Stacks: Build and deploy directly from your GitHub repositories*
 
-**Stop switching between GitHub, Portainer, Grafana, and terminal windows.** LogsCrawler is an all-in-one DevOps platform that unifies your entire container workflow into a single, modern interface.
+**Stop switching between GitHub, Portainer, Grafana, and terminal windows.** PulsarCD is an all-in-one DevOps platform that unifies your entire container workflow into a single, modern interface.
 
 Built for **homelab enthusiasts** and small-scale DevOps teams who want the power of enterprise tools without the complexity. Star a repo on GitHub, build it, deploy it to your Swarm cluster, and monitor it — all from one dashboard.
 
-## Why LogsCrawler?
+## Why PulsarCD?
 
 If you're tired of:
 - Jumping between GitHub, CI/CD pipelines, and deployment tools
@@ -20,7 +20,7 @@ If you're tired of:
 - Managing Docker containers across different hosts
 - Setting up separate monitoring stacks
 
-Then LogsCrawler is for you. **One tool. One interface. Complete control.**
+Then PulsarCD is for you. **One tool. One interface. Complete control.**
 
 ## Key Capabilities
 
@@ -65,7 +65,7 @@ Then LogsCrawler is for you. **One tool. One interface. Complete control.**
 
 ## Architecture
 
-LogsCrawler uses an **agent-based architecture** where lightweight agents run on each host:
+PulsarCD uses an **agent-based architecture** where lightweight agents run on each host:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -132,8 +132,8 @@ LogsCrawler uses an **agent-based architecture** where lightweight agents run on
 ### 1. Start the Central Server
 
 ```bash
-git clone https://github.com/yourusername/logscrawler.git
-cd logscrawler
+git clone https://github.com/yourusername/pulsarcd.git
+cd pulsarcd
 
 # Start backend, frontend, and OpenSearch
 docker-compose up -d
@@ -166,20 +166,20 @@ All configuration is done via **environment variables** in `docker-compose.yml`:
 ```yaml
 environment:
   # OpenSearch connection
-  - LOGSCRAWLER_OPENSEARCH__HOSTS=["http://opensearch:9200"]
-  - LOGSCRAWLER_OPENSEARCH__INDEX_PREFIX=logscrawler
+  - PULSARCD_OPENSEARCH__HOSTS=["http://opensearch:9200"]
+  - PULSARCD_OPENSEARCH__INDEX_PREFIX=pulsarcd
 
   # AI/Ollama configuration (optional - for natural language search)
-  - LOGSCRAWLER_AI__MODEL=llama3.2:latest
-  - LOGSCRAWLER_OLLAMA_URL=http://your-ollama-server:11434
+  - PULSARCD_AI__MODEL=llama3.2:latest
+  - PULSARCD_OLLAMA_URL=http://your-ollama-server:11434
 
   # GitHub integration (optional - for stack deployment)
-  - LOGSCRAWLER_GITHUB__TOKEN=ghp_your_token_here
+  - PULSARCD_GITHUB__TOKEN=ghp_your_token_here
 
   # Collector settings
-  - LOGSCRAWLER_COLLECTOR__LOG_INTERVAL_SECONDS=30
-  - LOGSCRAWLER_COLLECTOR__METRICS_INTERVAL_SECONDS=15
-  - LOGSCRAWLER_COLLECTOR__RETENTION_DAYS=7
+  - PULSARCD_COLLECTOR__LOG_INTERVAL_SECONDS=30
+  - PULSARCD_COLLECTOR__METRICS_INTERVAL_SECONDS=15
+  - PULSARCD_COLLECTOR__RETENTION_DAYS=7
 ```
 
 ### Agent Configuration
@@ -192,7 +192,7 @@ environment:
   - AGENT_AGENT_ID=${AGENT_ID:-$(hostname)}
 
   # Backend URL for polling actions
-  - AGENT_BACKEND_URL=http://logscrawler-backend:5000
+  - AGENT_BACKEND_URL=http://pulsarcd-backend:5000
 
   # OpenSearch connection (direct writes)
   - AGENT_OPENSEARCH__HOSTS=["http://opensearch:9200"]
@@ -210,7 +210,7 @@ For backwards compatibility, you can still monitor remote hosts via SSH from the
 ```yaml
 environment:
   - |
-    LOGSCRAWLER_HOSTS=[
+    PULSARCD_HOSTS=[
       {"name": "local", "mode": "docker"},
       {"name": "server-1", "mode": "ssh", "hostname": "192.168.1.10", "username": "deploy"},
       {"name": "server-2", "mode": "ssh", "hostname": "192.168.1.11", "username": "deploy"}
@@ -244,7 +244,7 @@ python -m backend.main
 ### Project Structure
 
 ```
-logscrawler/
+pulsarcd/
 ├── backend/
 │   ├── __init__.py
 │   ├── api.py              # FastAPI REST endpoints
@@ -377,45 +377,45 @@ logscrawler/
 
 ### Backend (Central Server) Settings
 
-All backend configuration is done via environment variables prefixed with `LOGSCRAWLER_`.
+All backend configuration is done via environment variables prefixed with `PULSARCD_`.
 
 #### Core Settings
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LOGSCRAWLER_DEBUG` | Enable debug mode | `false` |
-| `LOGSCRAWLER_HOSTS` | JSON array of host configs (for legacy SSH mode) | `[]` |
+| `PULSARCD_DEBUG` | Enable debug mode | `false` |
+| `PULSARCD_HOSTS` | JSON array of host configs (for legacy SSH mode) | `[]` |
 
 #### OpenSearch Settings
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LOGSCRAWLER_OPENSEARCH__HOSTS` | JSON array of OpenSearch URLs | `["http://localhost:9200"]` |
-| `LOGSCRAWLER_OPENSEARCH__INDEX_PREFIX` | Index prefix | `logscrawler` |
-| `LOGSCRAWLER_OPENSEARCH__USERNAME` | Username (optional) | - |
-| `LOGSCRAWLER_OPENSEARCH__PASSWORD` | Password (optional) | - |
+| `PULSARCD_OPENSEARCH__HOSTS` | JSON array of OpenSearch URLs | `["http://localhost:9200"]` |
+| `PULSARCD_OPENSEARCH__INDEX_PREFIX` | Index prefix | `pulsarcd` |
+| `PULSARCD_OPENSEARCH__USERNAME` | Username (optional) | - |
+| `PULSARCD_OPENSEARCH__PASSWORD` | Password (optional) | - |
 
 #### AI Settings
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LOGSCRAWLER_AI__MODEL` | Ollama model name | `llama3.2:latest` |
-| `LOGSCRAWLER_OLLAMA_URL` | Ollama API URL | - |
+| `PULSARCD_AI__MODEL` | Ollama model name | `llama3.2:latest` |
+| `PULSARCD_OLLAMA_URL` | Ollama API URL | - |
 
 #### GitHub Settings
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LOGSCRAWLER_GITHUB__TOKEN` | GitHub personal access token | - |
+| `PULSARCD_GITHUB__TOKEN` | GitHub personal access token | - |
 
 #### Collector Settings (Legacy)
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LOGSCRAWLER_COLLECTOR__LOG_INTERVAL_SECONDS` | Log collection interval | `30` |
-| `LOGSCRAWLER_COLLECTOR__METRICS_INTERVAL_SECONDS` | Metrics collection interval | `15` |
-| `LOGSCRAWLER_COLLECTOR__LOG_LINES_PER_FETCH` | Lines per container per fetch | `500` |
-| `LOGSCRAWLER_COLLECTOR__RETENTION_DAYS` | Data retention period | `7` |
+| `PULSARCD_COLLECTOR__LOG_INTERVAL_SECONDS` | Log collection interval | `30` |
+| `PULSARCD_COLLECTOR__METRICS_INTERVAL_SECONDS` | Metrics collection interval | `15` |
+| `PULSARCD_COLLECTOR__LOG_LINES_PER_FETCH` | Lines per container per fetch | `500` |
+| `PULSARCD_COLLECTOR__RETENTION_DAYS` | Data retention period | `7` |
 
 ### Agent Settings
 
@@ -424,18 +424,18 @@ All agent configuration is done via environment variables prefixed with `AGENT_`
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `AGENT_AGENT_ID` | Unique identifier for this agent | hostname |
-| `AGENT_BACKEND_URL` | URL of the LogsCrawler backend | `http://logscrawler-backend:8000` |
+| `AGENT_BACKEND_URL` | URL of the PulsarCD backend | `http://pulsarcd-backend:8000` |
 | `AGENT_DOCKER_URL` | Docker socket URL | `unix:///var/run/docker.sock` |
 | `AGENT_LOG_INTERVAL` | Log collection interval (seconds) | `30` |
 | `AGENT_METRICS_INTERVAL` | Metrics collection interval (seconds) | `15` |
 | `AGENT_ACTION_POLL_INTERVAL` | Action polling interval (seconds) | `2` |
 | `AGENT_OPENSEARCH__HOSTS` | JSON array of OpenSearch URLs | `["http://opensearch:9200"]` |
-| `AGENT_OPENSEARCH__INDEX_PREFIX` | Index prefix | `logscrawler` |
+| `AGENT_OPENSEARCH__INDEX_PREFIX` | Index prefix | `pulsarcd` |
 | `AGENT_LOG_LEVEL` | Logging level (DEBUG, INFO, WARNING, ERROR) | `WARNING` |
 
 ### Legacy Host Configuration Options
 
-Each host in `LOGSCRAWLER_HOSTS` supports these fields (for SSH mode):
+Each host in `PULSARCD_HOSTS` supports these fields (for SSH mode):
 
 | Field | Description | Required |
 |-------|-------------|----------|
@@ -455,12 +455,12 @@ Each host in `LOGSCRAWLER_HOSTS` supports these fields (for SSH mode):
 
 1. Check that the agent can reach the backend:
    ```bash
-   docker exec logscrawler-agent curl http://your-backend:5000/api/health
+   docker exec pulsarcd-agent curl http://your-backend:5000/api/health
    ```
 
 2. Check agent logs:
    ```bash
-   docker logs logscrawler-agent
+   docker logs pulsarcd-agent
    ```
 
 3. Verify the agent is registered:
@@ -482,14 +482,14 @@ Each host in `LOGSCRAWLER_HOSTS` supports these fields (for SSH mode):
 
 3. Check agent OpenSearch connectivity:
    ```bash
-   docker exec logscrawler-agent curl http://opensearch:9200
+   docker exec pulsarcd-agent curl http://opensearch:9200
    ```
 
 ### No Logs Appearing
 
 1. Check agent logs for collection errors:
    ```bash
-   docker logs logscrawler-agent
+   docker logs pulsarcd-agent
    ```
 
 2. Verify containers are running on the host:
@@ -511,7 +511,7 @@ Each host in `LOGSCRAWLER_HOSTS` supports these fields (for SSH mode):
 
 2. Verify Ollama URL is configured:
    ```bash
-   docker-compose logs logscrawler | grep -i ollama
+   docker-compose logs pulsarcd | grep -i ollama
    ```
 
 ### SSH Mode Issues (Legacy)

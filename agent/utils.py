@@ -1,4 +1,4 @@
-"""Shared utility functions for LogsCrawler Agent.
+"""Shared utility functions for PulsarCD Agent.
 
 This module contains common parsing functions used by the agent components
 to avoid code duplication and ensure consistent behavior.

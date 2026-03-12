@@ -1,4 +1,4 @@
-"""Main entry point for LogsCrawler."""
+"""Main entry point for PulsarCD."""
 
 import logging
 import uvicorn
@@ -43,7 +43,7 @@ structlog.configure(
 
 
 def main():
-    """Run the LogsCrawler server."""
+    """Run the PulsarCD server."""
     settings = load_config()
 
     # Add filter to uvicorn access logger to exclude noisy endpoints

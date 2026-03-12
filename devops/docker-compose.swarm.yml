@@ -1,8 +1,8 @@
 version: '3.9'
 
 # ============================================================================
-# LogsCrawler - Docker Swarm Deployment (Agent-Based Architecture)
-# Deploy with: docker stack deploy -c docker-compose.swarm.yml logscrawler
+# PulsarCD - Docker Swarm Deployment (Agent-Based Architecture)
+# Deploy with: docker stack deploy -c docker-compose.swarm.yml pulsarcd
 #
 # IMPORTANT: Copy .env.example to .env and configure before deploying
 #
@@ -49,12 +49,12 @@ services:
           memory: 1G
 
   # ==========================================================================
-  # LogsCrawler Backend - API Server
+  # PulsarCD Backend - API Server
   # Docker socket mounted read-only for Swarm API queries (list containers/services)
   # Actual container operations (start/stop/exec) go through agents
   # ==========================================================================
   swarm-manager:
-    image: ${DOCKER_REGISTRY_URL}/logscrawler:latest
+    image: ${DOCKER_REGISTRY_URL}/pulsarcd:latest
     build:
       context: ..
       dockerfile: Dockerfile
@@ -70,46 +70,46 @@ services:
       # Docker socket for Swarm API queries (read-only)
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
-      - LOGSCRAWLER_DEBUG=false
+      - PULSARCD_DEBUG=false
 
       # OpenSearch configuration (use stack-prefixed name)
-      - LOGSCRAWLER_OPENSEARCH__HOSTS=["http://opensearch:9200"]
-      - LOGSCRAWLER_OPENSEARCH__INDEX_PREFIX=logscrawler
+      - PULSARCD_OPENSEARCH__HOSTS=["http://opensearch:9200"]
+      - PULSARCD_OPENSEARCH__INDEX_PREFIX=pulsarcd
 
       # AI/vLLM configuration
-      - LOGSCRAWLER_AI__MODEL=${VLLM_MODEL:-txn545/Qwen3.5-122B-A10B-NVFP4}
-      - LOGSCRAWLER_VLLM_URL=${VLLM_URL:-http://vllm-dev-service:8000}
+      - PULSARCD_AI__MODEL=${VLLM_MODEL:-txn545/Qwen3.5-122B-A10B-NVFP4}
+      - PULSARCD_VLLM_URL=${VLLM_URL:-http://vllm-dev-service:8000}
 
       # Collector settings - agents handle log/metrics collection
-      - LOGSCRAWLER_COLLECTOR__AGENTS_ONLY=true
-      - LOGSCRAWLER_COLLECTOR__RETENTION_DAYS=${LOG_RETENTION_DAYS:-7}
+      - PULSARCD_COLLECTOR__AGENTS_ONLY=true
+      - PULSARCD_COLLECTOR__RETENTION_DAYS=${LOG_RETENTION_DAYS:-7}
 
       # GitHub integration for Stacks tab
-      - LOGSCRAWLER_GITHUB__TOKEN=${LOGSCRAWLER_GITHUB__TOKEN}
-      - LOGSCRAWLER_GITHUB__USERNAME=${LOGSCRAWLER_GITHUB__USERNAME}
-      - LOGSCRAWLER_GITHUB__USEREMAIL=${LOGSCRAWLER_GITHUB__USEREMAIL}
-      - LOGSCRAWLER_GITHUB__REPOS_PATH=${LOGSCRAWLER_GITHUB__REPOS_PATH:-/home/user}
-      - LOGSCRAWLER_GITHUB__SCRIPTS_PATH=${LOGSCRAWLER_GITHUB__SCRIPTS_PATH:-/home/user/scripts}
-      - LOGSCRAWLER_GITHUB__SSH_HOST=${LOGSCRAWLER_GITHUB__SSH_HOST:-dockerhost}
-      - LOGSCRAWLER_GITHUB__SSH_USER=${LOGSCRAWLER_GITHUB__SSH_USER:-user}
+      - PULSARCD_GITHUB__TOKEN=${PULSARCD_GITHUB__TOKEN}
+      - PULSARCD_GITHUB__USERNAME=${PULSARCD_GITHUB__USERNAME}
+      - PULSARCD_GITHUB__USEREMAIL=${PULSARCD_GITHUB__USEREMAIL}
+      - PULSARCD_GITHUB__REPOS_PATH=${PULSARCD_GITHUB__REPOS_PATH:-/home/user}
+      - PULSARCD_GITHUB__SCRIPTS_PATH=${PULSARCD_GITHUB__SCRIPTS_PATH:-/home/user/scripts}
+      - PULSARCD_GITHUB__SSH_HOST=${PULSARCD_GITHUB__SSH_HOST:-dockerhost}
+      - PULSARCD_GITHUB__SSH_USER=${PULSARCD_GITHUB__SSH_USER:-user}
       # Docker registry for build/push operations
-      - LOGSCRAWLER_GITHUB__REGISTRY_URL=${DOCKER_REGISTRY_URL}
-      - LOGSCRAWLER_GITHUB__REGISTRY_USERNAME=${DOCKER_REGISTRY_USERNAME}
-      - LOGSCRAWLER_GITHUB__REGISTRY_PASSWORD=${DOCKER_REGISTRY_PASSWORD}
+      - PULSARCD_GITHUB__REGISTRY_URL=${DOCKER_REGISTRY_URL}
+      - PULSARCD_GITHUB__REGISTRY_USERNAME=${DOCKER_REGISTRY_USERNAME}
+      - PULSARCD_GITHUB__REGISTRY_PASSWORD=${DOCKER_REGISTRY_PASSWORD}
 
       # Authentication
-      - LOGSCRAWLER_AUTH__USERNAME=${LOGSCRAWLER_AUTH__USERNAME:-admin}
-      - LOGSCRAWLER_AUTH__PASSWORD=${LOGSCRAWLER_AUTH__PASSWORD:-changeme}
-      - LOGSCRAWLER_AUTH__JWT_SECRET=${LOGSCRAWLER_AUTH__JWT_SECRET:-}
-      - LOGSCRAWLER_AUTH__JWT_EXPIRY_HOURS=${LOGSCRAWLER_AUTH__JWT_EXPIRY_HOURS:-24}
-      - LOGSCRAWLER_AUTH__AGENT_KEY=${LOGSCRAWLER_AUTH__AGENT_KEY:-}
+      - PULSARCD_AUTH__USERNAME=${PULSARCD_AUTH__USERNAME:-admin}
+      - PULSARCD_AUTH__PASSWORD=${PULSARCD_AUTH__PASSWORD:-changeme}
+      - PULSARCD_AUTH__JWT_SECRET=${PULSARCD_AUTH__JWT_SECRET:-}
+      - PULSARCD_AUTH__JWT_EXPIRY_HOURS=${PULSARCD_AUTH__JWT_EXPIRY_HOURS:-24}
+      - PULSARCD_AUTH__AGENT_KEY=${PULSARCD_AUTH__AGENT_KEY:-}
 
-      - LOGSCRAWLER_MCP__API_KEY=${LOGSCRAWLER_MCP__API_KEY:-}
+      - PULSARCD_MCP__API_KEY=${PULSARCD_MCP__API_KEY:-}
       # Swarm agent notification (repair tasks on failure)
-      - LOGSCRAWLER_SWARM__SECRET_KEY=${LOGSCRAWLER_SWARM__SECRET_KEY:-}
+      - PULSARCD_SWARM__SECRET_KEY=${PULSARCD_SWARM__SECRET_KEY:-}
       # Swarm manager config - queries Swarm API to list all containers/services
       # Collection is disabled (agents_only=true), this is only for listing
-      - LOGSCRAWLER_HOSTS=[{"name":"swarm-manager","mode":"docker","docker_url":"unix:///var/run/docker.sock","swarm_manager":true,"swarm_autodiscover":true}]
+      - PULSARCD_HOSTS=[{"name":"swarm-manager","mode":"docker","docker_url":"unix:///var/run/docker.sock","swarm_manager":true,"swarm_autodiscover":true}]
     networks:
       - proxy
       - internal
@@ -127,37 +127,37 @@ services:
         - "traefik.enable=true"
 
         # Define service port
-        - "traefik.http.services.logscrawler.loadbalancer.server.port=8000"
+        - "traefik.http.services.pulsarcd.loadbalancer.server.port=8000"
 
         # HTTPS Router (main)
-        - "traefik.http.routers.logscrawler.rule=Host(`${TRAEFIK_HOST}`)"
-        - "traefik.http.routers.logscrawler.entrypoints=websecure"
-        - "traefik.http.routers.logscrawler.tls.certresolver=letsencrypt"
-        - "traefik.http.routers.logscrawler.middlewares=global@file"
-        - "traefik.http.routers.logscrawler.service=logscrawler"
-        - "traefik.http.routers.logscrawler.priority=1"
+        - "traefik.http.routers.pulsarcd.rule=Host(`${TRAEFIK_HOST}`)"
+        - "traefik.http.routers.pulsarcd.entrypoints=websecure"
+        - "traefik.http.routers.pulsarcd.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.pulsarcd.middlewares=global@file"
+        - "traefik.http.routers.pulsarcd.service=pulsarcd"
+        - "traefik.http.routers.pulsarcd.priority=1"
 
         # HTTPS Router (WebSocket terminal) - bypasses WAF which blocks WS upgrades
-        - "traefik.http.routers.logscrawler-ws.rule=Host(`${TRAEFIK_HOST}`) && PathPrefix(`/api/terminal/ws`)"
-        - "traefik.http.routers.logscrawler-ws.entrypoints=websecure"
-        - "traefik.http.routers.logscrawler-ws.tls.certresolver=letsencrypt"
-        - "traefik.http.routers.logscrawler-ws.middlewares=security-headers@file"
-        - "traefik.http.routers.logscrawler-ws.service=logscrawler"
-        - "traefik.http.routers.logscrawler-ws.priority=100"
+        - "traefik.http.routers.pulsarcd-ws.rule=Host(`${TRAEFIK_HOST}`) && PathPrefix(`/api/terminal/ws`)"
+        - "traefik.http.routers.pulsarcd-ws.entrypoints=websecure"
+        - "traefik.http.routers.pulsarcd-ws.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.pulsarcd-ws.middlewares=security-headers@file"
+        - "traefik.http.routers.pulsarcd-ws.service=pulsarcd"
+        - "traefik.http.routers.pulsarcd-ws.priority=100"
 
         # HTTPS Router (SSE log streams) - bypasses WAF which buffers streaming responses
-        - "traefik.http.routers.logscrawler-sse.rule=Host(`${TRAEFIK_HOST}`) && PathRegexp(`^/api/stacks/actions/.+/logs/stream`)"
-        - "traefik.http.routers.logscrawler-sse.entrypoints=websecure"
-        - "traefik.http.routers.logscrawler-sse.tls.certresolver=letsencrypt"
-        - "traefik.http.routers.logscrawler-sse.middlewares=security-headers@file"
-        - "traefik.http.routers.logscrawler-sse.service=logscrawler"
-        - "traefik.http.routers.logscrawler-sse.priority=50"
+        - "traefik.http.routers.pulsarcd-sse.rule=Host(`${TRAEFIK_HOST}`) && PathRegexp(`^/api/stacks/actions/.+/logs/stream`)"
+        - "traefik.http.routers.pulsarcd-sse.entrypoints=websecure"
+        - "traefik.http.routers.pulsarcd-sse.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.pulsarcd-sse.middlewares=security-headers@file"
+        - "traefik.http.routers.pulsarcd-sse.service=pulsarcd"
+        - "traefik.http.routers.pulsarcd-sse.priority=50"
 
         # HTTP Router (redirect to HTTPS)
-        - "traefik.http.routers.logscrawler-http.rule=Host(`${TRAEFIK_HOST}`)"
-        - "traefik.http.routers.logscrawler-http.entrypoints=web"
-        - "traefik.http.routers.logscrawler-http.middlewares=redirect-to-https@file"
-        - "traefik.http.routers.logscrawler-http.service=noop@internal"
+        - "traefik.http.routers.pulsarcd-http.rule=Host(`${TRAEFIK_HOST}`)"
+        - "traefik.http.routers.pulsarcd-http.entrypoints=web"
+        - "traefik.http.routers.pulsarcd-http.middlewares=redirect-to-https@file"
+        - "traefik.http.routers.pulsarcd-http.service=noop@internal"
       restart_policy:
         condition: on-failure
       placement:
@@ -169,7 +169,7 @@ services:
   # Usage: docker compose -f docker-compose.swarm.yml run --rm test
   # ==========================================================================
   test:
-    image: ${DOCKER_REGISTRY_URL}/logscrawler-test:latest
+    image: ${DOCKER_REGISTRY_URL}/pulsarcd-test:latest
     build:
       context: ..
       dockerfile: Dockerfile
@@ -178,11 +178,11 @@ services:
       replicas: 0
 
   # ==========================================================================
-  # LogsCrawler Agent - Deployed on EVERY node (global mode)
+  # PulsarCD Agent - Deployed on EVERY node (global mode)
   # Collects Docker logs/metrics locally and pushes to OpenSearch
   # ==========================================================================
   agent:
-    image: ${DOCKER_REGISTRY_URL}/logscrawler-agent:latest
+    image: ${DOCKER_REGISTRY_URL}/pulsarcd-agent:latest
     build:
       context: ..
       dockerfile: Dockerfile.agent
@@ -207,7 +207,7 @@ services:
 
       # OpenSearch configuration (use stack-prefixed name)
       - AGENT_OPENSEARCH__HOSTS=["http://opensearch:9200"]
-      - AGENT_OPENSEARCH__INDEX_PREFIX=logscrawler
+      - AGENT_OPENSEARCH__INDEX_PREFIX=pulsarcd
 
       # Docker socket path (inside container)
       - AGENT_DOCKER_URL=unix:///var/run/docker.sock
@@ -220,8 +220,8 @@ services:
       # Initial log lines to fetch
       - AGENT_LOG_LINES_PER_FETCH=500
 
-      # Authentication key for swarm-manager API (must match LOGSCRAWLER_AUTH__AGENT_KEY)
-      - AGENT_AUTH_KEY=${LOGSCRAWLER_AUTH__AGENT_KEY:-}
+      # Authentication key for swarm-manager API (must match PULSARCD_AUTH__AGENT_KEY)
+      - AGENT_AUTH_KEY=${PULSARCD_AUTH__AGENT_KEY:-}
     networks:
       - internal
     depends_on:

@@ -209,8 +209,8 @@ else
 fi
 
 # Get the script's directory and the parent of the parent (where repositories are)
-# Script is in: LogsCrawler/scripts/
-# Repos are in: parent of LogsCrawler/ (e.g., ~/repos/)
+# Script is in: PulsarCD/scripts/
+# Repos are in: parent of PulsarCD/ (e.g., ~/repos/)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPOS_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 

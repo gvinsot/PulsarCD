@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for LogsCrawler tests.
+"""Shared pytest fixtures for PulsarCD tests.
 
 All external infrastructure (OpenSearch, Collector, GitHub) is replaced with
 AsyncMock objects so tests run without any real services.

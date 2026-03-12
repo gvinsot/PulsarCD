@@ -1,4 +1,4 @@
-"""LogsCrawler Agent - Main entry point.
+"""PulsarCD Agent - Main entry point.
 
 This agent runs on each host and:
 1. Collects Docker container logs and metrics locally
@@ -86,7 +86,7 @@ class Agent:
     async def start(self):
         """Start the agent."""
         logger.info(
-            "Starting LogsCrawler Agent",
+            "Starting PulsarCD Agent",
             agent_id=self.config.agent_id,
             backend_url=self.config.backend_url,
             opensearch_hosts=self.config.opensearch.hosts,

@@ -1,4 +1,4 @@
-# Docker Compose for LogsCrawler Agent
+# Docker Compose for PulsarCD Agent
 #
 # Deploy this on each host you want to monitor.
 # The agent will:
@@ -16,7 +16,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.agent
-    container_name: logscrawler-agent
+    container_name: pulsarcd-agent
     restart: unless-stopped
     # Privileged mode for GPU device access
     privileged: true
@@ -38,13 +38,13 @@ services:
       - AGENT_AGENT_ID=${AGENT_ID:-$(hostname)}
 
       # Backend URL for polling actions
-      - AGENT_BACKEND_URL=${BACKEND_URL:-http://logscrawler-backend:8000}
+      - AGENT_BACKEND_URL=${BACKEND_URL:-http://pulsarcd-backend:8000}
 
       # OpenSearch connection (direct writes)
       - AGENT_OPENSEARCH__HOSTS=${OPENSEARCH_HOSTS:-["http://opensearch:9200"]}
       - AGENT_OPENSEARCH__USERNAME=${OPENSEARCH_USERNAME:-}
       - AGENT_OPENSEARCH__PASSWORD=${OPENSEARCH_PASSWORD:-}
-      - AGENT_OPENSEARCH__INDEX_PREFIX=${OPENSEARCH_INDEX_PREFIX:-logscrawler}
+      - AGENT_OPENSEARCH__INDEX_PREFIX=${OPENSEARCH_INDEX_PREFIX:-pulsarcd}
 
       # Docker socket path (inside container)
       - AGENT_DOCKER_URL=unix:///var/run/docker.sock
@@ -66,8 +66,8 @@ services:
               count: all
               capabilities: [gpu]
     networks:
-      - logscrawler
+      - pulsarcd
 
 networks:
-  logscrawler:
+  pulsarcd:
     external: true

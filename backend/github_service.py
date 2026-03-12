@@ -1,4 +1,4 @@
-"""GitHub integration service for LogsCrawler."""
+"""GitHub integration service for PulsarCD."""
 
 import asyncio
 import json
@@ -62,7 +62,7 @@ class GitHubService:
         if self._session is None or self._session.closed:
             headers = {
                 "Accept": "application/vnd.github.v3+json",
-                "User-Agent": "LogsCrawler",
+                "User-Agent": "PulsarCD",
             }
             if token:
                 headers["Authorization"] = f"token {token}"
@@ -994,7 +994,7 @@ class StackDeployer:
                 except OSError as e:
                     # Handle DNS/network resolution errors
                     if e.errno == -2 or "Name or service not known" in str(e):
-                        error_msg = f"SSH host '{self.config.ssh_host}' cannot be resolved. Check LOGSCRAWLER_GITHUB__SSH_HOST configuration."
+                        error_msg = f"SSH host '{self.config.ssh_host}' cannot be resolved. Check PULSARCD_GITHUB__SSH_HOST configuration."
                         logger.error("SSH host resolution failed", host=self.config.ssh_host, error=str(e))
                         return False, error_msg
                     raise

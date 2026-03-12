@@ -527,7 +527,7 @@ def get_ai_service() -> AIService:
 
     global ai_service
     if ai_service is None:
-        vllm_url = os.environ.get("LOGSCRAWLER_VLLM_URL", "http://vllm:8000")
+        vllm_url = os.environ.get("PULSARCD_VLLM_URL", "http://vllm:8000")
         model = settings.ai.model
         ai_service = AIService(vllm_url, model)
     return ai_service

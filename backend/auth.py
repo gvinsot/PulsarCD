@@ -1,4 +1,4 @@
-"""JWT authentication helpers for LogsCrawler."""
+"""JWT authentication helpers for PulsarCD."""
 
 from datetime import datetime, timedelta, timezone
 

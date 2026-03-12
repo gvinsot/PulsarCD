@@ -1,4 +1,4 @@
-"""FastAPI REST API for LogsCrawler."""
+"""FastAPI REST API for PulsarCD."""
 
 import asyncio
 import json
@@ -210,7 +210,7 @@ async def lifespan(app: FastAPI):
     global settings, opensearch, collector, github_service, error_detector
     
     # Startup
-    logger.info("Starting LogsCrawler API")
+    logger.info("Starting PulsarCD API")
 
     settings = load_config()
     opensearch = OpenSearchClient(settings.opensearch)
@@ -271,7 +271,7 @@ async def lifespan(app: FastAPI):
         yield
 
     # Shutdown
-    logger.info("Shutting down LogsCrawler API")
+    logger.info("Shutting down PulsarCD API")
     if error_detector:
         await error_detector.stop()
     if _auto_build_task:
@@ -286,7 +286,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="LogsCrawler API",
+    title="PulsarCD API",
     description="Docker container log aggregation and monitoring",
     version="1.0.0",
     lifespan=lifespan,
@@ -1291,7 +1291,7 @@ async def execute_host_action(host_name: str, request: Dict[str, str]) -> Dict[s
 @app.get("/api/health")
 async def health_check() -> Dict[str, str]:
     """Health check endpoint."""
-    return {"status": "healthy", "service": "logscrawler"}
+    return {"status": "healthy", "service": "pulsarcd"}
 
 
 @app.get("/api/github/check-access")

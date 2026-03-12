@@ -1,14 +1,14 @@
-"""Configuration management for LogsCrawler.
+"""Configuration management for PulsarCD.
 
 All configuration is done via environment variables. No config file required!
 
 Environment variables:
-- LOGSCRAWLER_HOSTS: JSON array of host configs
-- LOGSCRAWLER_OPENSEARCH__HOSTS: JSON array of OpenSearch URLs
-- LOGSCRAWLER_OPENSEARCH__INDEX_PREFIX: Index prefix string
-- LOGSCRAWLER_COLLECTOR__LOG_INTERVAL_SECONDS: Log collection interval
-- LOGSCRAWLER_COLLECTOR__METRICS_INTERVAL_SECONDS: Metrics collection interval
-- LOGSCRAWLER_AI__MODEL: AI model name
+- PULSARCD_HOSTS: JSON array of host configs
+- PULSARCD_OPENSEARCH__HOSTS: JSON array of OpenSearch URLs
+- PULSARCD_OPENSEARCH__INDEX_PREFIX: Index prefix string
+- PULSARCD_COLLECTOR__LOG_INTERVAL_SECONDS: Log collection interval
+- PULSARCD_COLLECTOR__METRICS_INTERVAL_SECONDS: Metrics collection interval
+- PULSARCD_AI__MODEL: AI model name
 """
 
 import json
@@ -60,7 +60,7 @@ class HostConfig(BaseModel):
 class OpenSearchConfig(BaseModel):
     """OpenSearch configuration."""
     hosts: List[str] = ["http://localhost:9200"]
-    index_prefix: str = "logscrawler"
+    index_prefix: str = "pulsarcd"
     username: Optional[str] = None
     password: Optional[str] = None
 
@@ -88,10 +88,10 @@ class GitHubConfig(BaseModel):
     useremail: Optional[str] = None
     # Path where repos are cloned on the host
     repos_path: str = "~/repos"
-    # Path to deployment scripts (LogsCrawler/scripts folder)
-    scripts_path: str = "~/repos/LogsCrawler/scripts"
+    # Path to deployment scripts (PulsarCD/scripts folder)
+    scripts_path: str = "~/repos/PulsarCD/scripts"
     # SSH configuration for executing commands on the host
-    # Required when LogsCrawler runs in a container and needs to run git/build on the host
+    # Required when PulsarCD runs in a container and needs to run git/build on the host
     ssh_host: Optional[str] = None
     ssh_user: str = "root"
     ssh_port: int = 22
@@ -125,7 +125,7 @@ class SwarmConfig(BaseModel):
 
 class Settings(BaseSettings):
     """Application settings."""
-    app_name: str = "LogsCrawler"
+    app_name: str = "PulsarCD"
     debug: bool = False
 
     # Server
@@ -156,55 +156,55 @@ class Settings(BaseSettings):
     # Swarm agent API
     swarm: SwarmConfig = SwarmConfig()
 
-    # Hosts (configured via LOGSCRAWLER_HOSTS env var)
+    # Hosts (configured via PULSARCD_HOSTS env var)
     hosts: List[HostConfig] = []
 
     class Config:
-        env_prefix = "LOGSCRAWLER_"
+        env_prefix = "PULSARCD_"
         env_nested_delimiter = "__"
 
 
 def load_config() -> Settings:
     """Load configuration from environment variables.
 
-    All configuration is done via environment variables prefixed with LOGSCRAWLER_.
+    All configuration is done via environment variables prefixed with PULSARCD_.
     Pydantic-settings handles most env vars automatically via env_nested_delimiter.
 
     Required:
-    - LOGSCRAWLER_HOSTS: JSON array of host configs
+    - PULSARCD_HOSTS: JSON array of host configs
 
     Optional (auto-loaded by pydantic-settings):
-    - LOGSCRAWLER_OPENSEARCH__HOSTS: JSON array of OpenSearch URLs
-    - LOGSCRAWLER_OPENSEARCH__INDEX_PREFIX: Index prefix
-    - LOGSCRAWLER_OPENSEARCH__USERNAME: OpenSearch username
-    - LOGSCRAWLER_OPENSEARCH__PASSWORD: OpenSearch password
-    - LOGSCRAWLER_COLLECTOR__LOG_INTERVAL_SECONDS: integer
-    - LOGSCRAWLER_COLLECTOR__METRICS_INTERVAL_SECONDS: integer
-    - LOGSCRAWLER_COLLECTOR__LOG_LINES_PER_FETCH: integer
-    - LOGSCRAWLER_COLLECTOR__RETENTION_DAYS: integer
-    - LOGSCRAWLER_AI__MODEL: string
-    - LOGSCRAWLER_GITHUB__*: GitHub configuration
+    - PULSARCD_OPENSEARCH__HOSTS: JSON array of OpenSearch URLs
+    - PULSARCD_OPENSEARCH__INDEX_PREFIX: Index prefix
+    - PULSARCD_OPENSEARCH__USERNAME: OpenSearch username
+    - PULSARCD_OPENSEARCH__PASSWORD: OpenSearch password
+    - PULSARCD_COLLECTOR__LOG_INTERVAL_SECONDS: integer
+    - PULSARCD_COLLECTOR__METRICS_INTERVAL_SECONDS: integer
+    - PULSARCD_COLLECTOR__LOG_LINES_PER_FETCH: integer
+    - PULSARCD_COLLECTOR__RETENTION_DAYS: integer
+    - PULSARCD_AI__MODEL: string
+    - PULSARCD_GITHUB__*: GitHub configuration
 
-    Example LOGSCRAWLER_HOSTS:
+    Example PULSARCD_HOSTS:
     [{"name": "local", "mode": "docker", "docker_url": "unix:///var/run/docker.sock"}]
     """
     settings = Settings()
 
     # Load hosts from environment variable (JSON array)
     # This needs special handling because it's a complex nested structure
-    hosts_env = os.environ.get("LOGSCRAWLER_HOSTS")
+    hosts_env = os.environ.get("PULSARCD_HOSTS")
     if hosts_env:
         try:
             hosts_list = json.loads(hosts_env)
             if isinstance(hosts_list, list):
                 settings.hosts = [HostConfig(**h) for h in hosts_list]
         except json.JSONDecodeError as e:
-            print(f"Warning: Failed to parse LOGSCRAWLER_HOSTS: {e}")
+            print(f"Warning: Failed to parse PULSARCD_HOSTS: {e}")
         except Exception as e:
             print(f"Warning: Invalid host configuration: {e}")
 
     # OpenSearch hosts need special handling (JSON array or single string)
-    opensearch_hosts_env = os.environ.get("LOGSCRAWLER_OPENSEARCH__HOSTS")
+    opensearch_hosts_env = os.environ.get("PULSARCD_OPENSEARCH__HOSTS")
     if opensearch_hosts_env:
         try:
             hosts_list = json.loads(opensearch_hosts_env)
@@ -224,29 +224,29 @@ def load_config() -> Settings:
                 print(f"Warning: Failed to parse {env_var}: {e}")
 
     # OpenSearch settings
-    load_env(settings.opensearch, "index_prefix", "LOGSCRAWLER_OPENSEARCH__INDEX_PREFIX")
-    load_env(settings.opensearch, "username", "LOGSCRAWLER_OPENSEARCH__USERNAME")
-    load_env(settings.opensearch, "password", "LOGSCRAWLER_OPENSEARCH__PASSWORD")
+    load_env(settings.opensearch, "index_prefix", "PULSARCD_OPENSEARCH__INDEX_PREFIX")
+    load_env(settings.opensearch, "username", "PULSARCD_OPENSEARCH__USERNAME")
+    load_env(settings.opensearch, "password", "PULSARCD_OPENSEARCH__PASSWORD")
 
     # Collector settings
-    load_env(settings.collector, "log_interval_seconds", "LOGSCRAWLER_COLLECTOR__LOG_INTERVAL_SECONDS", int)
-    load_env(settings.collector, "metrics_interval_seconds", "LOGSCRAWLER_COLLECTOR__METRICS_INTERVAL_SECONDS", int)
-    load_env(settings.collector, "log_lines_per_fetch", "LOGSCRAWLER_COLLECTOR__LOG_LINES_PER_FETCH", int)
-    load_env(settings.collector, "retention_days", "LOGSCRAWLER_COLLECTOR__RETENTION_DAYS", int)
+    load_env(settings.collector, "log_interval_seconds", "PULSARCD_COLLECTOR__LOG_INTERVAL_SECONDS", int)
+    load_env(settings.collector, "metrics_interval_seconds", "PULSARCD_COLLECTOR__METRICS_INTERVAL_SECONDS", int)
+    load_env(settings.collector, "log_lines_per_fetch", "PULSARCD_COLLECTOR__LOG_LINES_PER_FETCH", int)
+    load_env(settings.collector, "retention_days", "PULSARCD_COLLECTOR__RETENTION_DAYS", int)
     # Load agents_only as bool (accepts "true", "1", "yes")
-    agents_only_env = os.environ.get("LOGSCRAWLER_COLLECTOR__AGENTS_ONLY", "").lower()
+    agents_only_env = os.environ.get("PULSARCD_COLLECTOR__AGENTS_ONLY", "").lower()
     if agents_only_env in ("true", "1", "yes"):
         settings.collector.agents_only = True
 
     # AI settings
-    load_env(settings.ai, "model", "LOGSCRAWLER_AI__MODEL")
+    load_env(settings.ai, "model", "PULSARCD_AI__MODEL")
 
     # Auth settings
-    load_env(settings.auth, "username", "LOGSCRAWLER_AUTH__USERNAME")
-    load_env(settings.auth, "password", "LOGSCRAWLER_AUTH__PASSWORD")
-    load_env(settings.auth, "jwt_secret", "LOGSCRAWLER_AUTH__JWT_SECRET")
-    load_env(settings.auth, "jwt_expiry_hours", "LOGSCRAWLER_AUTH__JWT_EXPIRY_HOURS", int)
-    load_env(settings.auth, "agent_key", "LOGSCRAWLER_AUTH__AGENT_KEY")
+    load_env(settings.auth, "username", "PULSARCD_AUTH__USERNAME")
+    load_env(settings.auth, "password", "PULSARCD_AUTH__PASSWORD")
+    load_env(settings.auth, "jwt_secret", "PULSARCD_AUTH__JWT_SECRET")
+    load_env(settings.auth, "jwt_expiry_hours", "PULSARCD_AUTH__JWT_EXPIRY_HOURS", int)
+    load_env(settings.auth, "agent_key", "PULSARCD_AUTH__AGENT_KEY")
     # Auto-generate JWT secret if not provided
     if not settings.auth.jwt_secret:
         settings.auth.jwt_secret = uuid.uuid4().hex
@@ -255,29 +255,29 @@ def load_config() -> Settings:
         settings.auth.agent_key = uuid.uuid4().hex
 
     # MCP settings
-    load_env(settings.mcp, "api_key", "LOGSCRAWLER_MCP__API_KEY")
-    mcp_enabled_env = os.environ.get("LOGSCRAWLER_MCP__ENABLED", "").lower()
+    load_env(settings.mcp, "api_key", "PULSARCD_MCP__API_KEY")
+    mcp_enabled_env = os.environ.get("PULSARCD_MCP__ENABLED", "").lower()
     if mcp_enabled_env in ("false", "0", "no"):
         settings.mcp.enabled = False
     if not settings.mcp.api_key:
         settings.mcp.api_key = uuid.uuid4().hex
 
     # Run user
-    load_env(settings, "run_user", "LOGSCRAWLER_RUN_USER")
+    load_env(settings, "run_user", "PULSARCD_RUN_USER")
 
     # GitHub settings
-    load_env(settings.github, "token", "LOGSCRAWLER_GITHUB__TOKEN")
-    load_env(settings.github, "username", "LOGSCRAWLER_GITHUB__USERNAME")
-    load_env(settings.github, "useremail", "LOGSCRAWLER_GITHUB__USEREMAIL")
-    load_env(settings.github, "repos_path", "LOGSCRAWLER_GITHUB__REPOS_PATH")
-    load_env(settings.github, "scripts_path", "LOGSCRAWLER_GITHUB__SCRIPTS_PATH")
-    load_env(settings.github, "ssh_host", "LOGSCRAWLER_GITHUB__SSH_HOST")
-    load_env(settings.github, "ssh_user", "LOGSCRAWLER_GITHUB__SSH_USER")
-    load_env(settings.github, "ssh_port", "LOGSCRAWLER_GITHUB__SSH_PORT", int)
-    load_env(settings.github, "ssh_key_path", "LOGSCRAWLER_GITHUB__SSH_KEY_PATH")
-    load_env(settings.github, "registry_url", "LOGSCRAWLER_GITHUB__REGISTRY_URL")
-    load_env(settings.github, "registry_username", "LOGSCRAWLER_GITHUB__REGISTRY_USERNAME")
-    load_env(settings.github, "registry_password", "LOGSCRAWLER_GITHUB__REGISTRY_PASSWORD")
+    load_env(settings.github, "token", "PULSARCD_GITHUB__TOKEN")
+    load_env(settings.github, "username", "PULSARCD_GITHUB__USERNAME")
+    load_env(settings.github, "useremail", "PULSARCD_GITHUB__USEREMAIL")
+    load_env(settings.github, "repos_path", "PULSARCD_GITHUB__REPOS_PATH")
+    load_env(settings.github, "scripts_path", "PULSARCD_GITHUB__SCRIPTS_PATH")
+    load_env(settings.github, "ssh_host", "PULSARCD_GITHUB__SSH_HOST")
+    load_env(settings.github, "ssh_user", "PULSARCD_GITHUB__SSH_USER")
+    load_env(settings.github, "ssh_port", "PULSARCD_GITHUB__SSH_PORT", int)
+    load_env(settings.github, "ssh_key_path", "PULSARCD_GITHUB__SSH_KEY_PATH")
+    load_env(settings.github, "registry_url", "PULSARCD_GITHUB__REGISTRY_URL")
+    load_env(settings.github, "registry_username", "PULSARCD_GITHUB__REGISTRY_USERNAME")
+    load_env(settings.github, "registry_password", "PULSARCD_GITHUB__REGISTRY_PASSWORD")
 
     return settings
 
@@ -287,7 +287,7 @@ settings = load_config()
 
 
 def wrap_command_for_user(command: str) -> str:
-    """Wrap a shell command with su if LOGSCRAWLER_RUN_USER is set."""
+    """Wrap a shell command with su if PULSARCD_RUN_USER is set."""
     if settings.run_user:
         escaped = command.replace("'", "'\"'\"'")
         return f"su - {settings.run_user} -c '{escaped}'"

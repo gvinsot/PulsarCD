@@ -119,7 +119,7 @@ class RecurringErrorDetector:
         min_occurrences: int = 10,
         pattern_ttl_hours: int = 12,
         zvec_similarity_threshold: float = 0.92,
-        zvec_db_path: str = "/tmp/logscrawler_zvec",
+        zvec_db_path: str = "/tmp/pulsarcd_zvec",
         burst_window_seconds: int = 10,
     ):
         self._opensearch = opensearch_client

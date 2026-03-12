@@ -1,4 +1,4 @@
-"""Shared utility functions for LogsCrawler backend.
+"""Shared utility functions for PulsarCD backend.
 
 This module contains common parsing functions used by both SSHClient and DockerAPIClient
 to avoid code duplication and ensure consistent behavior.

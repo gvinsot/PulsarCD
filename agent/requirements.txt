@@ -1,4 +1,4 @@
-# LogsCrawler Agent dependencies
+# PulsarCD Agent dependencies
 aiohttp>=3.9.0
 opensearch-py>=2.4.0
 pydantic>=2.0.0

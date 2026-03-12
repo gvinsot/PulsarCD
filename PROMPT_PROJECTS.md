@@ -384,7 +384,7 @@ deploy:
 
 ## Opérations via MCP (Model Context Protocol)
 
-LogsCrawler expose un serveur MCP permettant aux agents IA d'interagir avec la plateforme. Le MCP est sécurisé par authentification Bearer token.
+PulsarCD expose un serveur MCP permettant aux agents IA d'interagir avec la plateforme. Le MCP est sécurisé par authentification Bearer token.
 
 ### Endpoint
 
@@ -396,7 +396,7 @@ POST https://<TRAEFIK_HOST>/ai/mcp
 
 Chaque requête MCP nécessite un header `Authorization: Bearer <token>`.
 Deux types de tokens sont acceptés :
-- **Clé API MCP** : configurée via `LOGSCRAWLER_MCP__API_KEY` (auto-générée au démarrage si non fournie, affichée dans les logs)
+- **Clé API MCP** : configurée via `PULSARCD_MCP__API_KEY` (auto-générée au démarrage si non fournie, affichée dans les logs)
 - **JWT** : les mêmes tokens utilisés par l'interface web (obtenus via `/api/auth/login`)
 
 ### Tools disponibles
@@ -416,7 +416,7 @@ Deux types de tokens sont acceptés :
 ```json
 {
   "mcpServers": {
-    "logscrawler": {
+    "pulsarcd": {
       "url": "https://<TRAEFIK_HOST>/ai/mcp",
       "transport": "streamable-http",
       "headers": {
@@ -431,5 +431,5 @@ Deux types de tokens sont acceptés :
 
 | Variable | Description | Défaut |
 |----------|-------------|--------|
-| `LOGSCRAWLER_MCP__ENABLED` | Activer/désactiver le serveur MCP | `true` |
-| `LOGSCRAWLER_MCP__API_KEY` | Clé API dédiée pour le MCP | auto-générée (UUID) |
+| `PULSARCD_MCP__ENABLED` | Activer/désactiver le serveur MCP | `true` |
+| `PULSARCD_MCP__API_KEY` | Clé API dédiée pour le MCP | auto-générée (UUID) |

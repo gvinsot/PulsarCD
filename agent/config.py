@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings
 class OpenSearchConfig(BaseModel):
     """OpenSearch configuration for direct writes."""
     hosts: List[str] = ["http://localhost:9200"]
-    index_prefix: str = "logscrawler"
+    index_prefix: str = "pulsarcd"
     username: Optional[str] = None
     password: Optional[str] = None
 
@@ -51,7 +51,7 @@ def load_agent_config() -> AgentSettings:
 
     Environment variables:
     - AGENT_AGENT_ID: Unique agent identifier (hostname recommended)
-    - AGENT_BACKEND_URL: URL of the LogsCrawler backend
+    - AGENT_BACKEND_URL: URL of the PulsarCD backend
     - AGENT_OPENSEARCH__HOSTS: JSON array of OpenSearch URLs
     - AGENT_OPENSEARCH__USERNAME: OpenSearch username
     - AGENT_OPENSEARCH__PASSWORD: OpenSearch password

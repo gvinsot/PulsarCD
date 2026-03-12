@@ -1118,7 +1118,7 @@ class DockerAPIClient:
         """Execute a shell command on the host.
         
         This runs the command locally using asyncio subprocess.
-        For Docker API mode, commands are executed on the host running the LogsCrawler.
+        For Docker API mode, commands are executed on the host running the PulsarCD.
         
         Args:
             command: Shell command to run

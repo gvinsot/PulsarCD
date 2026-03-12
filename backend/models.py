@@ -1,4 +1,4 @@
-"""Data models for LogsCrawler."""
+"""Data models for PulsarCD."""
 
 from datetime import datetime
 from enum import Enum

@@ -1,6 +1,6 @@
-"""MCP (Model Context Protocol) server for LogsCrawler.
+"""MCP (Model Context Protocol) server for PulsarCD.
 
-Exposes LogsCrawler functionality as MCP tools for AI agents.
+Exposes PulsarCD functionality as MCP tools for AI agents.
 Mounted on the existing FastAPI app at /mcp.
 """
 
@@ -17,9 +17,9 @@ from mcp.server.fastmcp import FastMCP
 logger = structlog.get_logger()
 
 mcp = FastMCP(
-    name="LogsCrawler",
+    name="PulsarCD",
     instructions=(
-        "LogsCrawler is a DevOps monitoring platform. Use these tools to "
+        "PulsarCD is a DevOps monitoring platform. Use these tools to "
         "list stacks (GitHub repos), build/deploy Docker images, list containers "
         "and hosts, search and browse logs, get error summaries per service, "
         "and check build/deploy status.\n\n"

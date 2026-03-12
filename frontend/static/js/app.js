@@ -1,5 +1,5 @@
 /**
- * LogsCrawler Frontend Application
+ * PulsarCD Frontend Application
  * Professional Docker Log Analytics Dashboard
  */
 
@@ -16,9 +16,9 @@ let totalLogs = 0;
 
 // ============== Authentication ==============
 
-function getAuthToken() { return localStorage.getItem('logscrawler_token'); }
-function setAuthToken(token) { localStorage.setItem('logscrawler_token', token); }
-function clearAuthToken() { localStorage.removeItem('logscrawler_token'); }
+function getAuthToken() { return localStorage.getItem('pulsarcd_token'); }
+function setAuthToken(token) { localStorage.setItem('pulsarcd_token', token); }
+function clearAuthToken() { localStorage.removeItem('pulsarcd_token'); }
 
 function authHeaders() {
     const t = getAuthToken();
@@ -203,7 +203,7 @@ async function checkAIStatus() {
 
 // ============== Recent Queries ==============
 
-const RECENT_QUERIES_KEY = 'logscrawler_recent_queries';
+const RECENT_QUERIES_KEY = 'pulsarcd_recent_queries';
 const MAX_RECENT_QUERIES = 10;
 
 function getRecentQueries() {
@@ -1208,8 +1208,8 @@ function getChartOptions(isPercent = false) {
 // ============== Containers ==============
 
 // Local storage keys
-const CONTAINERS_FILTER_KEY = 'logscrawler_containers_filter';
-const CONTAINERS_GROUPS_KEY = 'logscrawler_containers_groups';
+const CONTAINERS_FILTER_KEY = 'pulsarcd_containers_filter';
+const CONTAINERS_GROUPS_KEY = 'pulsarcd_containers_groups';
 
 function getStoredFilter() {
     try {
@@ -2435,8 +2435,8 @@ async function loadStacks() {
                 </svg>
                 <h3>GitHub Integration Not Configured</h3>
                 <p>Set the following environment variables to enable:</p>
-                <code>LOGSCRAWLER_GITHUB__TOKEN</code><br>
-                <code>LOGSCRAWLER_GITHUB__USERNAME</code>
+                <code>PULSARCD_GITHUB__TOKEN</code><br>
+                <code>PULSARCD_GITHUB__USERNAME</code>
             </div>
         `;
         stopStacksPolling();
@@ -2914,7 +2914,7 @@ function updateContainerItems(containerListEl, containers, stackName) {
 }
 
 // Track expanded stacks
-const STACKS_EXPANDED_KEY = 'logscrawler_stacks_expanded';
+const STACKS_EXPANDED_KEY = 'pulsarcd_stacks_expanded';
 
 function getExpandedStacks() {
     try {
@@ -3084,7 +3084,7 @@ function renderStacksList() {
             containersHtml = `<div class="host-content" id="stack-containers-${escapeHtml(repo.name)}" style="display: ${isExpanded ? 'block' : 'none'};">`;
             
             for (const [serviceName, containers] of Object.entries(stackContainers)) {
-                // serviceName is the full swarm service name (e.g., "logscrawler_backend")
+                // serviceName is the full swarm service name (e.g., "pulsarcd_backend")
                 // Extract short display name by removing the stack prefix
                 let displayServiceName = serviceName;
                 if (serviceName === '_standalone') {

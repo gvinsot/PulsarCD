@@ -195,7 +195,7 @@ VERSION="$2"
 BRANCH="${3:-}"
 COMMIT="${4:-}"
 
-# Get the script's directory and the repos root (two levels up since scripts are in LogsCrawler/scripts)
+# Get the script's directory and the repos root (two levels up since scripts are in PulsarCD/scripts)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPOS_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
