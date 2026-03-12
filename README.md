@@ -2,27 +2,45 @@
 
 # PulsarCD
 
-![Dashboard Screenshot](screenshot.png)
+### The fastest path from code to deploy. No gates. No waiting. Just ship.
+
+![Dashboard Screenshot](Screenshot2.png)
 *Dashboard: Real-time metrics, error tracking, and resource monitoring*
 
-![Stacks Management](screenshot2.png)
+![Stacks Management](Screenshot1.png)
 *Stacks: Build and deploy directly from your GitHub repositories*
 
-**Stop switching between GitHub, Portainer, Grafana, and terminal windows.** PulsarCD is an all-in-one DevOps platform that unifies your entire container workflow into a single, modern interface.
+---
 
-Built for **homelab enthusiasts** and small-scale DevOps teams who want the power of enterprise tools without the complexity. Star a repo on GitHub, build it, deploy it to your Swarm cluster, and monitor it — all from one dashboard.
+## Our Thesis
 
-## Why PulsarCD?
+**The speed of your iteration cycle is the single most important factor in how fast you build software.**
 
-If you're tired of:
-- Jumping between GitHub, CI/CD pipelines, and deployment tools
-- SSHing into multiple machines to check logs
-- Managing Docker containers across different hosts
-- Setting up separate monitoring stacks
+Every minute spent waiting for a build, switching between tools, SSH-ing into a machine, or manually checking logs is a minute not spent creating. Traditional DevOps workflows are fragmented by design — GitHub over here, CI/CD over there, monitoring somewhere else, deployment in yet another tool. Each context switch kills momentum. Each manual step is a bottleneck.
 
-Then PulsarCD is for you. **One tool. One interface. Complete control.**
+We believe that compressing the cycle **commit → build → deploy → observe** into the shortest possible loop is the key to unlocking a new speed of development.
 
-## Key Capabilities
+## The AI Bet
+
+We're making a deliberate, all-in bet: **AI will very soon be reliable enough to trust with the entire software delivery pipeline.**
+
+Today, LLMs can already search your logs in natural language, analyze error patterns, and suggest fixes. Tomorrow, they'll be able to autonomously detect a regression, roll back a deployment, and open a PR with the fix — all without human intervention.
+
+**PulsarCD is built for that future.** Every design decision — the fully integrated architecture, the single-pane-of-glass approach, the AI-native log analysis — is made so that when AI becomes reliable enough, there are zero barriers between it and your infrastructure. No fragmented tools to bridge. No manual approval gates to bypass. Just a single, unified platform where an AI agent can observe, decide, and act.
+
+### Honest Reality Check
+
+Today, AI is not reliable enough to run production unsupervised. We know that. PulsarCD is already a **perfect environment for development and staging** — where the speed gains are massive and the risk is low. You get the fastest iteration cycle possible, with AI-assisted observability that makes debugging feel like having a conversation.
+
+For production? Not yet. But the gap is closing fast. And when it does, PulsarCD will already be there — fully integrated, no assembly required.
+
+> **TL;DR** — We're building the platform that will let AI ship your code to production. Today it accelerates your dev workflow. Tomorrow it runs the whole show.
+
+---
+
+## What PulsarCD Does
+
+**One tool. One interface. Complete control.** Stop switching between GitHub, Portainer, Grafana, and terminal windows.
 
 | Build | Deploy | Monitor | Manage |
 |-------|--------|---------|--------|
@@ -33,32 +51,32 @@ Then PulsarCD is for you. **One tool. One interface. Complete control.**
 
 ## Features
 
-### 🔗 GitHub Integration
+### GitHub Integration
 - **Starred Repos**: Your starred repositories appear automatically
 - **Branch Selection**: Build from any branch or specific commit
 - **Compose Detection**: Automatically finds docker-compose files
 - **Version Management**: Tag your builds with semantic versions
 
-### 🏗️ Build & Deploy
+### Build & Deploy
 - **One-Click Builds**: Build Docker images directly from your repos
 - **Docker Swarm**: Deploy as Swarm stacks for high availability
 - **Environment Management**: Configure environment variables per stack
 - **Tag Selection**: Deploy specific versions or latest builds
 
-### 📊 Monitoring & Logs
+### Monitoring & Logs
 - **Centralized Log Collection**: Agents collect logs from all containers across all hosts
 - **Full-Text Search**: Powerful OpenSearch-backed queries
 - **AI-Powered Search**: Natural language queries via Ollama (e.g., "show me errors from nginx in the last hour")
 - **Real-Time Metrics**: CPU, Memory, GPU (AMD/NVIDIA), Disk usage
 - **Error Tracking**: 4xx/5xx HTTP error counts and trends
 
-### 🖥️ Container Management
+### Container Management
 - **Multi-Host View**: See all containers grouped by host and Compose project
 - **Container Actions**: Start, Stop, Restart, Pause/Unpause from the UI
 - **Live Logs**: Stream container logs in real-time
 - **Resource Stats**: Monitor CPU/Memory usage per container
 
-### 📈 Dashboard
+### Dashboard
 - **Summary Statistics**: Running containers, hosts, error counts at a glance
 - **Time Series Charts**: Visualize resource usage and error patterns over 24h
 - **HTTP Status Distribution**: Track 4xx/5xx breakdown
