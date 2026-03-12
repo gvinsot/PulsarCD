@@ -293,6 +293,10 @@ def build_log_entry(
         return None
 
     timestamp, message = extract_timestamp_and_message(line)
+
+    if not message.strip():
+        return None
+
     level, http_status, parsed_fields = parse_log_message(message)
 
     return LogEntry(
