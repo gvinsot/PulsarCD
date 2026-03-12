@@ -226,14 +226,14 @@ class RecurringErrorDetector:
         for fp, occurrences in cycle_fingerprints.items():
             if fp in self._patterns:
                 for occ in occurrences:
-                    svc = occ.get("compose_project") or occ.get("container_name", "unknown")
+                    svc = self._extract_service_name(occ)
                     self._patterns[fp].add_occurrence(svc, occ["message"])
             else:
                 first = occurrences[0]
-                svc = first.get("compose_project") or first.get("container_name", "unknown")
+                svc = self._extract_service_name(first)
                 self._patterns[fp] = ErrorPattern(fp, first["message"], svc)
                 for occ in occurrences[1:]:
-                    s = occ.get("compose_project") or occ.get("container_name", "unknown")
+                    s = self._extract_service_name(occ)
                     self._patterns[fp].add_occurrence(s, occ["message"])
 
         # Check thresholds and notify (with 1-hour cooldown per fingerprint)
@@ -263,6 +263,40 @@ class RecurringErrorDetector:
             self._notified_fingerprints.pop(fp, None)
 
         self._last_scan_ts = now
+
+    @staticmethod
+    def _extract_service_name(entry: dict) -> str:
+        """Extract the most specific service name from a log entry.
+
+        Priority: compose_service > container_name > compose_project.
+
+        Swarm naming conventions handled:
+        - compose_service is "stack_service" (e.g. "devops_nginx")
+          → strip the stack prefix when compose_project matches
+        - container_name is "stack_service.slot.taskid"
+          (e.g. "devops_nginx.1.abc123") → extract "service" part
+        """
+        project = entry.get("compose_project")
+
+        svc = entry.get("compose_service")
+        if svc:
+            if project and svc.startswith(project + "_"):
+                svc = svc[len(project) + 1:]
+            return svc
+
+        cname = entry.get("container_name")
+        if cname:
+            # Swarm container names: "stack_service.slot.taskid"
+            # Strip the stack prefix if present
+            if project and cname.startswith(project + "_"):
+                cname = cname[len(project) + 1:]
+            # Strip ".slot.taskid" suffix (e.g. "nginx.1.abc123" → "nginx")
+            dot = cname.find(".")
+            if dot > 0:
+                cname = cname[:dot]
+            return cname
+
+        return project or "unknown"
 
     # ------------------------------------------------------------------
     # Burst deduplication

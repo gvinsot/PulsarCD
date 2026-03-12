@@ -106,8 +106,16 @@ class DockerCollector:
 
                 compose_project = (labels.get("com.docker.compose.project") or
                                    labels.get("com.docker.stack.namespace"))
-                compose_service = (labels.get("com.docker.compose.service") or
-                                   labels.get("com.docker.swarm.service.name"))
+                # com.docker.compose.service = plain service name (e.g. "nginx")
+                # com.docker.swarm.service.name = "stack_service" (e.g. "pulsarcd_nginx")
+                #   → strip the stack prefix so compose_service is always the plain name
+                compose_service = labels.get("com.docker.compose.service")
+                if not compose_service:
+                    swarm_svc = labels.get("com.docker.swarm.service.name")
+                    if swarm_svc and compose_project and swarm_svc.startswith(compose_project + "_"):
+                        compose_service = swarm_svc[len(compose_project) + 1:]
+                    else:
+                        compose_service = swarm_svc
 
                 containers.append({
                     "id": container_id,

@@ -184,8 +184,13 @@ class DockerAPIClient:
                 # Try Compose labels first, then Swarm stack labels
                 compose_project = (labels.get("com.docker.compose.project") or
                                    labels.get("com.docker.stack.namespace"))
-                compose_service = (labels.get("com.docker.compose.service") or
-                                   labels.get("com.docker.swarm.service.name"))
+                compose_service = labels.get("com.docker.compose.service")
+                if not compose_service:
+                    swarm_svc = labels.get("com.docker.swarm.service.name")
+                    if swarm_svc and compose_project and swarm_svc.startswith(compose_project + "_"):
+                        compose_service = swarm_svc[len(compose_project) + 1:]
+                    else:
+                        compose_service = swarm_svc
 
                 container = ContainerInfo(
                     id=container_id,
@@ -1307,8 +1312,13 @@ class DockerAPIClient:
                         # Get compose/stack project and service
                         compose_project = (labels.get("com.docker.compose.project") or
                                            labels.get("com.docker.stack.namespace"))
-                        compose_service = (labels.get("com.docker.compose.service") or
-                                           labels.get("com.docker.swarm.service.name"))
+                        compose_service = labels.get("com.docker.compose.service")
+                        if not compose_service:
+                            swarm_svc = labels.get("com.docker.swarm.service.name")
+                            if swarm_svc and compose_project and swarm_svc.startswith(compose_project + "_"):
+                                compose_service = swarm_svc[len(compose_project) + 1:]
+                            else:
+                                compose_service = swarm_svc
 
                         container = ContainerInfo(
                             id=task["container_id"],
@@ -1381,6 +1391,10 @@ class DockerAPIClient:
 
                 # Use stack as compose_project and service_name as compose_service
                 stack = task.get("stack", "")
+                # Swarm service names are "stack_service"; strip the prefix
+                plain_service = service_name
+                if stack and service_name.startswith(stack + "_"):
+                    plain_service = service_name[len(stack) + 1:]
 
                 # Store task_id and service_id in labels for log retrieval
                 labels = {
@@ -1400,7 +1414,7 @@ class DockerAPIClient:
                     created=created,
                     host=node_hostname,
                     compose_project=stack if stack else None,
-                    compose_service=service_name,
+                    compose_service=plain_service,
                     ports={},
                     labels=labels,
                 )
