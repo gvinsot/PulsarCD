@@ -552,8 +552,10 @@ a.btn {
 
 /* Recurring errors widget */
 .recurring-errors-card {
-    grid-column: 1 / -1;  /* Full width */
     height: auto;
+    flex-shrink: 0;
+    overflow: visible;
+    margin-bottom: 16px;
 }
 
 .recurring-error-item {
