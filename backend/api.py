@@ -1189,6 +1189,45 @@ async def analyze_log_message(request: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+# ============== Manual Task Creation ==============
+
+@app.post("/api/tasks/create")
+async def create_agent_task(request: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a task for the swarm agent from the UI."""
+    task = request.get("task", "").strip()
+    project = request.get("project", "").strip()
+
+    if not task:
+        raise HTTPException(status_code=400, detail="task is required")
+    if not project:
+        raise HTTPException(status_code=400, detail="project is required")
+
+    if not settings or not settings.swarm.secret_key:
+        raise HTTPException(status_code=500, detail="Swarm secret key not configured")
+
+    url = f"{SWARM_API_BASE}/agents/{SWARM_AGENT_NAME}/tasks"
+    headers = {"Authorization": f"Bearer {settings.swarm.secret_key}"}
+    payload = {"task": task, "project": project}
+
+    try:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            async with session.post(
+                url, json=payload, timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                body = await resp.text()
+                if resp.status in (200, 201):
+                    logger.info("Manual task created", project=project, status=resp.status)
+                    return {"ok": True, "status": resp.status, "response": body[:500]}
+                else:
+                    logger.error("Failed to create manual task",
+                                 status=resp.status, response=body[:500])
+                    raise HTTPException(status_code=resp.status,
+                                        detail=f"Swarm API error: {body[:200]}")
+    except aiohttp.ClientError as e:
+        logger.error("Swarm API connection error", error=str(e))
+        raise HTTPException(status_code=502, detail=f"Cannot reach swarm API: {e}")
+
+
 # ============== Hosts ==============
 
 @app.get("/api/hosts")

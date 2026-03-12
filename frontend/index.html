@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/style.css?v=22">
+    <link rel="stylesheet" href="/static/css/style.css?v=23">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
     <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
@@ -1073,9 +1073,41 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Create Agent Task modal -->
+            <div id="create-task-modal" class="modal">
+                <div class="modal-content" style="max-width: 640px;">
+                    <div class="modal-header">
+                        <h2>🤖 Create Agent Task</h2>
+                        <button class="modal-close" onclick="closeCreateTaskModal()">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="task-form">
+                            <div class="task-form-group">
+                                <label for="task-project">Project</label>
+                                <input type="text" id="task-project" class="task-input" placeholder="e.g. my-service" />
+                            </div>
+                            <div class="task-form-group">
+                                <label for="task-source">Source</label>
+                                <input type="text" id="task-source" class="task-input" readonly />
+                            </div>
+                            <div class="task-form-group">
+                                <label for="task-description">Task description</label>
+                                <textarea id="task-description" class="task-textarea" rows="12" placeholder="Describe the task for the agent..."></textarea>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" onclick="closeCreateTaskModal()">Cancel</button>
+                        <button class="btn btn-primary" id="task-submit-btn" onclick="submitCreateTask()">
+                            Send Task
+                        </button>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
     
-    <script src="/static/js/app.js?v=17"></script>
+    <script src="/static/js/app.js?v=19"></script>
 </body>
 </html>

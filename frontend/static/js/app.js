@@ -8,6 +8,15 @@ const API_BASE = '/api';
 
 // State
 let currentView = 'dashboard';
+
+// Hash ↔ view mapping
+const HASH_TO_VIEW = { dashboard: 'dashboard', stacks: 'stacks', computers: 'containers', logs: 'logs', terminal: 'terminal' };
+const VIEW_TO_HASH = { dashboard: 'Dashboard', stacks: 'Stacks', containers: 'Computers', logs: 'Logs', terminal: 'Terminal' };
+
+function getViewFromHash() {
+    const h = location.hash.replace('#', '').toLowerCase();
+    return HASH_TO_VIEW[h] || null;
+}
 let currentContainer = null;
 let charts = {};
 let logsPage = 0;
@@ -55,7 +64,7 @@ async function checkAuth() {
             return;
         }
         hideLogin();
-        loadDashboard();
+        switchView(getViewFromHash() || 'dashboard');
     } catch {
         showLogin();
     }
@@ -79,7 +88,7 @@ function initLoginForm() {
                 setAuthToken(data.token);
                 errorEl.style.display = 'none';
                 hideLogin();
-                loadDashboard();
+                switchView(getViewFromHash() || 'dashboard');
             } else {
                 errorEl.textContent = 'Invalid username or password';
                 errorEl.style.display = 'block';
@@ -97,6 +106,10 @@ document.addEventListener('DOMContentLoaded', () => {
     initLoginForm();
     initNavigation();
     initModalTabs();
+    window.addEventListener('hashchange', () => {
+        const view = getViewFromHash();
+        if (view && view !== currentView) switchView(view, true);
+    });
     checkAuth();
 });
 
@@ -124,8 +137,13 @@ function initNavigation() {
     });
 }
 
-function switchView(view) {
+function switchView(view, skipHash) {
     currentView = view;
+    
+    // Update URL hash
+    if (!skipHash && VIEW_TO_HASH[view]) {
+        history.replaceState(null, '', '#' + VIEW_TO_HASH[view]);
+    }
     
     // Update nav
     document.querySelectorAll('.nav-item').forEach(item => {
@@ -506,9 +524,8 @@ function displayLogsResults(logs) {
                             <span class="analysis-label">📊 Similar logs (24h):</span>
                             <span class="analysis-value loading" id="search-similar-${index}">Loading...</span>
                         </div>
-                        <div class="analysis-item ai-assessment">
-                            <span class="analysis-label">🤖 AI Assessment:</span>
-                            <span class="analysis-value loading" id="search-ai-${index}">Analyzing...</span>
+                        <div class="analysis-item create-task-item">
+                            <button class="btn btn-task-create" onclick="event.stopPropagation(); openCreateTaskModal('search', ${index})">🤖 Create Agent Task</button>
                         </div>
                     </div>
                 </div>
@@ -544,17 +561,12 @@ async function toggleLogExpand(row, index) {
         
         // Load analysis if not already loaded - use getElementById for reliability
         const similarEl = document.getElementById(`search-similar-${index}`);
-        const aiEl = document.getElementById(`search-ai-${index}`);
         
-        console.log('Similar element:', similarEl, 'AI element:', aiEl);
+        console.log('Similar element:', similarEl);
         
         if (similarEl && similarEl.classList.contains('loading')) {
             console.log('Loading similar count for index', index);
             loadSimilarCount(index, similarEl);
-        }
-        if (aiEl && aiEl.classList.contains('loading')) {
-            console.log('Loading AI assessment for index', index);
-            loadAIAssessment(index, aiEl);
         }
     }
 }
@@ -583,27 +595,72 @@ async function loadSimilarCount(index, element) {
 }
 
 async function loadAIAssessment(index, element) {
+    // Deprecated — replaced by Create Task button
+}
+
+// ============== Create Agent Task Modal ==============
+
+function openCreateTaskModal(source, index) {
+    let log, containerName;
+    if (source === 'search') {
+        log = window.currentLogResults[index];
+        containerName = log.container_name || '';
+    } else {
+        log = currentContainerLogs[index];
+        containerName = currentContainer ? currentContainer.data.name : '';
+    }
+
+    const message = log.message || '';
+    const level = log.level || '';
+    const host = log.host || '';
+    const timestamp = log.timestamp || '';
+
+    // Derive project name from container name (strip suffixes like .1.xxx)
+    const project = containerName.replace(/\.\d+\..+$/, '').replace(/_\d+$/, '') || '';
+
+    const taskDesc = [
+        `ERROR LOG detected in container '${containerName}'`,
+        host ? `on host '${host}'` : '',
+        timestamp ? `at ${timestamp}` : '',
+        level ? `\nLevel: ${level}` : '',
+        `\nLog message:\n\`\`\`\n${message}\n\`\`\``,
+        `\nInvestigate and fix this error.`
+    ].filter(Boolean).join(' ');
+
+    document.getElementById('task-project').value = project;
+    document.getElementById('task-source').value = `${containerName}${host ? ' @ ' + host : ''}`;
+    document.getElementById('task-description').value = taskDesc;
+    document.getElementById('task-submit-btn').disabled = false;
+    document.getElementById('task-submit-btn').textContent = 'Send Task';
+
+    document.getElementById('create-task-modal').classList.add('active');
+}
+
+function closeCreateTaskModal() {
+    document.getElementById('create-task-modal').classList.remove('active');
+}
+
+async function submitCreateTask() {
+    const project = document.getElementById('task-project').value.trim();
+    const task = document.getElementById('task-description').value.trim();
+    const btn = document.getElementById('task-submit-btn');
+
+    if (!project || !task) {
+        showNotification('error', 'Project and task description are required');
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Sending...';
+
     try {
-        const log = window.currentLogResults[index];
-        const result = await apiPost('/logs/ai-analyze', {
-            message: log.message,
-            level: log.level,
-            container_name: log.container_name
-        });
-        
-        element.classList.remove('loading');
-        if (result && result.assessment) {
-            element.innerHTML = `
-                <span class="assessment-badge ${result.severity}">${result.severity}</span>
-                <span class="assessment-text">${escapeHtml(result.assessment)}</span>
-            `;
-        } else {
-            element.textContent = 'Could not analyze';
-        }
+        await apiPost('/tasks/create', { task, project });
+        showNotification('success', 'Task sent to agent successfully');
+        closeCreateTaskModal();
     } catch (e) {
-        element.classList.remove('loading');
-        element.textContent = 'AI unavailable';
-        element.classList.add('error');
+        showNotification('error', 'Failed to send task: ' + (e.message || e));
+        btn.disabled = false;
+        btn.textContent = 'Send Task';
     }
 }
 
@@ -1732,9 +1789,8 @@ function renderContainerLogs() {
                             <span class="analysis-label">📊 Similar logs (24h):</span>
                             <span class="analysis-value loading" id="container-similar-${index}">Loading...</span>
                         </div>
-                        <div class="analysis-item ai-assessment">
-                            <span class="analysis-label">🤖 AI Assessment:</span>
-                            <span class="analysis-value loading" id="container-ai-${index}">Analyzing...</span>
+                        <div class="analysis-item create-task-item">
+                            <button class="btn btn-task-create" onclick="event.stopPropagation(); openCreateTaskModal('container', ${index})">🤖 Create Agent Task</button>
                         </div>
                     </div>
                 </div>
@@ -1767,17 +1823,12 @@ function toggleContainerLogExpand(element, index) {
         
         // Load analysis
         const similarEl = document.getElementById(`container-similar-${index}`);
-        const aiEl = document.getElementById(`container-ai-${index}`);
         
-        console.log('Similar element:', similarEl, 'AI element:', aiEl);
+        console.log('Similar element:', similarEl);
         
         if (similarEl && similarEl.classList.contains('loading')) {
             console.log('Loading similar count for index', index);
             loadContainerLogSimilar(index, similarEl);
-        }
-        if (aiEl && aiEl.classList.contains('loading')) {
-            console.log('Loading AI assessment for index', index);
-            loadContainerLogAI(index, aiEl);
         }
     }
 }
@@ -1802,31 +1853,6 @@ async function loadContainerLogSimilar(index, element) {
     } catch (e) {
         element.classList.remove('loading');
         element.textContent = 'Error';
-    }
-}
-
-async function loadContainerLogAI(index, element) {
-    try {
-        const log = currentContainerLogs[index];
-        const result = await apiPost('/logs/ai-analyze', {
-            message: log.message,
-            level: log.level || '',
-            container_name: currentContainer.data.name
-        });
-        
-        element.classList.remove('loading');
-        if (result && result.assessment) {
-            element.innerHTML = `
-                <span class="assessment-badge ${result.severity}">${result.severity}</span>
-                <span class="assessment-text">${escapeHtml(result.assessment)}</span>
-            `;
-        } else {
-            element.textContent = 'Could not analyze';
-        }
-    } catch (e) {
-        element.classList.remove('loading');
-        element.textContent = 'AI unavailable';
-        element.classList.add('error');
     }
 }
 

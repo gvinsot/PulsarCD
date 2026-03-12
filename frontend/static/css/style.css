@@ -1718,6 +1718,89 @@ a.btn {
     color: var(--text-secondary);
 }
 
+/* Create Task button */
+.analysis-item.create-task-item {
+    border-left-color: var(--accent-tertiary);
+    padding: 6px 12px;
+}
+
+.btn-task-create {
+    background: rgba(139, 92, 246, 0.12);
+    color: var(--accent-tertiary);
+    border: 1px solid rgba(139, 92, 246, 0.25);
+    padding: 5px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--transition);
+    white-space: nowrap;
+}
+
+.btn-task-create:hover {
+    background: rgba(139, 92, 246, 0.22);
+    border-color: rgba(139, 92, 246, 0.45);
+}
+
+/* Task creation modal form */
+.task-form {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.task-form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.task-form-group label {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.task-input {
+    padding: 8px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    font-family: var(--font-mono);
+}
+
+.task-input:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+}
+
+.task-input[readonly] {
+    opacity: 0.7;
+    cursor: default;
+}
+
+.task-textarea {
+    padding: 10px 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+    resize: vertical;
+    min-height: 180px;
+    line-height: 1.5;
+}
+
+.task-textarea:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+}
+
 .pagination {
     display: flex;
     justify-content: center;
@@ -2104,10 +2187,9 @@ a.btn {
     border-left-color: var(--status-info);
 }
 
-.container-log-expand .analysis-item.ai-assessment {
+.container-log-expand .analysis-item.create-task-item {
     border-left-color: var(--accent-tertiary);
-    flex: 1;
-    min-width: 250px;
+    padding: 4px 10px;
 }
 
 .stats-top-row {
