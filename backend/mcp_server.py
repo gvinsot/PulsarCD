@@ -21,7 +21,12 @@ mcp = FastMCP(
     instructions=(
         "LogsCrawler is a DevOps monitoring platform. Use these tools to "
         "list stacks (GitHub repos), build/deploy Docker images, list containers "
-        "and hosts, search logs, and check build/deploy status."
+        "and hosts, search and browse logs, get error summaries per service, "
+        "and check build/deploy status.\n\n"
+        "Typical log workflow:\n"
+        "1. Call get_log_metadata() to discover available services, containers, and hosts.\n"
+        "2. Call search_logs() with compose_projects or compose_services to browse logs.\n"
+        "3. Call get_error_summary() for a quick error/warning count breakdown per service."
     ),
     stateless_http=True,
     json_response=True,
@@ -249,14 +254,36 @@ async def list_computers() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tool 6: search_logs
+# Tool 6: get_log_metadata
 # ---------------------------------------------------------------------------
 @mcp.tool(
     description=(
-        "Search through collected logs. Supports free-text query and filters "
-        "for host, container, compose project, log level, and time range. "
-        "Comma-separate multiple values for hosts/containers/levels. "
-        "Times must be ISO 8601 format."
+        "Return all available hosts, containers, compose projects, compose services, "
+        "and log levels present in the log store. Call this first to discover what "
+        "services exist before querying logs."
+    )
+)
+async def get_log_metadata() -> str:
+    """Discover available hosts, services, containers and log levels."""
+    from .api import opensearch
+
+    if not opensearch:
+        return json.dumps({"error": "OpenSearch not available"})
+
+    meta = await opensearch.get_available_metadata()
+    return json.dumps(meta)
+
+
+# ---------------------------------------------------------------------------
+# Tool 7: search_logs
+# ---------------------------------------------------------------------------
+@mcp.tool(
+    description=(
+        "Search through collected logs. Supports free-text query and filters for "
+        "host, container, compose project, compose service, log level, HTTP status "
+        "range, and time range. Use get_log_metadata() first to discover valid "
+        "values. Comma-separate multiple values. Times must be ISO 8601 format. "
+        "Use sort_order='asc' to read logs chronologically."
     )
 )
 async def search_logs(
@@ -264,37 +291,59 @@ async def search_logs(
     hosts: Optional[str] = None,
     containers: Optional[str] = None,
     compose_projects: Optional[str] = None,
+    compose_services: Optional[str] = None,
     levels: Optional[str] = None,
+    http_status_min: Optional[int] = None,
+    http_status_max: Optional[int] = None,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
+    sort_order: str = "desc",
     size: int = 50,
 ) -> str:
     """Search logs with filters."""
     from .api import opensearch
     from .models import LogSearchQuery
 
+    if not opensearch:
+        return json.dumps({"error": "OpenSearch not available"})
+
+    # compose_services is post-filtered in Python after OpenSearch returns results
+    # (scoped to the given compose_projects if both are provided).
     search_query = LogSearchQuery(
         query=query,
-        hosts=hosts.split(",") if hosts else [],
-        containers=containers.split(",") if containers else [],
-        compose_projects=compose_projects.split(",") if compose_projects else [],
-        levels=levels.split(",") if levels else [],
+        hosts=[h.strip() for h in hosts.split(",") if h.strip()] if hosts else [],
+        containers=[c.strip() for c in containers.split(",") if c.strip()] if containers else [],
+        compose_projects=[p.strip() for p in compose_projects.split(",") if p.strip()] if compose_projects else [],
+        levels=[lv.strip().upper() for lv in levels.split(",") if lv.strip()] if levels else [],
+        http_status_min=http_status_min,
+        http_status_max=http_status_max,
         start_time=datetime.fromisoformat(start_time) if start_time else None,
         end_time=datetime.fromisoformat(end_time) if end_time else None,
-        size=min(size, 200),
+        sort_order=sort_order if sort_order in ("asc", "desc") else "desc",
+        size=min(max(size, 1), 200),
     )
 
     result = await opensearch.search_logs(search_query)
+
+    # Post-filter by compose_service if requested (OpenSearch already returned
+    # the right project scope; this refines within it)
+    hits_raw = result.hits
+    if compose_services:
+        svc_set = {s.strip() for s in compose_services.split(",") if s.strip()}
+        hits_raw = [h for h in hits_raw if h.compose_service in svc_set]
 
     hits = [
         {
             "timestamp": h.timestamp.isoformat(),
             "host": h.host,
             "container": h.container_name,
+            "compose_project": h.compose_project,
+            "compose_service": h.compose_service,
             "level": h.level,
+            "http_status": h.http_status,
             "message": h.message[:500],
         }
-        for h in result.hits
+        for h in hits_raw
     ]
     return json.dumps(
         {"total": result.total, "returned": len(hits), "hits": hits},
@@ -303,7 +352,29 @@ async def search_logs(
 
 
 # ---------------------------------------------------------------------------
-# Tool 7: get_action_status
+# Tool 8: get_error_summary
+# ---------------------------------------------------------------------------
+@mcp.tool(
+    description=(
+        "Return error and warning counts aggregated per compose project for the "
+        "last N hours (default 24). Useful for a quick health sweep across all "
+        "services before diving into individual logs."
+    )
+)
+async def get_error_summary(hours: int = 24) -> str:
+    """Get error/warning counts per service."""
+    from .api import opensearch
+
+    if not opensearch:
+        return json.dumps({"error": "OpenSearch not available"})
+
+    hours = max(1, min(hours, 720))
+    summary = await opensearch.get_error_counts_by_service(hours)
+    return json.dumps(summary)
+
+
+# ---------------------------------------------------------------------------
+# Tool 9: get_action_status
 # ---------------------------------------------------------------------------
 @mcp.tool(
     description="Check the status of a background build or deploy action by its action_id"

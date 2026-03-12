@@ -1004,6 +1004,51 @@ class OpenSearchClient:
                 "levels": ["ERROR", "WARN", "INFO", "DEBUG"],
             }
 
+    async def get_error_counts_by_service(self, hours: int = 24) -> Dict[str, Any]:
+        """Return error/warning counts per compose_project for the last N hours."""
+        now = datetime.utcnow()
+        start = now - timedelta(hours=hours)
+        body = {
+            "query": {
+                "bool": {
+                    "filter": [
+                        {"range": {"timestamp": {"gte": start.isoformat()}}},
+                        {"terms": {"level": ["ERROR", "FATAL", "CRITICAL", "WARN", "WARNING"]}},
+                    ]
+                }
+            },
+            "size": 0,
+            "aggs": {
+                "by_project": {
+                    "terms": {"field": "compose_project", "size": 100, "missing": "__none__"},
+                    "aggs": {
+                        "by_level": {"terms": {"field": "level", "size": 10}},
+                    },
+                }
+            },
+        }
+        try:
+            resp = await self._client.search(index=self.logs_index, body=body)
+            result = []
+            for bucket in resp.get("aggregations", {}).get("by_project", {}).get("buckets", []):
+                project = bucket["key"] if bucket["key"] != "__none__" else None
+                level_counts: Dict[str, int] = {}
+                for lb in bucket.get("by_level", {}).get("buckets", []):
+                    level_counts[lb["key"]] = lb["doc_count"]
+                errors = sum(v for k, v in level_counts.items() if k in ("ERROR", "FATAL", "CRITICAL"))
+                warnings = sum(v for k, v in level_counts.items() if k in ("WARN", "WARNING"))
+                result.append({
+                    "compose_project": project,
+                    "errors": errors,
+                    "warnings": warnings,
+                    "total": bucket["doc_count"],
+                })
+            result.sort(key=lambda x: x["errors"] + x["warnings"], reverse=True)
+            return {"hours": hours, "services": result}
+        except Exception as e:
+            logger.error("Failed to get error counts by service", error=str(e))
+            return {"hours": hours, "services": []}
+
     async def cleanup_old_data(self, retention_days: int):
         """Delete data older than retention period."""
         cutoff = datetime.utcnow() - timedelta(days=retention_days)
