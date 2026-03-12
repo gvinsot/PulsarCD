@@ -441,7 +441,25 @@ class RecurringErrorDetector:
         return None
 
     async def _notify_recurring_error(self, pattern: ErrorPattern):
-        """Post a recurring error task to the QWEN agent."""
+        """Record a recurring error in history and optionally post a task to the QWEN agent."""
+        # Always record in history so the dashboard panel is populated
+        pattern.notified = True
+        entry = {
+            "fingerprint": pattern.fingerprint,
+            "sample_message": pattern.sample_message,
+            "count": pattern.count,
+            "services": sorted(pattern.services),
+            "first_seen": pattern.first_seen.isoformat(),
+            "last_seen": pattern.last_seen.isoformat(),
+            "notified_at": datetime.utcnow().isoformat(),
+        }
+        self._notification_history = [
+            e for e in self._notification_history
+            if e["fingerprint"] != pattern.fingerprint
+        ]
+        self._notification_history.insert(0, entry)
+        self._notification_history = self._notification_history[:20]
+
         if not self._swarm_secret_key:
             return
 
@@ -476,7 +494,7 @@ class RecurringErrorDetector:
                 break
 
         if not project_name:
-            logger.warning("Skipping recurring error notification — no matching GitHub repo for any affected service",
+            logger.warning("Skipping Swarm notification — no matching GitHub repo for any affected service",
                            services=sorted(pattern.services),
                            fingerprint=pattern.fingerprint,
                            count=pattern.count)
@@ -509,24 +527,6 @@ class RecurringErrorDetector:
                                     fingerprint=pattern.fingerprint,
                                     count=pattern.count,
                                     services=services_list)
-                        pattern.notified = True
-                        # Add to persistent history (keep last 20)
-                        entry = {
-                            "fingerprint": pattern.fingerprint,
-                            "sample_message": pattern.sample_message,
-                            "count": pattern.count,
-                            "services": sorted(pattern.services),
-                            "first_seen": pattern.first_seen.isoformat(),
-                            "last_seen": pattern.last_seen.isoformat(),
-                            "notified_at": datetime.utcnow().isoformat(),
-                        }
-                        # Update existing entry if same fingerprint, else prepend
-                        self._notification_history = [
-                            e for e in self._notification_history
-                            if e["fingerprint"] != pattern.fingerprint
-                        ]
-                        self._notification_history.insert(0, entry)
-                        self._notification_history = self._notification_history[:20]
                     else:
                         logger.error("Failed to send recurring error task",
                                      status=resp.status, url=url, response=body[:500])

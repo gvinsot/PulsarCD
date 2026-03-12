@@ -241,18 +241,18 @@ async def lifespan(app: FastAPI):
     # Initialize GitHub service
     github_service = GitHubService(settings.github)
 
-    # Start recurring error detector
-    if settings.swarm.secret_key:
-        from .error_detector import RecurringErrorDetector
-        error_detector = RecurringErrorDetector(
-            opensearch_client=opensearch,
-            swarm_api_base=SWARM_API_BASE,
-            swarm_agent_name=SWARM_AGENT_NAME,
-            swarm_secret_key=settings.swarm.secret_key,
-            github_service=github_service,
-        )
-        await error_detector.start()
-        logger.info("Recurring error detector started")
+    # Start recurring error detector (always, even without a Swarm key — Swarm
+    # notifications are optional but the detection and history still run)
+    from .error_detector import RecurringErrorDetector
+    error_detector = RecurringErrorDetector(
+        opensearch_client=opensearch,
+        swarm_api_base=SWARM_API_BASE,
+        swarm_agent_name=SWARM_AGENT_NAME,
+        swarm_secret_key=settings.swarm.secret_key,
+        github_service=github_service,
+    )
+    await error_detector.start()
+    logger.info("Recurring error detector started")
 
     # Start auto-build poller
     global _auto_build_task
