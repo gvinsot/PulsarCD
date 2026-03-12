@@ -419,6 +419,7 @@ class OpenSearchClient:
                 "levels": {"terms": {"field": "level", "size": 10}},
                 "hosts": {"terms": {"field": "host", "size": 50}},
                 "containers": {"terms": {"field": "container_name", "size": 100}},
+                "compose_projects": {"terms": {"field": "compose_project", "size": 100}},
             }
         }
         
@@ -1003,6 +1004,21 @@ class OpenSearchClient:
                 "compose_services": [],
                 "levels": ["ERROR", "WARN", "INFO", "DEBUG"],
             }
+
+    async def run_logs_query(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a raw OpenSearch query against the logs index.
+
+        Returns the raw OpenSearch response dict (hits, aggregations, total, etc.).
+        Size and from are capped server-side to prevent abuse.
+        """
+        body.setdefault("size", 50)
+        body["size"] = min(int(body["size"]), 500)
+        body.setdefault("from", 0)
+        try:
+            return await self._client.search(index=self.logs_index, body=body)
+        except Exception as e:
+            logger.error("Raw logs query failed", error=str(e))
+            raise
 
     async def get_error_counts_by_service(self, hours: int = 24) -> Dict[str, Any]:
         """Return error/warning counts per compose_project for the last N hours."""

@@ -25,8 +25,8 @@ mcp = FastMCP(
         "and check build/deploy status.\n\n"
         "Typical log workflow:\n"
         "1. Call get_log_metadata() to discover available services, containers, and hosts.\n"
-        "2. Call search_logs() with compose_projects or compose_services to browse logs.\n"
-        "3. Call get_error_summary() for a quick error/warning count breakdown per service."
+        "2. Call search_logs(github_project='myrepo', last_hours=24) to browse recent logs.\n"
+        "3. For error counts per service: search_logs with opensearch_query and size=0 + aggs."
     ),
     stateless_http=True,
     json_response=True,
@@ -277,56 +277,149 @@ async def get_log_metadata() -> str:
 # ---------------------------------------------------------------------------
 # Tool 7: search_logs
 # ---------------------------------------------------------------------------
-@mcp.tool(
-    description=(
-        "Search through collected logs. Supports free-text query and filters for "
-        "host, container, compose project, compose service, log level, HTTP status "
-        "range, and time range. Use get_log_metadata() first to discover valid "
-        "values. Comma-separate multiple values. Times must be ISO 8601 format. "
-        "Use sort_order='asc' to read logs chronologically."
-    )
-)
+_SEARCH_DOCS = """
+Search logs stored in OpenSearch.
+
+## Standard mode (use named parameters)
+
+Parameters:
+- query            Free-text search on the message field (Lucene syntax supported,
+                   e.g. "connection refused", "timeout AND retry", "error*")
+- github_project   GitHub repo name (case-insensitive) — matched against the
+                   compose_project field. E.g. "MyApp" → searches compose_project="myapp"
+- compose_services Comma-separated compose service names to filter on
+- hosts            Comma-separated host names
+- containers       Comma-separated container names
+- levels           Comma-separated log levels: ERROR, FATAL, CRITICAL, WARN, INFO, DEBUG
+- http_status_min  Lower bound of HTTP status code (e.g. 500 for server errors)
+- http_status_max  Upper bound of HTTP status code (e.g. 599)
+- last_hours       Shorthand time window: last N hours from now (1–720).
+                   Ignored when start_time or end_time is provided.
+- start_time       ISO 8601 start timestamp (e.g. "2024-01-15T10:00:00")
+- end_time         ISO 8601 end timestamp
+- sort_order       "desc" (newest first, default) or "asc" (chronological)
+- size             Number of hits to return (1–200, default 50). Use 0 to get
+                   aggregations only (no hits — useful for counts).
+- from_offset      Pagination: skip first N results (default 0)
+
+Response fields:
+- total            Total number of matching documents
+- returned         Number of hits in this response
+- hits             List of log entries (timestamp, host, container, compose_project,
+                   compose_service, level, http_status, message)
+- aggregations     Breakdown counts by level, host, container, compose_project
+
+## Raw OpenSearch mode (advanced)
+
+Set opensearch_query to a JSON string containing a full OpenSearch request body.
+All standard parameters above are IGNORED when this is set.
+Size is capped at 500. The raw OpenSearch response is returned as-is.
+
+Example — error counts per service over the last 24 hours:
+  opensearch_query = '{
+    "query": {"bool": {"filter": [
+      {"range": {"timestamp": {"gte": "now-24h"}}},
+      {"terms": {"level": ["ERROR","FATAL","CRITICAL"]}}
+    ]}},
+    "size": 0,
+    "aggs": {"by_project": {"terms": {"field": "compose_project", "size": 50}}}
+  }'
+
+Available index fields: timestamp, host, container_name, container_id,
+  compose_project, compose_service, level, message, http_status,
+  network_rx_bytes, network_tx_bytes, stream.
+
+Call get_log_metadata() first to discover valid values for host, compose_project, etc.
+"""
+
+
+@mcp.tool(description=_SEARCH_DOCS)
 async def search_logs(
     query: Optional[str] = None,
+    github_project: Optional[str] = None,
+    compose_services: Optional[str] = None,
     hosts: Optional[str] = None,
     containers: Optional[str] = None,
-    compose_projects: Optional[str] = None,
-    compose_services: Optional[str] = None,
     levels: Optional[str] = None,
     http_status_min: Optional[int] = None,
     http_status_max: Optional[int] = None,
+    last_hours: Optional[int] = None,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
     sort_order: str = "desc",
     size: int = 50,
+    from_offset: int = 0,
+    opensearch_query: Optional[str] = None,
 ) -> str:
-    """Search logs with filters."""
+    """Search logs — standard filters or raw OpenSearch query."""
     from .api import opensearch
     from .models import LogSearchQuery
 
     if not opensearch:
         return json.dumps({"error": "OpenSearch not available"})
 
-    # compose_services is post-filtered in Python after OpenSearch returns results
-    # (scoped to the given compose_projects if both are provided).
+    # ── Raw OpenSearch passthrough ──────────────────────────────────────────
+    if opensearch_query:
+        try:
+            body = json.loads(opensearch_query)
+        except json.JSONDecodeError as exc:
+            return json.dumps({"error": f"Invalid JSON in opensearch_query: {exc}"})
+        try:
+            raw = await opensearch.run_logs_query(body)
+        except Exception as exc:
+            return json.dumps({"error": str(exc)})
+        # Return a clean subset of the raw response
+        total = raw.get("hits", {}).get("total", {})
+        total_count = total.get("value", total) if isinstance(total, dict) else total
+        hits_out = [
+            {k: v for k, v in h.get("_source", {}).items()}
+            for h in raw.get("hits", {}).get("hits", [])
+        ]
+        aggs_out = {}
+        for key, agg in raw.get("aggregations", {}).items():
+            if "buckets" in agg:
+                aggs_out[key] = [
+                    {"key": b.get("key"), "count": b.get("doc_count")}
+                    for b in agg["buckets"]
+                ]
+            else:
+                aggs_out[key] = agg
+        return json.dumps(
+            {"total": total_count, "returned": len(hits_out), "hits": hits_out, "aggregations": aggs_out},
+            default=str,
+        )
+
+    # ── Standard filtered search ────────────────────────────────────────────
+    # Resolve github_project → compose_project (lowercased)
+    projects = []
+    if github_project:
+        projects = [github_project.strip().lower()]
+
+    # Time window: last_hours shorthand
+    parsed_start = datetime.fromisoformat(start_time) if start_time else None
+    parsed_end = datetime.fromisoformat(end_time) if end_time else None
+    if last_hours is not None and parsed_start is None and parsed_end is None:
+        from datetime import timedelta
+        parsed_start = datetime.utcnow() - timedelta(hours=max(1, min(last_hours, 720)))
+
     search_query = LogSearchQuery(
         query=query,
         hosts=[h.strip() for h in hosts.split(",") if h.strip()] if hosts else [],
         containers=[c.strip() for c in containers.split(",") if c.strip()] if containers else [],
-        compose_projects=[p.strip() for p in compose_projects.split(",") if p.strip()] if compose_projects else [],
+        compose_projects=projects,
         levels=[lv.strip().upper() for lv in levels.split(",") if lv.strip()] if levels else [],
         http_status_min=http_status_min,
         http_status_max=http_status_max,
-        start_time=datetime.fromisoformat(start_time) if start_time else None,
-        end_time=datetime.fromisoformat(end_time) if end_time else None,
+        start_time=parsed_start,
+        end_time=parsed_end,
         sort_order=sort_order if sort_order in ("asc", "desc") else "desc",
-        size=min(max(size, 1), 200),
+        size=min(max(size, 0), 200),
+        **{"from": max(from_offset, 0)},
     )
 
     result = await opensearch.search_logs(search_query)
 
-    # Post-filter by compose_service if requested (OpenSearch already returned
-    # the right project scope; this refines within it)
+    # Post-filter by compose_service (not a LogSearchQuery field)
     hits_raw = result.hits
     if compose_services:
         svc_set = {s.strip() for s in compose_services.split(",") if s.strip()}
@@ -346,35 +439,18 @@ async def search_logs(
         for h in hits_raw
     ]
     return json.dumps(
-        {"total": result.total, "returned": len(hits), "hits": hits},
+        {
+            "total": result.total,
+            "returned": len(hits),
+            "hits": hits,
+            "aggregations": result.aggregations,
+        },
         default=str,
     )
 
 
 # ---------------------------------------------------------------------------
-# Tool 8: get_error_summary
-# ---------------------------------------------------------------------------
-@mcp.tool(
-    description=(
-        "Return error and warning counts aggregated per compose project for the "
-        "last N hours (default 24). Useful for a quick health sweep across all "
-        "services before diving into individual logs."
-    )
-)
-async def get_error_summary(hours: int = 24) -> str:
-    """Get error/warning counts per service."""
-    from .api import opensearch
-
-    if not opensearch:
-        return json.dumps({"error": "OpenSearch not available"})
-
-    hours = max(1, min(hours, 720))
-    summary = await opensearch.get_error_counts_by_service(hours)
-    return json.dumps(summary)
-
-
-# ---------------------------------------------------------------------------
-# Tool 9: get_action_status
+# Tool 8: get_action_status
 # ---------------------------------------------------------------------------
 @mcp.tool(
     description="Check the status of a background build or deploy action by its action_id"
