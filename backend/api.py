@@ -761,6 +761,28 @@ async def get_container_stats(host: str, container_id: str) -> Dict[str, Any]:
     return stats
 
 
+_PERIOD_MAP: Dict[str, tuple] = {
+    "1h":  (1,   "1m"),
+    "6h":  (6,   "5m"),
+    "24h": (24,  "15m"),
+    "7d":  (168, "1h"),
+    "30d": (720, "6h"),
+}
+
+
+@app.get("/api/containers/{host}/{container_id}/metrics")
+async def get_container_metrics(
+    host: str,
+    container_id: str,
+    period: str = Query(default="7d"),
+) -> Dict[str, Any]:
+    """Return CPU%, memory% and error-count time series for a container."""
+    hours, interval = _PERIOD_MAP.get(period, _PERIOD_MAP["7d"])
+    if not opensearch:
+        return {"cpu": [], "memory": [], "errors": []}
+    return await opensearch.get_container_metrics_timeseries(container_id, hours, interval)
+
+
 @app.get("/api/containers/{host}/{container_id}/logs")
 async def get_container_logs(
     host: str,

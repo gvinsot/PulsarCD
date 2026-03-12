@@ -991,25 +991,53 @@
                             <div id="container-logs" class="log-viewer"></div>
                         </div>
                         <div id="tab-stats" class="tab-content">
-                            <div class="stats-detail">
-                                <div class="stat-row">
-                                    <span class="label">CPU Usage:</span>
-                                    <span class="value" id="stat-cpu">-</span>
+                            <div class="stats-top-row">
+                                <div class="stats-detail">
+                                    <div class="stat-row">
+                                        <span class="label">CPU:</span>
+                                        <span class="value" id="stat-cpu">-</span>
+                                    </div>
+                                    <div class="stat-row">
+                                        <span class="label">Memory:</span>
+                                        <span class="value" id="stat-memory">-</span>
+                                    </div>
+                                    <div class="stat-row">
+                                        <span class="label">Network I/O:</span>
+                                        <span class="value" id="stat-network">-</span>
+                                    </div>
+                                    <div class="stat-row">
+                                        <span class="label">Block I/O:</span>
+                                        <span class="value" id="stat-block">-</span>
+                                    </div>
                                 </div>
-                                <div class="stat-row">
-                                    <span class="label">Memory Usage:</span>
-                                    <span class="value" id="stat-memory">-</span>
-                                </div>
-                                <div class="stat-row">
-                                    <span class="label">Network I/O:</span>
-                                    <span class="value" id="stat-network">-</span>
-                                </div>
-                                <div class="stat-row">
-                                    <span class="label">Block I/O:</span>
-                                    <span class="value" id="stat-block">-</span>
+                                <div class="stats-controls">
+                                    <select id="stats-period" onchange="loadContainerMetrics()">
+                                        <option value="1h">Last hour</option>
+                                        <option value="6h">Last 6 hours</option>
+                                        <option value="24h">Last 24 hours</option>
+                                        <option value="7d" selected>Last 7 days</option>
+                                        <option value="30d">Last 30 days</option>
+                                    </select>
+                                    <button class="btn btn-sm" onclick="refreshContainerStats();loadContainerMetrics()">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" style="vertical-align:-1px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                                        Refresh
+                                    </button>
                                 </div>
                             </div>
-                            <button class="btn btn-sm" onclick="refreshContainerStats()">Refresh Stats</button>
+                            <div class="container-charts">
+                                <div class="container-chart-card">
+                                    <div class="container-chart-title">CPU Usage (%)</div>
+                                    <canvas id="chart-container-cpu" height="110"></canvas>
+                                </div>
+                                <div class="container-chart-card">
+                                    <div class="container-chart-title">Memory Usage (%)</div>
+                                    <canvas id="chart-container-memory" height="110"></canvas>
+                                </div>
+                                <div class="container-chart-card">
+                                    <div class="container-chart-title">Errors</div>
+                                    <canvas id="chart-container-errors" height="110"></canvas>
+                                </div>
+                            </div>
                         </div>
                         <div id="tab-env" class="tab-content">
                             <div class="env-toolbar">
@@ -1040,6 +1068,6 @@
         </main>
     </div>
     
-    <script src="/static/js/app.js?v=14"></script>
+    <script src="/static/js/app.js?v=15"></script>
 </body>
 </html>

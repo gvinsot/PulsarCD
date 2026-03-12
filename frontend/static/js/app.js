@@ -647,6 +647,10 @@ function initModalTabs() {
             if (tab === 'env' && currentContainer && Object.keys(currentContainerEnv).length === 0) {
                 refreshContainerEnv();
             }
+            // Load metrics charts when switching to stats tab
+            if (tab === 'stats' && currentContainer) {
+                loadContainerMetrics();
+            }
         });
     });
 }
@@ -1640,6 +1644,7 @@ function closeModal() {
     currentContainer = null;
     currentContainerLogs = [];
     currentContainerEnv = {};
+    _destroyContainerCharts();
 }
 
 async function refreshContainerLogs() {
@@ -1877,6 +1882,74 @@ async function refreshContainerStats() {
         document.getElementById('stat-network').textContent = '-';
         document.getElementById('stat-block').textContent = '-';
     }
+}
+
+const _containerCharts = { cpu: null, memory: null, errors: null };
+
+function _destroyContainerCharts() {
+    for (const key of Object.keys(_containerCharts)) {
+        if (_containerCharts[key]) {
+            _containerCharts[key].destroy();
+            _containerCharts[key] = null;
+        }
+    }
+}
+
+function _buildContainerChart(canvasId, label, color, points) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return null;
+    const labels = points.map(p => {
+        const d = new Date(p.timestamp);
+        return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    });
+    const values = points.map(p => p.value);
+    return new Chart(canvas.getContext('2d'), {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                label,
+                data: values,
+                borderColor: color,
+                backgroundColor: color + '22',
+                borderWidth: 1.5,
+                pointRadius: points.length > 100 ? 0 : 2,
+                tension: 0.3,
+                fill: true,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { display: false },
+                tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y}` } },
+            },
+            scales: {
+                x: {
+                    ticks: { maxTicksLimit: 8, font: { size: 10 }, color: '#888', maxRotation: 0 },
+                    grid: { color: '#333' },
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: { font: { size: 10 }, color: '#888' },
+                    grid: { color: '#333' },
+                },
+            },
+        }
+    });
+}
+
+async function loadContainerMetrics() {
+    if (!currentContainer) return;
+    const period = document.getElementById('stats-period')?.value || '7d';
+    const data = await apiGet(`/containers/${currentContainer.host}/${currentContainer.id}/metrics?period=${period}`);
+    _destroyContainerCharts();
+    if (!data) return;
+    _containerCharts.cpu    = _buildContainerChart('chart-container-cpu',    'CPU %',    '#4e9af1', data.cpu    || []);
+    _containerCharts.memory = _buildContainerChart('chart-container-memory', 'Memory %', '#a78bfa', data.memory || []);
+    _containerCharts.errors = _buildContainerChart('chart-container-errors', 'Errors',   '#f87171', data.errors || []);
 }
 
 async function refreshContainerEnv() {

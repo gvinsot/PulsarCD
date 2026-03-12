@@ -2014,19 +2014,74 @@ a.btn {
     min-width: 250px;
 }
 
-.stats-detail {
+.stats-top-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.stats-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.stats-controls select {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: 5px 10px;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.container-charts {
     display: flex;
     flex-direction: column;
     gap: 16px;
-    margin-bottom: 20px;
+}
+
+.container-chart-card {
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    padding: 12px 16px 8px;
+    position: relative;
+    height: 140px;
+}
+
+.container-chart-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.container-chart-card canvas {
+    width: 100% !important;
+    height: calc(100% - 22px) !important;
+}
+
+.stats-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
 }
 
 .stat-row {
     display: flex;
     justify-content: space-between;
-    padding: 12px 16px;
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-md);
+    padding: 8px 12px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
 }
 
 .stat-row .label {

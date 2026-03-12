@@ -823,6 +823,71 @@ class OpenSearchClient:
             logger.error("Failed to get VRAM timeseries by host", error=str(e))
             return []
     
+    async def get_container_metrics_timeseries(
+        self, container_id: str, hours: int = 168, interval: str = "1h"
+    ) -> Dict[str, List[Dict]]:
+        """Get CPU%, memory%, and error count time series for a specific container."""
+        now = datetime.utcnow()
+        start = now - timedelta(hours=hours)
+        time_range = {"range": {"timestamp": {"gte": start.isoformat()}}}
+        container_filter = {"term": {"container_id": container_id}}
+
+        # CPU & memory from metrics index
+        perf_body = {
+            "query": {"bool": {"filter": [time_range, container_filter]}},
+            "size": 0,
+            "aggs": {
+                "over_time": {
+                    "date_histogram": {"field": "timestamp", "fixed_interval": interval},
+                    "aggs": {
+                        "avg_cpu": {"avg": {"field": "cpu_percent"}},
+                        "avg_mem": {"avg": {"field": "memory_percent"}},
+                    },
+                }
+            },
+        }
+
+        # Error count from logs index
+        error_body = {
+            "query": {
+                "bool": {
+                    "filter": [
+                        time_range,
+                        container_filter,
+                        {"terms": {"level": ["ERROR", "FATAL", "CRITICAL"]}},
+                    ]
+                }
+            },
+            "size": 0,
+            "aggs": {
+                "over_time": {
+                    "date_histogram": {"field": "timestamp", "fixed_interval": interval},
+                }
+            },
+        }
+
+        cpu_points: List[Dict] = []
+        memory_points: List[Dict] = []
+        error_points: List[Dict] = []
+
+        try:
+            resp = await self._client.search(index=self.metrics_index, body=perf_body)
+            for b in resp.get("aggregations", {}).get("over_time", {}).get("buckets", []):
+                ts = b["key_as_string"]
+                cpu_points.append({"timestamp": ts, "value": round(b["avg_cpu"]["value"] or 0, 2)})
+                memory_points.append({"timestamp": ts, "value": round(b["avg_mem"]["value"] or 0, 2)})
+        except Exception as e:
+            logger.error("Failed to get container CPU/memory timeseries", container_id=container_id, error=str(e))
+
+        try:
+            resp = await self._client.search(index=self.logs_index, body=error_body)
+            for b in resp.get("aggregations", {}).get("over_time", {}).get("buckets", []):
+                error_points.append({"timestamp": b["key_as_string"], "value": b["doc_count"]})
+        except Exception as e:
+            logger.error("Failed to get container error timeseries", container_id=container_id, error=str(e))
+
+        return {"cpu": cpu_points, "memory": memory_points, "errors": error_points}
+
     async def count_similar_logs(self, message: str, container_name: str = "", hours: int = 24) -> int:
         """Count similar log messages in the last N hours.
         
