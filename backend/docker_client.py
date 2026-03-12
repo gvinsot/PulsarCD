@@ -511,28 +511,9 @@ class DockerAPIClient:
         stream: str,
     ) -> Optional[LogEntry]:
         """Parse a log line with timestamp."""
-        # Filter out known noise
-        if utils.should_filter_log_line(line):
-            return None
-        
-        # Extract timestamp and message
-        timestamp, message = utils.extract_timestamp_and_message(line)
-        
-        # Parse log level, HTTP status, and structured fields
-        level, http_status, parsed_fields = utils.parse_log_message(message)
-        
-        return LogEntry(
-            timestamp=timestamp,
-            host=self.config.name,
-            container_id=container_id,
-            container_name=container_name,
-            compose_project=compose_project,
-            compose_service=compose_service,
-            stream=stream,
-            message=message,
-            level=level,
-            http_status=http_status,
-            parsed_fields=parsed_fields,
+        return utils.build_log_entry(
+            line, self.config.name, container_id, container_name,
+            compose_project, compose_service, stream,
         )
     
     async def execute_container_action(self, container_id: str, action: ContainerAction) -> Tuple[bool, str]:
@@ -569,7 +550,6 @@ class DockerAPIClient:
         Returns:
             Tuple of (success, message)
         """
-        from urllib.parse import quote
         safe_name = quote(service_name, safe='')
         data, status = await self._request("DELETE", f"/services/{safe_name}")
         
@@ -593,9 +573,8 @@ class DockerAPIClient:
         Returns:
             Tuple of (success, message)
         """
-        from urllib.parse import quote
         safe_name = quote(service_name, safe='')
-        
+
         # First, get current service spec
         data, status = await self._request("GET", f"/services/{safe_name}")
         if status != 200 or not data:
@@ -662,7 +641,6 @@ class DockerAPIClient:
             Tuple of (success, message)
         """
         import base64
-        from urllib.parse import quote
         safe_name = quote(service_name, safe='')
         
         # Strip leading 'v' from tag if present (GitHub tags are v1.0.5, Docker images are 1.0.5)

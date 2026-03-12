@@ -222,17 +222,6 @@ class SSHClient:
 
         return containers
     
-    def _parse_ports(self, ports_str: str) -> Dict[str, str]:
-        """Parse Docker ports string."""
-        ports = {}
-        if not ports_str:
-            return ports
-        for mapping in ports_str.split(", "):
-            if "->" in mapping:
-                parts = mapping.split("->")
-                ports[parts[1]] = parts[0]
-        return ports
-    
     async def get_container_stats(self, container_id: str, container_name: str) -> Optional[ContainerStats]:
         """Get container resource statistics."""
         cmd = f"docker stats {container_id} --no-stream --format '{{{{json .}}}}'"
@@ -398,36 +387,17 @@ class SSHClient:
         return entries
     
     def _parse_log_line(
-        self, 
-        line: str, 
-        container_id: str, 
+        self,
+        line: str,
+        container_id: str,
         container_name: str,
         compose_project: Optional[str],
         compose_service: Optional[str],
     ) -> Optional[LogEntry]:
         """Parse a log line with timestamp."""
-        # Filter out known noise
-        if utils.should_filter_log_line(line):
-            return None
-        
-        # Extract timestamp and message
-        timestamp, message = utils.extract_timestamp_and_message(line)
-        
-        # Parse log level, HTTP status, and structured fields
-        level, http_status, parsed_fields = utils.parse_log_message(message)
-        
-        return LogEntry(
-            timestamp=timestamp,
-            host=self.config.name,
-            container_id=container_id,
-            container_name=container_name,
-            compose_project=compose_project,
-            compose_service=compose_service,
-            stream="stdout",
-            message=message,
-            level=level,
-            http_status=http_status,
-            parsed_fields=parsed_fields,
+        return utils.build_log_entry(
+            line, self.config.name, container_id, container_name,
+            compose_project, compose_service,
         )
     
     async def execute_container_action(self, container_id: str, action: ContainerAction) -> Tuple[bool, str]:

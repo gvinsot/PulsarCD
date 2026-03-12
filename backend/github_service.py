@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
@@ -587,8 +588,7 @@ class GitHubService:
         if not tags:
             return "1.0.0"
 
-        import re as _re
-        m = _re.match(r'^v?(\d+)\.(\d+)\.(\d+)$', tags[0]["name"])
+        m = re.match(r'^v?(\d+)\.(\d+)\.(\d+)$', tags[0]["name"])
         if m:
             major, minor, patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
             return f"{major}.{minor}.{patch + 1}"

@@ -274,6 +274,42 @@ def extract_timestamp_and_message(line: str) -> Tuple[datetime, str]:
     return timestamp, message
 
 
+def build_log_entry(
+    line: str,
+    host: str,
+    container_id: str,
+    container_name: str,
+    compose_project: Optional[str],
+    compose_service: Optional[str],
+    stream: str = "stdout",
+) -> Optional[Any]:
+    """Parse a raw log line and return a LogEntry, or None if filtered.
+
+    Shared by SSHClient and DockerAPIClient to avoid duplicated parsing logic.
+    """
+    from .models import LogEntry  # local import to avoid circular dependency
+
+    if should_filter_log_line(line):
+        return None
+
+    timestamp, message = extract_timestamp_and_message(line)
+    level, http_status, parsed_fields = parse_log_message(message)
+
+    return LogEntry(
+        timestamp=timestamp,
+        host=host,
+        container_id=container_id,
+        container_name=container_name,
+        compose_project=compose_project,
+        compose_service=compose_service,
+        stream=stream,
+        message=message,
+        level=level,
+        http_status=http_status,
+        parsed_fields=parsed_fields,
+    )
+
+
 # ============== GPU Metrics Parsing ==============
 
 def parse_rocm_smi_csv(stdout: str) -> Tuple[Optional[float], Optional[float], Optional[float]]:
@@ -318,44 +354,6 @@ def parse_rocm_smi_csv(stdout: str) -> Tuple[Optional[float], Optional[float], O
                     logger.warning("Failed to parse rocm-smi CSV line", line=line, error=str(e))
     
     return None, None, None
-
-
-def parse_rocm_smi_memory(stdout: str) -> Tuple[Optional[float], Optional[float]]:
-    """Parse rocm-smi memory output (non-CSV format).
-    
-    Expected format:
-        GPU[0]          : VRAM Total Memory (B): 1073741824
-        GPU[0]          : VRAM Total Used Memory (B): 81498112
-    
-    Args:
-        stdout: Output from rocm-smi --showmeminfo vram
-        
-    Returns:
-        Tuple of (vram_used_mb, vram_total_mb)
-    """
-    total_mb = None
-    used_mb = None
-    
-    for line in stdout.split("\n"):
-        line_upper = line.upper()
-        
-        if "TOTAL" in line_upper and "VRAM" in line_upper and "USED" not in line_upper:
-            try:
-                bytes_val = int(line.split(":")[-1].strip())
-                total_mb = bytes_val / (1024 * 1024)
-                logger.debug("Parsed VRAM Total", raw=line, mb=total_mb)
-            except ValueError as e:
-                logger.warning("Failed to parse VRAM Total", line=line, error=str(e))
-                
-        elif "USED" in line_upper and "VRAM" in line_upper:
-            try:
-                bytes_val = int(line.split(":")[-1].strip())
-                used_mb = bytes_val / (1024 * 1024)
-                logger.debug("Parsed VRAM Used", raw=line, mb=used_mb)
-            except ValueError as e:
-                logger.warning("Failed to parse VRAM Used", line=line, error=str(e))
-    
-    return used_mb, total_mb
 
 
 def parse_nvidia_smi_csv(stdout: str) -> Tuple[Optional[float], Optional[float], Optional[float]]:
