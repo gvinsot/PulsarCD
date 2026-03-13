@@ -360,9 +360,9 @@ function _agentHistoryTitle(entry) {
         case 'failure_error':
             return `${(entry.stage || '').toUpperCase()} failure error — ${entry.repo || ''}`;
         case 'recurring_handled':
-            return `Recurring error handled (${entry.count || 0}x) — ${entry.services || ''}`;
+            return `Recurring error handled (${entry.count || 0}x) — ${entry.projects || entry.services || ''}`;
         case 'recurring_error':
-            return `Recurring error handling failed — ${entry.services || ''}`;
+            return `Recurring error handling failed — ${entry.projects || entry.services || ''}`;
         case 'chat':
             return `Chat: ${(entry.message || '').substring(0, 60)}`;
         default:
@@ -378,8 +378,11 @@ function _agentHistoryDetail(entry) {
         if (params.length) parts.push('Params: ' + params.join(' / '));
     }
     if (entry.type === 'recurring_handled' || entry.type === 'recurring_error') {
-        const params = [entry.services, entry.count ? `${entry.count}x` : null].filter(Boolean);
-        if (params.length) parts.push('Params: ' + params.join(' / '));
+        const params = [];
+        if (entry.projects) params.push('Stack: ' + entry.projects);
+        if (entry.services) params.push('Services: ' + entry.services);
+        if (entry.count) params.push(entry.count + 'x');
+        if (params.length) parts.push(params.join(' / '));
     }
     if (entry.type === 'gate_decision' || entry.type === 'gate_error') {
         const params = [entry.repo, entry.transition, entry.version].filter(Boolean);
@@ -1343,8 +1346,10 @@ async function loadRecurringErrors() {
 
     // Build HTML first, then reveal card (avoids showing empty card if render fails)
     el.innerHTML = data.map((p, i) => {
+        const stacks = p.stacks || [];
         const svcs = p.services || [];
-        const services = svcs.slice(0, 3).join(', ') + (svcs.length > 3 ? ` +${svcs.length - 3}` : '');
+        const stackLabel = stacks.length ? stacks.join(', ') + ' / ' : '';
+        const services = stackLabel + svcs.slice(0, 3).join(', ') + (svcs.length > 3 ? ` +${svcs.length - 3}` : '');
         const age = formatRelativeTime(p.notified_at || p.last_seen);
         return `
         <div class="recurring-error-item" onclick="showRecurringErrorDetail(${i})">
@@ -1364,8 +1369,13 @@ function showRecurringErrorDetail(index) {
     if (!p) return;
 
     const svcs = p.services || [];
+    const stacks = p.stacks || [];
     document.getElementById('recurring-error-modal-count').textContent =
         `${p.count} occurrence${p.count !== 1 ? 's' : ''}`;
+    document.getElementById('recurring-error-modal-stacks').innerHTML =
+        stacks.length
+            ? stacks.map(s => `<span class="rerr-service-chip">${escapeHtml(s)}</span>`).join('')
+            : '<span style="color:var(--text-muted)">Unknown</span>';
     document.getElementById('recurring-error-modal-services').innerHTML =
         svcs.length
             ? svcs.map(s => `<span class="rerr-service-chip">${escapeHtml(s)}</span>`).join('')

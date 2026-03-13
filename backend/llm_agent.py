@@ -406,6 +406,7 @@ class LLMAgent:
         )
 
         services_list = ', '.join(sorted(pattern.services)[:10])
+        projects_list = ', '.join(sorted(pattern.compose_projects)[:10]) if pattern.compose_projects else ''
         duration = pattern.last_seen - pattern.first_seen
         if duration.total_seconds() < 3600:
             duration_str = f"{int(duration.total_seconds())}s"
@@ -428,14 +429,16 @@ class LLMAgent:
             result = await self._run_agent(system_prompt, user_message)
             self._cooldown_map[dedup_key] = datetime.utcnow()
             self._record("recurring_handled", services=services_list,
-                         count=pattern.count, response=result[:500] if result else "")
+                         projects=projects_list, count=pattern.count,
+                         response=result[:500] if result else "")
             logger.info("LLM agent handled recurring error",
                         fingerprint=pattern.fingerprint,
                         result_preview=result[:200] if result else "(empty)")
             return result
         except Exception as e:
             self._record("recurring_error", services=services_list,
-                         count=pattern.count, error=str(e))
+                         projects=projects_list, count=pattern.count,
+                         error=str(e))
             logger.error("LLM agent error during recurring error handling",
                          fingerprint=pattern.fingerprint,
                          error_type=type(e).__name__, error=str(e))

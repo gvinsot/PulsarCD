@@ -73,19 +73,40 @@ class ErrorPattern:
     __slots__ = ('fingerprint', 'sample_message', 'services', 'compose_projects',
                  'count', 'first_seen', 'last_seen', 'notified')
 
-    def __init__(self, fingerprint: str, message: str, service: str, compose_project: str = None):
+    def __init__(self, fingerprint: str, message: str, service: str,
+                 compose_project: str = None, timestamp: str = None):
         self.fingerprint = fingerprint
         self.sample_message = message[:500]
         self.services: Set[str] = {service}
         self.compose_projects: Set[str] = {compose_project} if compose_project else set()
         self.count = 1
-        self.first_seen = datetime.utcnow()
-        self.last_seen = datetime.utcnow()
+        ts = self._parse_ts(timestamp)
+        self.first_seen = ts
+        self.last_seen = ts
         self.notified = False
 
-    def add_occurrence(self, service: str, message: str, compose_project: str = None):
+    @staticmethod
+    def _parse_ts(timestamp: str = None) -> datetime:
+        """Parse an ISO timestamp string, falling back to utcnow()."""
+        if timestamp:
+            try:
+                # Handle ISO format with or without Z suffix
+                clean = timestamp.replace("Z", "+00:00")
+                from datetime import timezone
+                dt = datetime.fromisoformat(clean)
+                return dt.replace(tzinfo=None) if dt.tzinfo else dt
+            except (ValueError, TypeError):
+                pass
+        return datetime.utcnow()
+
+    def add_occurrence(self, service: str, message: str,
+                       compose_project: str = None, timestamp: str = None):
         self.count += 1
-        self.last_seen = datetime.utcnow()
+        ts = self._parse_ts(timestamp)
+        if ts < self.first_seen:
+            self.first_seen = ts
+        if ts > self.last_seen:
+            self.last_seen = ts
         self.services.add(service)
         if compose_project:
             self.compose_projects.add(compose_project)
@@ -225,14 +246,20 @@ class RecurringErrorDetector:
             if fp in self._patterns:
                 for occ in occurrences:
                     svc = self._extract_service_name(occ)
-                    self._patterns[fp].add_occurrence(svc, occ["message"], occ.get("compose_project"))
+                    self._patterns[fp].add_occurrence(
+                        svc, occ["message"], occ.get("compose_project"),
+                        occ.get("timestamp"))
             else:
                 first = occurrences[0]
                 svc = self._extract_service_name(first)
-                self._patterns[fp] = ErrorPattern(fp, first["message"], svc, first.get("compose_project"))
+                self._patterns[fp] = ErrorPattern(
+                    fp, first["message"], svc, first.get("compose_project"),
+                    first.get("timestamp"))
                 for occ in occurrences[1:]:
                     s = self._extract_service_name(occ)
-                    self._patterns[fp].add_occurrence(s, occ["message"], occ.get("compose_project"))
+                    self._patterns[fp].add_occurrence(
+                        s, occ["message"], occ.get("compose_project"),
+                        occ.get("timestamp"))
 
         # Check thresholds and notify (with 1-hour cooldown per fingerprint)
         cooldown = timedelta(hours=1)
@@ -510,6 +537,7 @@ class RecurringErrorDetector:
             "sample_message": pattern.sample_message,
             "count": pattern.count,
             "services": sorted(pattern.services),
+            "stacks": sorted(pattern.compose_projects) if pattern.compose_projects else [],
             "first_seen": pattern.first_seen.isoformat(),
             "last_seen": pattern.last_seen.isoformat(),
             "notified_at": datetime.utcnow().isoformat(),
