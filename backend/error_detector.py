@@ -12,7 +12,7 @@ import re
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import aiohttp
 import structlog
@@ -71,22 +71,25 @@ def text_fingerprint(msg: str) -> str:
 
 class ErrorPattern:
     """Tracks a recurring error pattern."""
-    __slots__ = ('fingerprint', 'sample_message', 'services', 'count',
-                 'first_seen', 'last_seen', 'notified')
+    __slots__ = ('fingerprint', 'sample_message', 'services', 'compose_projects',
+                 'count', 'first_seen', 'last_seen', 'notified')
 
-    def __init__(self, fingerprint: str, message: str, service: str):
+    def __init__(self, fingerprint: str, message: str, service: str, compose_project: str = None):
         self.fingerprint = fingerprint
         self.sample_message = message[:500]
         self.services: Set[str] = {service}
+        self.compose_projects: Set[str] = {compose_project} if compose_project else set()
         self.count = 1
         self.first_seen = datetime.utcnow()
         self.last_seen = datetime.utcnow()
         self.notified = False
 
-    def add_occurrence(self, service: str, message: str):
+    def add_occurrence(self, service: str, message: str, compose_project: str = None):
         self.count += 1
         self.last_seen = datetime.utcnow()
         self.services.add(service)
+        if compose_project:
+            self.compose_projects.add(compose_project)
         # Keep the shortest sample (usually the most representative)
         if len(message) < len(self.sample_message):
             self.sample_message = message[:500]
@@ -227,14 +230,14 @@ class RecurringErrorDetector:
             if fp in self._patterns:
                 for occ in occurrences:
                     svc = self._extract_service_name(occ)
-                    self._patterns[fp].add_occurrence(svc, occ["message"])
+                    self._patterns[fp].add_occurrence(svc, occ["message"], occ.get("compose_project"))
             else:
                 first = occurrences[0]
                 svc = self._extract_service_name(first)
-                self._patterns[fp] = ErrorPattern(fp, first["message"], svc)
+                self._patterns[fp] = ErrorPattern(fp, first["message"], svc, first.get("compose_project"))
                 for occ in occurrences[1:]:
                     s = self._extract_service_name(occ)
-                    self._patterns[fp].add_occurrence(s, occ["message"])
+                    self._patterns[fp].add_occurrence(s, occ["message"], occ.get("compose_project"))
 
         # Check thresholds and notify (with 1-hour cooldown per fingerprint)
         cooldown = timedelta(hours=1)
@@ -534,16 +537,18 @@ class RecurringErrorDetector:
         if len(encoded) > max_bytes:
             task_description = encoded[:max_bytes].decode('utf-8', errors='ignore') + '\n... [truncated]'
 
-        # Resolve the primary service name to its correct-cased GitHub project name.
-        # Try each affected service in sorted order until one resolves.
+        # Resolve to the correct-cased GitHub project name.
+        # Try compose_projects first (stack names match repo names better),
+        # then fall back to service names.
         project_name: Optional[str] = None
-        for svc in sorted(pattern.services):
-            project_name = await self._resolve_project_name(svc)
+        for candidate in list(sorted(pattern.compose_projects)) + list(sorted(pattern.services)):
+            project_name = await self._resolve_project_name(candidate)
             if project_name:
                 break
 
         if not project_name:
-            logger.warning("Skipping Swarm notification — no matching GitHub repo for any affected service",
+            logger.warning("Skipping Swarm notification — no matching GitHub repo for any affected service/project",
+                           compose_projects=sorted(pattern.compose_projects),
                            services=sorted(pattern.services),
                            fingerprint=pattern.fingerprint,
                            count=pattern.count)
