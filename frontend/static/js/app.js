@@ -185,6 +185,14 @@ async function openSettingsModal() {
     document.getElementById('settings-error-deploy').value = eh.on_deploy_failure || '';
     document.getElementById('settings-error-recurring').value = eh.on_recurring_error || '';
 
+    // Populate pipeline gates
+    const pg = config.pipeline_gates || {};
+    document.getElementById('settings-gate-build-test').checked = pg.build_to_test === true;
+    document.getElementById('settings-gate-test-deploy').checked = pg.test_to_deploy === true;
+    document.getElementById('settings-gate-instructions').value = pg.instructions || '';
+    document.getElementById('settings-gate-build-test-instructions').value = pg.on_build_to_test || '';
+    document.getElementById('settings-gate-test-deploy-instructions').value = pg.on_test_to_deploy || '';
+
     // Reset to LLM tab
     switchSettingsTab('llm');
     modal.classList.add('active');
@@ -192,6 +200,72 @@ async function openSettingsModal() {
 
 function closeSettingsModal() {
     document.getElementById('settings-modal').classList.remove('active');
+}
+
+// ============== LLM Test Chat ==============
+
+let _llmTestBusy = false;
+
+async function sendLLMTest() {
+    if (_llmTestBusy) return;
+    const input = document.getElementById('llm-test-input');
+    const messages = document.getElementById('llm-test-messages');
+    const sendBtn = document.getElementById('llm-test-send');
+    const text = input.value.trim();
+    if (!text) return;
+
+    // Add user message
+    const userMsg = document.createElement('div');
+    userMsg.className = 'llm-test-msg user';
+    userMsg.textContent = text;
+    messages.appendChild(userMsg);
+    input.value = '';
+
+    // Add thinking indicator
+    const thinking = document.createElement('div');
+    thinking.className = 'llm-test-msg thinking';
+    thinking.textContent = 'Thinking';
+    messages.appendChild(thinking);
+    messages.scrollTop = messages.scrollHeight;
+
+    _llmTestBusy = true;
+    sendBtn.disabled = true;
+    input.disabled = true;
+
+    try {
+        const response = await fetch(`${API_BASE}/admin/llm-test`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: text })
+        });
+        thinking.remove();
+
+        if (!response.ok) {
+            const err = await response.json().catch(() => ({ detail: `HTTP ${response.status}` }));
+            const errMsg = document.createElement('div');
+            errMsg.className = 'llm-test-msg error';
+            errMsg.textContent = err.detail || `Error ${response.status}`;
+            messages.appendChild(errMsg);
+        } else {
+            const data = await response.json();
+            const reply = document.createElement('div');
+            reply.className = 'llm-test-msg assistant';
+            reply.textContent = data.response || '(empty response)';
+            messages.appendChild(reply);
+        }
+    } catch (e) {
+        thinking.remove();
+        const errMsg = document.createElement('div');
+        errMsg.className = 'llm-test-msg error';
+        errMsg.textContent = `Connection error: ${e.message}`;
+        messages.appendChild(errMsg);
+    }
+
+    _llmTestBusy = false;
+    sendBtn.disabled = false;
+    input.disabled = false;
+    input.focus();
+    messages.scrollTop = messages.scrollHeight;
 }
 
 function renderMCPServers(servers) {
@@ -268,6 +342,13 @@ async function saveSettings() {
             on_test_failure: document.getElementById('settings-error-test').value,
             on_deploy_failure: document.getElementById('settings-error-deploy').value,
             on_recurring_error: document.getElementById('settings-error-recurring').value,
+        },
+        pipeline_gates: {
+            build_to_test: document.getElementById('settings-gate-build-test').checked,
+            test_to_deploy: document.getElementById('settings-gate-test-deploy').checked,
+            instructions: document.getElementById('settings-gate-instructions').value,
+            on_build_to_test: document.getElementById('settings-gate-build-test-instructions').value,
+            on_test_to_deploy: document.getElementById('settings-gate-test-deploy-instructions').value,
         },
     };
 
@@ -3357,6 +3438,12 @@ function renderStacksList() {
             buildStep = skipBuild ? 'skipped' : (cs === 1 ? 'running' : (effectiveHadBuild && cs > 1 ? 'success' : (cs > 1 ? 'idle' : 'pending')));
             testStep = cs === 2 ? 'running' : (effectiveHadTest && cs > 2 ? 'success' : (cs > 2 ? 'idle' : 'pending'));
             deployStep = cs === 3 ? 'running' : 'pending';
+        } else if (pipeline && pipeline.status === 'gate_rejected') {
+            const cs = stageOrder[pipeline.stage] || 0;
+            versionStep = 'success';
+            buildStep = skipBuild ? 'skipped' : (cs >= 1 ? 'success' : 'pending');
+            testStep = cs === 1 ? 'gate_rejected' : (cs >= 2 ? 'success' : 'pending');
+            deployStep = cs === 2 ? 'gate_rejected' : 'pending';
         } else if (pipeline && pipeline.status === 'failed') {
             const cs = stageOrder[pipeline.stage] || 0;
             versionStep = 'success';
@@ -3553,7 +3640,8 @@ function renderStacksList() {
 
         const idleSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"/></svg>`;
         const pendingSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
-        const stepIcon = (state) => state === 'success' ? checkSvg : state === 'failed' ? xSvg : state === 'running' ? spinnerSvg : state === 'pending' ? pendingSvg : idleSvg;
+        const gateSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12"><circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/></svg>`;
+        const stepIcon = (state) => state === 'success' ? checkSvg : state === 'failed' ? xSvg : state === 'gate_rejected' ? gateSvg : state === 'running' ? spinnerSvg : state === 'pending' ? pendingSvg : idleSvg;
 
         // Monitoring tooltip content
         const tooltipLines = [];

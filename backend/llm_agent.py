@@ -66,6 +66,7 @@ class LLMAgent:
         self._llm_api_key = config.llm.api_key
         self._mcp_servers = config.mcp_servers
         self._error_handling = config.error_handling
+        self._pipeline_gates = config.pipeline_gates
         self._mcp_api_key = mcp_api_key
         self._tools_cache: Optional[List[dict]] = None
         self._tool_server_map: Dict[str, Tuple[str, str]] = {}
@@ -389,6 +390,101 @@ class LLMAgent:
                          fingerprint=pattern.fingerprint,
                          error_type=type(e).__name__, error=str(e))
             return None
+
+    async def evaluate_gate(
+        self, transition: str, repo_name: str, version: str, stage_output: str
+    ) -> Tuple[bool, str]:
+        """Evaluate whether the pipeline should proceed to the next stage.
+
+        Args:
+            transition: "build_to_test" or "test_to_deploy"
+            repo_name: Repository name
+            version: Current version/tag
+            stage_output: Output logs from the completed stage
+
+        Returns:
+            (approved, reason) tuple. approved=True means proceed.
+        """
+        gates = self._pipeline_gates
+
+        # Check if this gate is enabled
+        if transition == "build_to_test" and not gates.build_to_test:
+            return True, "Gate disabled, auto-approved"
+        if transition == "test_to_deploy" and not gates.test_to_deploy:
+            return True, "Gate disabled, auto-approved"
+
+        instruction_map = {
+            "build_to_test": gates.on_build_to_test,
+            "test_to_deploy": gates.on_test_to_deploy,
+        }
+        specific = instruction_map.get(transition, "")
+
+        system_prompt = (
+            f"{gates.instructions}\n\n"
+            f"{specific}\n\n"
+            f"You have access to MCP tools. Use them to check git history, "
+            f"code changes, and any other relevant information.\n"
+            f"After your analysis, you MUST respond with a JSON object:\n"
+            f'{{"approve": true, "reason": "..."}}\n'
+            f"or\n"
+            f'{{"approve": false, "reason": "..."}}\n'
+            f"The JSON must be the LAST line of your response."
+        )
+
+        compact_output = _build_error_output(stage_output)
+        from_stage = transition.split("_to_")[0]
+        to_stage = transition.split("_to_")[1]
+        user_message = (
+            f"PIPELINE GATE: {from_stage.upper()} → {to_stage.upper()}\n"
+            f"Project: {repo_name}\n"
+            f"Version: {version}\n"
+            f"{from_stage.capitalize()} output:\n```\n{compact_output}\n```"
+        )
+
+        logger.info("LLM gate evaluation starting",
+                     transition=transition, repo=repo_name, version=version)
+
+        try:
+            result = await self._run_agent(system_prompt, user_message)
+
+            # Parse JSON decision from response (last line or embedded)
+            approved, reason = self._parse_gate_decision(result)
+            logger.info("LLM gate decision",
+                        transition=transition, repo=repo_name,
+                        approved=approved, reason=reason[:200])
+            return approved, reason
+
+        except Exception as e:
+            logger.error("LLM gate evaluation failed, auto-approving",
+                         transition=transition, repo=repo_name,
+                         error_type=type(e).__name__, error=str(e))
+            return True, f"Gate error (auto-approved): {e}"
+
+    @staticmethod
+    def _parse_gate_decision(response: str) -> Tuple[bool, str]:
+        """Extract approve/reject decision from LLM response."""
+        if not response:
+            return True, "Empty response, auto-approved"
+
+        # Try to find JSON in the response (last occurrence)
+        import re
+        json_pattern = re.compile(r'\{[^{}]*"approve"\s*:\s*(true|false)[^{}]*\}', re.IGNORECASE)
+        matches = list(json_pattern.finditer(response))
+
+        if matches:
+            try:
+                decision = json.loads(matches[-1].group())
+                approved = bool(decision.get("approve", True))
+                reason = decision.get("reason", "No reason provided")
+                return approved, reason
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+        # Fallback: look for keywords
+        lower = response.lower()
+        if '"approve": false' in lower or '"approve":false' in lower:
+            return False, response[-500:]
+        return True, response[-500:] if response else "Could not parse, auto-approved"
 
     def invalidate_tools_cache(self):
         """Force re-discovery of MCP tools on next call."""

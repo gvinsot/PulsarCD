@@ -55,11 +55,37 @@ class ErrorHandlingConfig(BaseModel):
     )
 
 
+class PipelineGatesConfig(BaseModel):
+    """LLM gate configuration between pipeline stages."""
+    build_to_test: bool = False
+    test_to_deploy: bool = False
+    instructions: str = (
+        "Tu es un agent DevOps qui valide les transitions de pipeline CI/CD. "
+        "Analyse les logs de l'etape precedente et la version pour determiner "
+        "si il est sur de passer a l'etape suivante. "
+        "Tu peux utiliser les outils MCP (notamment git) pour verifier les "
+        "changements de code qui vont etre deployes. "
+        "Reponds UNIQUEMENT par un JSON: {\"approve\": true/false, \"reason\": \"...\"}"
+    )
+    on_build_to_test: str = (
+        "Le build a reussi. Verifie les logs de build pour detecter des warnings "
+        "critiques, verifie les changements de code recents via git, et determine "
+        "si les tests peuvent etre lances en toute securite."
+    )
+    on_test_to_deploy: str = (
+        "Les tests ont reussi. Verifie les resultats de tests, les changements "
+        "de code via git, et determine si le deploiement peut se faire en toute "
+        "securite. Sois particulierement vigilant sur les migrations de base de "
+        "donnees et les changements d'API."
+    )
+
+
 class PulsarConfig(BaseModel):
     """Top-level configuration loaded from config.yml."""
     llm: LLMConfig = LLMConfig()
     mcp_servers: List[MCPServerConfig] = [MCPServerConfig()]
     error_handling: ErrorHandlingConfig = ErrorHandlingConfig()
+    pipeline_gates: PipelineGatesConfig = PipelineGatesConfig()
 
 
 def _apply_env_overrides(config: PulsarConfig) -> PulsarConfig:

@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/style.css?v=26">
+    <link rel="stylesheet" href="/static/css/style.css?v=28">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
     <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
@@ -1146,6 +1146,7 @@
                             <button class="settings-tab" data-tab="mcp" onclick="switchSettingsTab('mcp')">MCP Servers</button>
                             <button class="settings-tab" data-tab="errors" onclick="switchSettingsTab('errors')">Error Handling</button>
                             <button class="settings-tab" data-tab="users" onclick="switchSettingsTab('users')">Users</button>
+                            <button class="settings-tab" data-tab="test" onclick="switchSettingsTab('test')">Test LLM</button>
                         </div>
 
                         <!-- LLM Tab -->
@@ -1198,6 +1199,35 @@
                                 <label>On recurring error</label>
                                 <textarea id="settings-error-recurring" rows="2"></textarea>
                             </div>
+
+                            <div class="settings-section-divider"></div>
+                            <h4 class="settings-section-title">Pipeline Gates</h4>
+                            <p class="settings-section-desc">The LLM agent reviews logs and code changes between stages to decide if the pipeline should proceed.</p>
+
+                            <div class="settings-field">
+                                <label class="settings-toggle-label">
+                                    <input type="checkbox" id="settings-gate-build-test" />
+                                    Gate: Build → Test
+                                </label>
+                            </div>
+                            <div class="settings-field">
+                                <label>Build → Test instructions</label>
+                                <textarea id="settings-gate-build-test-instructions" rows="2"></textarea>
+                            </div>
+                            <div class="settings-field">
+                                <label class="settings-toggle-label">
+                                    <input type="checkbox" id="settings-gate-test-deploy" />
+                                    Gate: Test → Deploy
+                                </label>
+                            </div>
+                            <div class="settings-field">
+                                <label>Test → Deploy instructions</label>
+                                <textarea id="settings-gate-test-deploy-instructions" rows="2"></textarea>
+                            </div>
+                            <div class="settings-field">
+                                <label>General gate instructions</label>
+                                <textarea id="settings-gate-instructions" rows="2"></textarea>
+                            </div>
                         </div>
 
                         <!-- Users Tab -->
@@ -1216,6 +1246,18 @@
                                 </div>
                             </div>
                         </div>
+
+                        <!-- Test LLM Tab -->
+                        <div class="settings-panel" id="settings-panel-test">
+                            <div class="llm-test-info">
+                                Test the LLM agent with current config. The agent uses your error handling instructions and has access to configured MCP tools.
+                            </div>
+                            <div class="llm-test-messages" id="llm-test-messages"></div>
+                            <div class="llm-test-input">
+                                <input type="text" id="llm-test-input" placeholder="Ask the LLM something... (e.g. 'list available tools' or 'check container health')" onkeydown="if(event.key==='Enter')sendLLMTest()" />
+                                <button class="btn btn-primary btn-sm" id="llm-test-send" onclick="sendLLMTest()">Send</button>
+                            </div>
+                        </div>
                     </div>
                     <div class="modal-footer">
                         <div id="settings-status" class="settings-status"></div>
@@ -1229,6 +1271,6 @@
         </main>
     </div>
     
-    <script src="/static/js/app.js?v=21"></script>
+    <script src="/static/js/app.js?v=23"></script>
 </body>
 </html>

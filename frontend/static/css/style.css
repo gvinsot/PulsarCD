@@ -3372,6 +3372,7 @@ a.btn {
 .pipeline-step.step-running { background: rgba(14, 165, 233, 0.15); color: var(--accent-secondary); }
 .pipeline-step.step-success { background: rgba(34, 197, 94, 0.15); color: var(--status-success); }
 .pipeline-step.step-failed { background: rgba(239, 68, 68, 0.15); color: var(--status-error); }
+.pipeline-step.step-gate_rejected { background: rgba(251, 191, 36, 0.15); color: var(--status-warning); }
 .pipeline-step.step-pending {
     background: rgba(14, 165, 233, 0.08);
     color: var(--accent-secondary);
@@ -4695,7 +4696,103 @@ a.btn {
 }
 
 .settings-panel.active {
-    display: block;
+    display: flex;
+    flex-direction: column;
+}
+
+/* LLM Test Chat */
+.llm-test-info {
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+    margin-bottom: 12px;
+    flex-shrink: 0;
+}
+
+.llm-test-messages {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 200px;
+    max-height: 350px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.llm-test-msg {
+    max-width: 85%;
+    padding: 8px 12px;
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.llm-test-msg.user {
+    align-self: flex-end;
+    background: var(--accent-primary);
+    color: var(--bg-primary);
+    border-bottom-right-radius: 2px;
+}
+
+.llm-test-msg.assistant {
+    align-self: flex-start;
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-bottom-left-radius: 2px;
+}
+
+.llm-test-msg.error {
+    align-self: flex-start;
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--status-error);
+    border-left: 3px solid var(--status-error);
+}
+
+.llm-test-msg.tool-call {
+    align-self: flex-start;
+    background: rgba(0, 212, 170, 0.08);
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    font-family: var(--font-mono);
+    border-left: 3px solid var(--accent-primary);
+}
+
+.llm-test-msg.thinking {
+    align-self: flex-start;
+    color: var(--text-tertiary);
+    font-style: italic;
+    background: transparent;
+    padding: 4px 12px;
+}
+
+.llm-test-msg.thinking::after {
+    content: '';
+    display: inline-block;
+    width: 12px;
+    animation: dots 1.4s steps(4) infinite;
+}
+
+@keyframes dots {
+    0% { content: ''; }
+    25% { content: '.'; }
+    50% { content: '..'; }
+    75% { content: '...'; }
+}
+
+.llm-test-input {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    flex-shrink: 0;
+}
+
+.llm-test-input input {
+    flex: 1;
 }
 
 .settings-field {
@@ -4884,4 +4981,24 @@ a.btn {
 
 .settings-status.error {
     color: var(--status-error);
+}
+
+.settings-section-divider {
+    height: 1px;
+    background: var(--border-color);
+    margin: 20px 0 16px;
+}
+
+.settings-section-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 4px;
+}
+
+.settings-section-desc {
+    font-size: 0.78rem;
+    color: var(--text-tertiary);
+    margin: 0 0 16px;
+    line-height: 1.4;
 }

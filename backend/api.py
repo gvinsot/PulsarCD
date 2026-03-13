@@ -398,13 +398,46 @@ async def admin_update_config(request: Request):
         save_config_file(new_config, settings.data_dir)
         settings.pulsar_config = _apply_env_overrides(new_config)
 
-        # Invalidate LLM agent tools cache so it picks up new MCP servers
+        # Update LLM agent with new config
         if llm_agent:
             llm_agent.invalidate_tools_cache()
+            llm_agent._error_handling = new_config.error_handling
+            llm_agent._pipeline_gates = new_config.pipeline_gates
+            llm_agent._mcp_servers = new_config.mcp_servers
+            llm_agent._llm_url = new_config.llm.url.rstrip("/")
+            llm_agent._llm_model = new_config.llm.model
+            llm_agent._llm_api_key = new_config.llm.api_key
 
         return {"saved": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/admin/llm-test")
+async def admin_llm_test(request: Request):
+    """Test LLM agent with a user message (admin only). Uses current config."""
+    if not llm_agent:
+        raise HTTPException(status_code=503, detail="LLM agent not initialized")
+
+    body = await request.json()
+    user_message = body.get("message", "").strip()
+    if not user_message:
+        raise HTTPException(status_code=400, detail="Empty message")
+
+    # Use the error handling instructions as system prompt context
+    eh = llm_agent._error_handling
+    system_prompt = (
+        f"{eh.instructions}\n\n"
+        f"You have access to MCP tools. Use them to answer the user's questions.\n"
+        f"Respond concisely."
+    )
+
+    try:
+        result = await llm_agent._run_agent(system_prompt, user_message)
+        return {"response": result}
+    except Exception as e:
+        logger.error("LLM test error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============== Dashboard ==============
@@ -2347,6 +2380,21 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                 built_version = _extract_version_from_output(build_action.output_lines) or version
                 _pipeline_state[repo_name]["version"] = built_version
                 logger.info("Pipeline: build succeeded", repo=repo_name, version=built_version)
+
+                # ── Gate: Build → Test ──
+                if llm_agent:
+                    approved, reason = await llm_agent.evaluate_gate(
+                        "build_to_test", repo_name, built_version or "",
+                        result.get("output", "")
+                    )
+                    if not approved:
+                        logger.warning("Pipeline: gate build→test REJECTED",
+                                       repo=repo_name, reason=reason[:200])
+                        _set_pipeline(repo_name, "build", "gate_rejected", built_version,
+                                      build_id=build_id, test_id=None, deploy_id=None)
+                        return
+                    logger.info("Pipeline: gate build→test approved", repo=repo_name, reason=reason[:100])
+
             else:
                 logger.info("Pipeline: skipping build (no build: in compose)", repo=repo_name)
 
@@ -2376,6 +2424,20 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
 
             _set_pipeline(repo_name, "test", "success", built_version, build_id=build_id, test_id=test_id, deploy_id=None)
             logger.info("Pipeline: test succeeded", repo=repo_name)
+
+            # ── Gate: Test → Deploy ──
+            if llm_agent:
+                approved, reason = await llm_agent.evaluate_gate(
+                    "test_to_deploy", repo_name, built_version or "",
+                    test_result.get("output", "")
+                )
+                if not approved:
+                    logger.warning("Pipeline: gate test→deploy REJECTED",
+                                   repo=repo_name, reason=reason[:200])
+                    _set_pipeline(repo_name, "test", "gate_rejected", built_version,
+                                  build_id=build_id, test_id=test_id, deploy_id=None)
+                    return
+                logger.info("Pipeline: gate test→deploy approved", repo=repo_name, reason=reason[:100])
 
             # ── Step 3: Deploy ──
             deploy_id = str(uuid.uuid4())[:8]
