@@ -117,6 +117,23 @@ function updateUserMenu(username, role) {
     // Only show settings for admins
     const settingsItem = document.getElementById('settings-menu-item');
     if (settingsItem) settingsItem.style.display = role === 'admin' ? '' : 'none';
+
+    // Load GitHub status in user menu
+    apiGet('/stacks/status').then(s => _updateGitHubBadge(s));
+}
+
+function _updateGitHubBadge(status) {
+    const textEl = document.getElementById('user-menu-github-text');
+    const dotEl = document.getElementById('user-menu-github-dot');
+    if (!textEl || !dotEl) return;
+
+    if (status && status.configured) {
+        textEl.textContent = status.username ? `@${status.username}` : 'Connected';
+        dotEl.className = 'user-menu-github-dot connected';
+    } else {
+        textEl.textContent = 'Not configured';
+        dotEl.className = 'user-menu-github-dot disconnected';
+    }
 }
 
 function toggleUserMenu() {
@@ -266,6 +283,106 @@ async function sendLLMTest() {
     input.disabled = false;
     input.focus();
     messages.scrollTop = messages.scrollHeight;
+}
+
+// ============== Agent Modal ==============
+
+function openAgentModal() {
+    const modal = document.getElementById('agent-modal');
+    switchAgentTab('chat');
+    modal.classList.add('active');
+    document.getElementById('llm-test-input').focus();
+}
+
+function closeAgentModal() {
+    document.getElementById('agent-modal').classList.remove('active');
+}
+
+function switchAgentTab(tabName) {
+    document.querySelectorAll('.agent-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.agent-panel').forEach(p => p.classList.remove('active'));
+    document.querySelector(`.agent-tab[data-tab="${tabName}"]`).classList.add('active');
+    document.getElementById(`agent-panel-${tabName}`).classList.add('active');
+
+    if (tabName === 'history') loadAgentHistory();
+}
+
+async function loadAgentHistory() {
+    const container = document.getElementById('agent-history-list');
+    container.innerHTML = '<div class="loading-placeholder">Loading...</div>';
+
+    const data = await apiGet('/admin/agent-history');
+    if (!data || !data.history || data.history.length === 0) {
+        container.innerHTML = '<div class="agent-history-empty">No agent activity yet.</div>';
+        return;
+    }
+
+    container.innerHTML = data.history.map(entry => {
+        const typeClass = `type-${entry.type}${entry.approved === false ? ' rejected' : ''}`;
+        const icon = _agentHistoryIcon(entry.type);
+        const title = _agentHistoryTitle(entry);
+        const detail = _agentHistoryDetail(entry);
+        const time = _agentHistoryTime(entry.timestamp);
+        return `
+            <div class="agent-history-entry ${typeClass}">
+                <div class="agent-history-icon">${icon}</div>
+                <div class="agent-history-content">
+                    <div class="agent-history-title">${escapeHtml(title)}</div>
+                    <div class="agent-history-detail">${escapeHtml(detail)}</div>
+                </div>
+                <div class="agent-history-time">${time}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+function _agentHistoryIcon(type) {
+    const icons = {
+        gate_decision: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`,
+        gate_error: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
+        failure_handled: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+        failure_error: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
+        recurring_handled: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>`,
+        recurring_error: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
+        chat: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
+    };
+    return icons[type] || icons.chat;
+}
+
+function _agentHistoryTitle(entry) {
+    switch (entry.type) {
+        case 'gate_decision':
+            return `Gate ${entry.transition || ''}: ${entry.approved ? 'Approved' : 'Rejected'} — ${entry.repo || ''}`;
+        case 'gate_error':
+            return `Gate ${entry.transition || ''}: Error — ${entry.repo || ''}`;
+        case 'failure_handled':
+            return `${(entry.stage || '').toUpperCase()} failure handled — ${entry.repo || ''}`;
+        case 'failure_error':
+            return `${(entry.stage || '').toUpperCase()} failure error — ${entry.repo || ''}`;
+        case 'recurring_handled':
+            return `Recurring error handled (${entry.count || 0}x) — ${entry.services || ''}`;
+        case 'recurring_error':
+            return `Recurring error handling failed — ${entry.services || ''}`;
+        case 'chat':
+            return `Chat: ${(entry.message || '').substring(0, 60)}`;
+        default:
+            return entry.type;
+    }
+}
+
+function _agentHistoryDetail(entry) {
+    return entry.response || entry.reason || entry.error || '';
+}
+
+function _agentHistoryTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts);
+    const now = new Date();
+    const diffMs = now - d;
+    if (diffMs < 60000) return 'just now';
+    if (diffMs < 3600000) return `${Math.floor(diffMs / 60000)}m ago`;
+    if (diffMs < 86400000) return `${Math.floor(diffMs / 3600000)}h ago`;
+    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
 }
 
 function renderMCPServers(servers) {
@@ -2777,17 +2894,9 @@ let stacksBuildable = {};  // {repo_name: bool} — whether compose has build: d
 async function loadStacks() {
     // Check GitHub status
     const status = await apiGet('/stacks/status');
-    const statusText = document.getElementById('github-status-text');
-    const statusEl = document.getElementById('github-status');
-    
-    if (status && status.configured) {
-        statusText.textContent = status.username ? `@${status.username}` : 'Connected';
-        statusEl.classList.add('connected');
-        statusEl.classList.remove('disconnected');
-    } else {
-        statusText.textContent = 'Not configured';
-        statusEl.classList.add('disconnected');
-        statusEl.classList.remove('connected');
+    _updateGitHubBadge(status);
+
+    if (!status || !status.configured) {
         document.getElementById('stacks-list').innerHTML = `
             <div class="stacks-not-configured">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="48" height="48">
@@ -3643,6 +3752,15 @@ function renderStacksList() {
         const gateSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12"><circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/></svg>`;
         const stepIcon = (state) => state === 'success' ? checkSvg : state === 'failed' ? xSvg : state === 'gate_rejected' ? gateSvg : state === 'running' ? spinnerSvg : state === 'pending' ? pendingSvg : idleSvg;
 
+        // Gate arrow coloring: green if gate approved (next step running/success), red if rejected
+        function _gateArrowClass(pipeline, fromStage, fromStep, toStep) {
+            if (!pipeline) return '';
+            if (toStep === 'gate_rejected') return 'arrow-rejected';
+            // If from step succeeded and to step is running/success/failed → gate approved
+            if (fromStep === 'success' && (toStep === 'running' || toStep === 'success' || toStep === 'failed')) return 'arrow-approved';
+            return '';
+        }
+
         // Monitoring tooltip content
         const tooltipLines = [];
         if (stackMemoryDisplay) tooltipLines.push(`RAM: ${stackMemoryDisplay}`);
@@ -3705,13 +3823,13 @@ function renderStacksList() {
                             <span>Build</span>
                             ${!skipBuild && buildActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${buildActionId}', 'Build Logs', '${escapeHtml(repo.name)}')" title="View build logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
                         </div>
-                        <span class="pipeline-arrow">\u2192</span>
+                        <span class="pipeline-arrow ${_gateArrowClass(pipeline, 'build', buildStep, testStep)}">\u2192</span>
                         <div class="pipeline-step step-${testStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'test')" title="Test">
                             ${stepIcon(testStep)}
                             <span>Test</span>
                             ${testActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${testActionId}', 'Test Logs', '${escapeHtml(repo.name)}')" title="View test logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
                         </div>
-                        <span class="pipeline-arrow">\u2192</span>
+                        <span class="pipeline-arrow ${_gateArrowClass(pipeline, 'test', testStep, deployStep)}">\u2192</span>
                         <div class="pipeline-step step-${deployStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'deploy')" title="Deploy">
                             ${stepIcon(deployStep)}
                             <span>Deploy</span>

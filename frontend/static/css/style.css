@@ -2588,25 +2588,6 @@ a.btn {
     margin-bottom: 0;
 }
 
-.github-status {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    background: var(--bg-tertiary);
-    border-radius: var(--radius-sm);
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-}
-
-.github-status.connected {
-    color: var(--status-success);
-}
-
-.github-status.disconnected {
-    color: var(--status-error);
-}
-
 .stacks-not-configured {
     text-align: center;
     padding: 60px 20px;
@@ -3365,6 +3346,19 @@ a.btn {
     font-size: 0.7rem;
     flex-shrink: 0;
     opacity: 0.5;
+    transition: var(--transition);
+}
+
+.pipeline-arrow.arrow-approved {
+    color: var(--status-success);
+    opacity: 1;
+    font-weight: bold;
+}
+
+.pipeline-arrow.arrow-rejected {
+    color: var(--status-error);
+    opacity: 1;
+    font-weight: bold;
 }
 
 /* Step states */
@@ -4548,6 +4542,193 @@ a.btn {
 }
 
 
+/* ============== Agent Topbar Button ============== */
+
+.agent-topbar-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: var(--transition);
+    font-size: 0.82rem;
+    font-family: var(--font-mono);
+}
+
+.agent-topbar-btn:hover {
+    background: var(--bg-elevated);
+    color: var(--accent-primary);
+    border-color: var(--accent-primary);
+}
+
+/* ============== Agent Modal ============== */
+
+#agent-modal .modal-content {
+    height: 80vh;
+    max-height: 80vh;
+}
+
+#agent-modal .modal-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+#agent-modal .modal-header h2 {
+    margin: 0;
+    white-space: nowrap;
+}
+
+#agent-modal .modal-close {
+    margin-left: auto;
+}
+
+.agent-modal-tabs {
+    display: flex;
+    gap: 4px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    padding: 2px;
+}
+
+.agent-tab {
+    padding: 5px 14px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: var(--transition);
+    font-family: var(--font-mono);
+}
+
+.agent-tab:hover {
+    color: var(--text-primary);
+}
+
+.agent-tab.active {
+    background: var(--bg-card);
+    color: var(--accent-primary);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.agent-modal-body {
+    padding: 0 !important;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+}
+
+.agent-panel {
+    display: none;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+    padding: 16px;
+}
+
+.agent-panel.active {
+    display: flex;
+}
+
+/* Agent History */
+.agent-history-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.agent-history-entry {
+    display: flex;
+    gap: 12px;
+    padding: 10px 12px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    font-size: 0.82rem;
+    border-left: 3px solid var(--border-color);
+}
+
+.agent-history-entry.type-gate_decision {
+    border-left-color: var(--accent-primary);
+}
+
+.agent-history-entry.type-gate_decision.rejected {
+    border-left-color: var(--status-warning);
+}
+
+.agent-history-entry.type-failure_handled {
+    border-left-color: var(--status-error);
+}
+
+.agent-history-entry.type-recurring_handled {
+    border-left-color: var(--status-warning);
+}
+
+.agent-history-entry.type-chat {
+    border-left-color: var(--accent-secondary);
+}
+
+.agent-history-entry.type-gate_error,
+.agent-history-entry.type-failure_error,
+.agent-history-entry.type-recurring_error {
+    border-left-color: var(--status-error);
+    opacity: 0.7;
+}
+
+.agent-history-icon {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+}
+
+.agent-history-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.agent-history-title {
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 2px;
+}
+
+.agent-history-detail {
+    color: var(--text-tertiary);
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 80px;
+    overflow: hidden;
+}
+
+.agent-history-time {
+    flex-shrink: 0;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+.agent-history-empty {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-tertiary);
+}
+
+
 /* ============== User Menu ============== */
 
 .user-menu {
@@ -4649,14 +4830,52 @@ a.btn {
     color: var(--status-error);
 }
 
+.user-menu-github {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    font-size: 0.78rem;
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+}
+
+.user-menu-github-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    margin-left: auto;
+}
+
+.user-menu-github-dot.connected {
+    background: var(--status-success);
+}
+
+.user-menu-github-dot.disconnected {
+    background: var(--status-error);
+}
+
+/* Icon-only button variant */
+.btn-icon {
+    padding: 6px;
+    min-width: unset;
+}
+
 
 /* ============== Settings Modal ============== */
+
+#settings-modal .modal-content {
+    height: 80vh;
+    max-height: 80vh;
+}
 
 .settings-modal-body {
     padding: 0 !important;
     display: flex;
     flex-direction: column;
-    min-height: 400px;
+    flex: 1;
+    overflow: hidden;
 }
 
 .settings-tabs {

@@ -145,6 +145,7 @@ async def lifespan(app: FastAPI):
             llm_agent = LLMAgent(
                 config=settings.pulsar_config,
                 mcp_api_key=settings.mcp.api_key,
+                data_dir=settings.data_dir,
             )
             logger.info("LLM agent initialized for error handling")
         except Exception as e:
@@ -434,10 +435,19 @@ async def admin_llm_test(request: Request):
 
     try:
         result = await llm_agent._run_agent(system_prompt, user_message)
+        llm_agent._record("chat", message=user_message[:200], response=result[:500] if result else "")
         return {"response": result}
     except Exception as e:
         logger.error("LLM test error", error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/agent-history")
+async def admin_agent_history():
+    """Get LLM agent action history (admin only)."""
+    if not llm_agent:
+        return {"history": []}
+    return {"history": llm_agent.get_history()}
 
 
 # ============== Dashboard ==============

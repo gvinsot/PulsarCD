@@ -10,6 +10,7 @@ Replaces direct Swarm API notifications with an agentic loop that:
 import json
 import re
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
@@ -22,6 +23,7 @@ logger = structlog.get_logger()
 _NOTIFICATION_COOLDOWN = timedelta(hours=1)
 _MAX_ITERATIONS = 10
 _MAX_OUTPUT_BYTES = 64 * 1024  # 64 KB for error output in prompts
+_MAX_HISTORY = 100  # Max entries in agent history
 
 _ERROR_LINE_RE = re.compile(
     r'\b(error|ERROR|Error|FAIL|failed|FAILED|exception|Exception|'
@@ -60,7 +62,7 @@ def _build_error_output(output: str, max_bytes: int = _MAX_OUTPUT_BYTES) -> str:
 class LLMAgent:
     """Async LLM agent that uses MCP tools to investigate and handle errors."""
 
-    def __init__(self, config: PulsarConfig, mcp_api_key: str = ""):
+    def __init__(self, config: PulsarConfig, mcp_api_key: str = "", data_dir: str = "/data"):
         self._llm_url = config.llm.url.rstrip("/")
         self._llm_model = config.llm.model
         self._llm_api_key = config.llm.api_key
@@ -71,6 +73,46 @@ class LLMAgent:
         self._tools_cache: Optional[List[dict]] = None
         self._tool_server_map: Dict[str, Tuple[str, str]] = {}
         self._cooldown_map: Dict[str, datetime] = {}
+        self._history_path = Path(data_dir) / "agent_history.json"
+        self._history: List[Dict[str, Any]] = self._load_history()
+
+    def _load_history(self) -> List[Dict[str, Any]]:
+        """Load agent history from file."""
+        if self._history_path.exists():
+            try:
+                raw = json.loads(self._history_path.read_text(encoding="utf-8"))
+                if isinstance(raw, list):
+                    return raw[-_MAX_HISTORY:]
+            except Exception as e:
+                logger.warning("Failed to load agent history", error=str(e))
+        return []
+
+    def _save_history(self) -> None:
+        """Persist agent history to file."""
+        try:
+            self._history_path.parent.mkdir(parents=True, exist_ok=True)
+            self._history_path.write_text(
+                json.dumps(self._history, ensure_ascii=False, indent=1),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.warning("Failed to save agent history", error=str(e))
+
+    def _record(self, action_type: str, **kwargs) -> None:
+        """Record an agent action in history and persist to file."""
+        entry = {
+            "type": action_type,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            **kwargs,
+        }
+        self._history.append(entry)
+        if len(self._history) > _MAX_HISTORY:
+            self._history = self._history[-_MAX_HISTORY:]
+        self._save_history()
+
+    def get_history(self) -> List[Dict[str, Any]]:
+        """Return agent action history (newest first)."""
+        return list(reversed(self._history))
 
     def _is_cooled_down(self, dedup_key: str) -> bool:
         """Check if a dedup key is within cooldown window."""
@@ -321,10 +363,14 @@ class LLMAgent:
         try:
             result = await self._run_agent(system_prompt, user_message)
             self._cooldown_map[dedup_key] = datetime.utcnow()
+            self._record("failure_handled", stage=stage, repo=repo_name,
+                         version=version, response=result[:500] if result else "")
             logger.info("LLM agent handled failure",
                         stage=stage, repo=repo_name,
                         result_preview=result[:200] if result else "(empty)")
         except Exception as e:
+            self._record("failure_error", stage=stage, repo=repo_name,
+                         version=version, error=str(e))
             logger.error("LLM agent error during failure handling",
                          stage=stage, repo=repo_name,
                          error_type=type(e).__name__, error=str(e))
@@ -381,11 +427,15 @@ class LLMAgent:
         try:
             result = await self._run_agent(system_prompt, user_message)
             self._cooldown_map[dedup_key] = datetime.utcnow()
+            self._record("recurring_handled", services=services_list,
+                         count=pattern.count, response=result[:500] if result else "")
             logger.info("LLM agent handled recurring error",
                         fingerprint=pattern.fingerprint,
                         result_preview=result[:200] if result else "(empty)")
             return result
         except Exception as e:
+            self._record("recurring_error", services=services_list,
+                         count=pattern.count, error=str(e))
             logger.error("LLM agent error during recurring error handling",
                          fingerprint=pattern.fingerprint,
                          error_type=type(e).__name__, error=str(e))
@@ -449,12 +499,16 @@ class LLMAgent:
 
             # Parse JSON decision from response (last line or embedded)
             approved, reason = self._parse_gate_decision(result)
+            self._record("gate_decision", transition=transition, repo=repo_name,
+                         version=version, approved=approved, reason=reason[:500])
             logger.info("LLM gate decision",
                         transition=transition, repo=repo_name,
                         approved=approved, reason=reason[:200])
             return approved, reason
 
         except Exception as e:
+            self._record("gate_error", transition=transition, repo=repo_name,
+                         version=version, error=str(e))
             logger.error("LLM gate evaluation failed, auto-approving",
                          transition=transition, repo=repo_name,
                          error_type=type(e).__name__, error=str(e))
