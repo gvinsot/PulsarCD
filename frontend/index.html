@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/style.css?v=25">
+    <link rel="stylesheet" href="/static/css/style.css?v=26">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
     <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
@@ -519,100 +519,6 @@
                                 </svg>
                                 Save
                             </button>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Settings Modal -->
-                <div id="settings-modal" class="modal">
-                    <div class="modal-content modal-lg">
-                        <div class="modal-header">
-                            <h2>Settings</h2>
-                            <button class="modal-close" onclick="closeSettingsModal()">&times;</button>
-                        </div>
-                        <div class="modal-body settings-modal-body">
-                            <div class="settings-tabs">
-                                <button class="settings-tab active" data-tab="llm" onclick="switchSettingsTab('llm')">LLM</button>
-                                <button class="settings-tab" data-tab="mcp" onclick="switchSettingsTab('mcp')">MCP Servers</button>
-                                <button class="settings-tab" data-tab="errors" onclick="switchSettingsTab('errors')">Error Handling</button>
-                                <button class="settings-tab" data-tab="users" onclick="switchSettingsTab('users')">Users</button>
-                            </div>
-
-                            <!-- LLM Tab -->
-                            <div class="settings-panel active" id="settings-panel-llm">
-                                <div class="settings-field">
-                                    <label>LLM URL</label>
-                                    <input type="text" id="settings-llm-url" placeholder="http://vllm:8000" />
-                                </div>
-                                <div class="settings-field">
-                                    <label>Model</label>
-                                    <input type="text" id="settings-llm-model" placeholder="model name" />
-                                </div>
-                                <div class="settings-field">
-                                    <label>API Key</label>
-                                    <input type="password" id="settings-llm-apikey" placeholder="(optional)" />
-                                </div>
-                            </div>
-
-                            <!-- MCP Servers Tab -->
-                            <div class="settings-panel" id="settings-panel-mcp">
-                                <div id="mcp-servers-list"></div>
-                                <button class="btn btn-sm btn-secondary" onclick="addMCPServer()">+ Add MCP Server</button>
-                            </div>
-
-                            <!-- Error Handling Tab -->
-                            <div class="settings-panel" id="settings-panel-errors">
-                                <div class="settings-field">
-                                    <label class="settings-toggle-label">
-                                        <input type="checkbox" id="settings-error-enabled" />
-                                        Enable LLM error handling
-                                    </label>
-                                </div>
-                                <div class="settings-field">
-                                    <label>General instructions</label>
-                                    <textarea id="settings-error-instructions" rows="3"></textarea>
-                                </div>
-                                <div class="settings-field">
-                                    <label>On build failure</label>
-                                    <textarea id="settings-error-build" rows="2"></textarea>
-                                </div>
-                                <div class="settings-field">
-                                    <label>On test failure</label>
-                                    <textarea id="settings-error-test" rows="2"></textarea>
-                                </div>
-                                <div class="settings-field">
-                                    <label>On deploy failure</label>
-                                    <textarea id="settings-error-deploy" rows="2"></textarea>
-                                </div>
-                                <div class="settings-field">
-                                    <label>On recurring error</label>
-                                    <textarea id="settings-error-recurring" rows="2"></textarea>
-                                </div>
-                            </div>
-
-                            <!-- Users Tab -->
-                            <div class="settings-panel" id="settings-panel-users">
-                                <div id="users-list"></div>
-                                <div class="settings-add-user">
-                                    <h4>Add user</h4>
-                                    <div class="settings-add-user-form">
-                                        <input type="text" id="new-user-username" placeholder="Username" />
-                                        <input type="password" id="new-user-password" placeholder="Password" />
-                                        <select id="new-user-role">
-                                            <option value="viewer">viewer</option>
-                                            <option value="admin">admin</option>
-                                        </select>
-                                        <button class="btn btn-sm btn-primary" onclick="createUser()">Add</button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="modal-footer">
-                            <div id="settings-status" class="settings-status"></div>
-                            <div class="modal-footer-actions">
-                                <button class="btn btn-secondary" onclick="closeSettingsModal()">Cancel</button>
-                                <button class="btn btn-primary" onclick="saveSettings()">Save</button>
-                            </div>
                         </div>
                     </div>
                 </div>
@@ -1227,9 +1133,102 @@
                     </div>
                 </div>
             </div>
+            <!-- Settings Modal (global, outside views) -->
+            <div id="settings-modal" class="modal">
+                <div class="modal-content modal-lg">
+                    <div class="modal-header">
+                        <h2>Settings</h2>
+                        <button class="modal-close" onclick="closeSettingsModal()">&times;</button>
+                    </div>
+                    <div class="modal-body settings-modal-body">
+                        <div class="settings-tabs">
+                            <button class="settings-tab active" data-tab="llm" onclick="switchSettingsTab('llm')">LLM</button>
+                            <button class="settings-tab" data-tab="mcp" onclick="switchSettingsTab('mcp')">MCP Servers</button>
+                            <button class="settings-tab" data-tab="errors" onclick="switchSettingsTab('errors')">Error Handling</button>
+                            <button class="settings-tab" data-tab="users" onclick="switchSettingsTab('users')">Users</button>
+                        </div>
+
+                        <!-- LLM Tab -->
+                        <div class="settings-panel active" id="settings-panel-llm">
+                            <div class="settings-field">
+                                <label>LLM URL</label>
+                                <input type="text" id="settings-llm-url" placeholder="http://vllm:8000" />
+                            </div>
+                            <div class="settings-field">
+                                <label>Model</label>
+                                <input type="text" id="settings-llm-model" placeholder="model name" />
+                            </div>
+                            <div class="settings-field">
+                                <label>API Key</label>
+                                <input type="password" id="settings-llm-apikey" placeholder="(optional)" />
+                            </div>
+                        </div>
+
+                        <!-- MCP Servers Tab -->
+                        <div class="settings-panel" id="settings-panel-mcp">
+                            <div id="mcp-servers-list"></div>
+                            <button class="btn btn-sm btn-secondary" onclick="addMCPServer()">+ Add MCP Server</button>
+                        </div>
+
+                        <!-- Error Handling Tab -->
+                        <div class="settings-panel" id="settings-panel-errors">
+                            <div class="settings-field">
+                                <label class="settings-toggle-label">
+                                    <input type="checkbox" id="settings-error-enabled" />
+                                    Enable LLM error handling
+                                </label>
+                            </div>
+                            <div class="settings-field">
+                                <label>General instructions</label>
+                                <textarea id="settings-error-instructions" rows="3"></textarea>
+                            </div>
+                            <div class="settings-field">
+                                <label>On build failure</label>
+                                <textarea id="settings-error-build" rows="2"></textarea>
+                            </div>
+                            <div class="settings-field">
+                                <label>On test failure</label>
+                                <textarea id="settings-error-test" rows="2"></textarea>
+                            </div>
+                            <div class="settings-field">
+                                <label>On deploy failure</label>
+                                <textarea id="settings-error-deploy" rows="2"></textarea>
+                            </div>
+                            <div class="settings-field">
+                                <label>On recurring error</label>
+                                <textarea id="settings-error-recurring" rows="2"></textarea>
+                            </div>
+                        </div>
+
+                        <!-- Users Tab -->
+                        <div class="settings-panel" id="settings-panel-users">
+                            <div id="users-list"></div>
+                            <div class="settings-add-user">
+                                <h4>Add user</h4>
+                                <div class="settings-add-user-form">
+                                    <input type="text" id="new-user-username" placeholder="Username" />
+                                    <input type="password" id="new-user-password" placeholder="Password" />
+                                    <select id="new-user-role">
+                                        <option value="viewer">viewer</option>
+                                        <option value="admin">admin</option>
+                                    </select>
+                                    <button class="btn btn-sm btn-primary" onclick="createUser()">Add</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <div id="settings-status" class="settings-status"></div>
+                        <div class="modal-footer-actions">
+                            <button class="btn btn-secondary" onclick="closeSettingsModal()">Cancel</button>
+                            <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
     
-    <script src="/static/js/app.js?v=20"></script>
+    <script src="/static/js/app.js?v=21"></script>
 </body>
 </html>
