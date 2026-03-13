@@ -10,8 +10,8 @@ import os
 from pathlib import Path
 from typing import List, Optional
 
+import bcrypt as _bcrypt
 import structlog
-from passlib.hash import bcrypt
 from pydantic import BaseModel
 
 logger = structlog.get_logger()
@@ -50,7 +50,7 @@ class UserManager:
         password = os.environ.get("PULSARCD_AUTH__PASSWORD", "changeme")
         self._users = [User(
             username=username,
-            password_hash=bcrypt.hash(password),
+            password_hash=_bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode(),
             role="admin",
         )]
         self._save_sync()
@@ -74,7 +74,7 @@ class UserManager:
         """Verify credentials and return user if valid."""
         for user in self._users:
             if user.username == username:
-                if bcrypt.verify(password, user.password_hash):
+                if _bcrypt.checkpw(password.encode(), user.password_hash.encode()):
                     return user
                 return None
         return None
@@ -100,7 +100,7 @@ class UserManager:
 
             user = User(
                 username=username,
-                password_hash=bcrypt.hash(password),
+                password_hash=_bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode(),
                 role=role,
             )
             self._users.append(user)
@@ -119,7 +119,7 @@ class UserManager:
                     raise ValueError(f"Invalid role: {role}")
                 user.role = role
             if password is not None:
-                user.password_hash = bcrypt.hash(password)
+                user.password_hash = _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
             await self._save()
             logger.info("User updated", username=username, role=user.role)
             return {"username": user.username, "role": user.role}

@@ -4,10 +4,10 @@
 
 ### The fastest path from code to deploy. No gates. No waiting. Just ship.
 
-![Dashboard Screenshot](Screenshot2.png)
+![Dashboard Screenshot](docs/Screenshot2.png)
 *Dashboard: Real-time metrics, error tracking, and resource monitoring*
 
-![Stacks Management](Screenshot1.png)
+![Stacks Management](docs/Screenshot1.png)
 *Stacks: Build and deploy directly from your GitHub repositories*
 
 ---
@@ -19,7 +19,7 @@
 Every minute spent waiting for a build, switching between tools, SSH-ing into a machine, or manually checking logs is a minute not spent creating. Traditional DevOps workflows are fragmented by design — GitHub over here, CI/CD over there, monitoring somewhere else, deployment in yet another tool. Each context switch kills momentum. Each manual step is a bottleneck.
 
 
-![Short Cycle](Cycle.png)
+![Short Cycle](docs/Cycle.png)
 
 We believe that compressing the cycle **commit → build → deploy → observe** into the shortest possible loop is the key to unlocking a new speed of development.
 

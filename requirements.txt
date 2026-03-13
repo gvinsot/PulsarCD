@@ -21,7 +21,7 @@ apscheduler>=3.10.4
 
 # Authentication (pinned - newer versions may change jwt.decode behavior)
 PyJWT==2.8.0
-passlib[bcrypt]>=1.7.4
+bcrypt>=4.0.0
 
 # MCP (Model Context Protocol)
 mcp>=1.9.0
