@@ -43,132 +43,20 @@ opensearch: OpenSearchClient = None
 collector: Collector = None
 github_service: GitHubService = None
 error_detector = None
-
-# ============== Swarm Agent Notification ==============
-
-SWARM_API_BASE = "https://swarm.methodinfo.fr/api/swarm"
-SWARM_AGENT_NAME = "QWEN"
-_NOTIFICATION_COOLDOWN = timedelta(hours=1)
-
-# Maps "stage:repo_name" -> datetime of last successful notification
-# Prevents sending the same failure task more than once per hour
-_notified_failures: Dict[str, datetime] = {}
-
-
-_ERROR_LINE_RE = re.compile(
-    r'\b(error|ERROR|Error|FAIL|failed|FAILED|exception|Exception|Traceback|traceback|fatal|FATAL|critical|CRITICAL)\b'
-)
-_MAX_TASK_BYTES = 128 * 1024  # 128 KB hard limit for the task payload
-
-
-def _build_error_output(output: str, max_bytes: int) -> str:
-    """Build a compact output that prioritizes error lines + last 50 lines of context.
-
-    Guarantees the result fits in max_bytes (UTF-8) while ensuring error lines
-    are always included even if they appear in the middle of a long output.
-    """
-    if not output or not output.strip():
-        return "(no output)"
-
-    lines = output.strip().splitlines()
-
-    # Collect error lines (preserving original order, deduplicating)
-    error_lines = [l for l in lines if _ERROR_LINE_RE.search(l)]
-
-    # Last 50 lines for context
-    context_lines = lines[-50:]
-
-    # Merge: error lines first, then context lines; deduplicate preserving order
-    seen: set = set()
-    merged: list = []
-    for line in error_lines + context_lines:
-        if line not in seen:
-            seen.add(line)
-            merged.append(line)
-
-    result = '\n'.join(merged)
-
-    # Hard-truncate to max_bytes
-    encoded = result.encode('utf-8')
-    if len(encoded) > max_bytes:
-        truncated = encoded[:max_bytes - 60].decode('utf-8', errors='ignore')
-        last_nl = truncated.rfind('\n')
-        if last_nl > max_bytes // 2:
-            truncated = truncated[:last_nl]
-        result = truncated + f'\n... [truncated — {len(lines)} lines total]'
-
-    return result
+user_manager = None
+llm_agent = None
 
 
 async def _notify_agent_failure(stage: str, repo_name: str, version: str, error_output: str):
-    """Notify the QWEN agent of a build/test/deploy failure so it can attempt a fix."""
-    logger.info("_notify_agent_failure called",
-                stage=stage, repo=repo_name, version=version,
-                error_output_len=len(error_output))
-    if not settings or not settings.swarm.secret_key:
-        logger.error("Swarm agent notification skipped: no secret key configured",
-                     has_settings=settings is not None,
-                     has_secret_key=bool(settings and settings.swarm.secret_key))
+    """Notify the LLM agent of a build/test/deploy failure so it can investigate and act."""
+    if llm_agent is None:
+        logger.debug("LLM agent not configured, skipping failure notification")
         return
-
-    # Dedup: skip if the same stage+repo was already notified within the cooldown window
-    dedup_key = f"{stage}:{repo_name}"
-    now = datetime.utcnow()
-    last_sent = _notified_failures.get(dedup_key)
-    if last_sent and (now - last_sent) < _NOTIFICATION_COOLDOWN:
-        logger.info("Swarm agent notification skipped (cooldown)",
-                    stage=stage, repo=repo_name,
-                    next_allowed_in=str(_NOTIFICATION_COOLDOWN - (now - last_sent)))
-        return
-
-    # Purge stale entries to avoid unbounded growth
-    stale = [k for k, ts in _notified_failures.items() if (now - ts) >= _NOTIFICATION_COOLDOWN]
-    for k in stale:
-        del _notified_failures[k]
-
-    url = f"{SWARM_API_BASE}/agents/{SWARM_AGENT_NAME}/tasks"
-    logger.info("Notifying swarm agent of failure", url=url, stage=stage, repo=repo_name)
-
     try:
-        header = (
-            f"{stage.upper()} FAILED for project '{repo_name}' (version: {version}).\n"
-            f"Investigate and fix the {stage} failure. Here is the error output:\n"
-            f"```\n"
-        )
-        footer = "\n```"
-        available = _MAX_TASK_BYTES - len(header.encode('utf-8')) - len(footer.encode('utf-8'))
-        output_section = _build_error_output(error_output, available)
-        task_description = header + output_section + footer
-
-        payload = {"task": task_description, "project": repo_name}
-        headers = {"Authorization": f"Bearer {settings.swarm.secret_key}"}
-
-        logger.info("Swarm agent request", url=url, stage=stage, repo=repo_name,
-                    task_bytes=len(task_description.encode('utf-8')),
-                    error_lines=output_section.count('\n') + 1)
-
-        async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.post(
-                url, json=payload, timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                body = await resp.text()
-                if resp.status in (200, 201):
-                    _notified_failures[dedup_key] = now
-                    logger.info("Repair task sent to agent",
-                                agent=SWARM_AGENT_NAME, stage=stage, repo=repo_name,
-                                status=resp.status, response=body[:200])
-                else:
-                    logger.error("Failed to send repair task to agent",
-                                 agent=SWARM_AGENT_NAME, stage=stage, repo=repo_name,
-                                 status=resp.status, url=url, response=body[:500])
-
-    except aiohttp.ClientError as e:
-        logger.error("HTTP error notifying swarm agent",
-                     stage=stage, repo=repo_name, url=url,
-                     error_type=type(e).__name__, error=str(e))
+        await llm_agent.handle_failure(stage, repo_name, version, error_output)
     except Exception as e:
-        logger.error("Unexpected error notifying swarm agent",
-                     stage=stage, repo=repo_name, url=url,
+        logger.error("LLM agent failure handling error",
+                     stage=stage, repo=repo_name,
                      error_type=type(e).__name__, error=str(e))
 
 
@@ -212,13 +100,17 @@ _background_actions: Dict[str, BackgroundAction] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    global settings, opensearch, collector, github_service, error_detector
-    
+    global settings, opensearch, collector, github_service, error_detector, user_manager, llm_agent
+
     # Startup
     logger.info("Starting PulsarCD API")
 
     settings = load_config()
     opensearch = OpenSearchClient(settings.opensearch)
+
+    # Initialize user manager (file-based multi-user auth)
+    from .user_manager import UserManager
+    user_manager = UserManager(path=f"{settings.data_dir}/users.json")
 
     # Initialize OpenSearch with retry (wait for DNS/service to be ready)
     max_retries = 30
@@ -246,14 +138,24 @@ async def lifespan(app: FastAPI):
     # Initialize GitHub service
     github_service = GitHubService(settings.github)
 
-    # Start recurring error detector (always, even without a Swarm key — Swarm
-    # notifications are optional but the detection and history still run)
+    # Initialize LLM agent for error handling (replaces Swarm API notifications)
+    if settings.pulsar_config:
+        try:
+            from .llm_agent import LLMAgent
+            llm_agent = LLMAgent(
+                config=settings.pulsar_config,
+                mcp_api_key=settings.mcp.api_key,
+            )
+            logger.info("LLM agent initialized for error handling")
+        except Exception as e:
+            logger.warning("Failed to initialize LLM agent", error=str(e))
+
+    # Start recurring error detector (always — LLM agent notifications are optional
+    # but the detection and history still run)
     from .error_detector import RecurringErrorDetector
     error_detector = RecurringErrorDetector(
         opensearch_client=opensearch,
-        swarm_api_base=SWARM_API_BASE,
-        swarm_agent_name=SWARM_AGENT_NAME,
-        swarm_secret_key=settings.swarm.secret_key,
+        llm_agent=llm_agent,
         github_service=github_service,
     )
     await error_detector.start()
@@ -382,8 +284,13 @@ async def auth_middleware(request: Request, call_next):
     try:
         payload = decode_token(token, settings.auth.jwt_secret)
         request.state.user = payload.get("sub", "")
+        request.state.role = payload.get("role", "viewer")
     except jwt.PyJWTError:
         return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
+
+    # Admin-only paths
+    if path.startswith("/api/admin/") and getattr(request.state, "role", "") != "admin":
+        return JSONResponse(status_code=403, content={"detail": "Admin access required"})
 
     return await call_next(request)
 
@@ -402,8 +309,9 @@ async def auth_login(request: Request):
     username = body.get("username", "")
     password = body.get("password", "")
 
-    if username == settings.auth.username and password == settings.auth.password:
-        token = create_token(username, settings.auth.jwt_secret, settings.auth.jwt_expiry_hours)
+    user = user_manager.authenticate(username, password) if user_manager else None
+    if user:
+        token = create_token(username, settings.auth.jwt_secret, settings.auth.jwt_expiry_hours, role=user.role)
         return {"token": token}
 
     _record_login_attempt(client_ip)
@@ -414,7 +322,89 @@ async def auth_login(request: Request):
 @app.get("/api/auth/me")
 async def auth_me(request: Request):
     """Return the current authenticated user."""
-    return {"username": getattr(request.state, "user", None)}
+    return {
+        "username": getattr(request.state, "user", None),
+        "role": getattr(request.state, "role", "viewer"),
+    }
+
+
+# ============== Admin: User Management ==============
+
+@app.get("/api/admin/users")
+async def admin_list_users():
+    """List all users (admin only)."""
+    return {"users": user_manager.list_users()}
+
+
+@app.post("/api/admin/users")
+async def admin_create_user(request: Request):
+    """Create a new user (admin only)."""
+    body = await request.json()
+    username = body.get("username", "").strip()
+    password = body.get("password", "")
+    role = body.get("role", "viewer")
+
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password are required")
+
+    try:
+        user = await user_manager.create_user(username, password, role)
+        return user
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.put("/api/admin/users/{username}")
+async def admin_update_user(username: str, request: Request):
+    """Update an existing user (admin only)."""
+    body = await request.json()
+    password = body.get("password")
+    role = body.get("role")
+
+    try:
+        user = await user_manager.update_user(username, password=password, role=role)
+        return user
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/admin/users/{username}")
+async def admin_delete_user(username: str):
+    """Delete a user (admin only)."""
+    try:
+        await user_manager.delete_user(username)
+        return {"deleted": True}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ============== Admin: Configuration ==============
+
+@app.get("/api/admin/config")
+async def admin_get_config():
+    """Get current configuration (admin only)."""
+    if settings.pulsar_config:
+        return settings.pulsar_config.model_dump()
+    return {}
+
+
+@app.put("/api/admin/config")
+async def admin_update_config(request: Request):
+    """Update configuration file (admin only)."""
+    from .config_file import PulsarConfig, save_config_file, _apply_env_overrides
+    body = await request.json()
+    try:
+        new_config = PulsarConfig(**body)
+        save_config_file(new_config, settings.data_dir)
+        settings.pulsar_config = _apply_env_overrides(new_config)
+
+        # Invalidate LLM agent tools cache so it picks up new MCP servers
+        if llm_agent:
+            llm_agent.invalidate_tools_cache()
+
+        return {"saved": True}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ============== Dashboard ==============

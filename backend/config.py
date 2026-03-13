@@ -1,6 +1,7 @@
 """Configuration management for PulsarCD.
 
-All configuration is done via environment variables. No config file required!
+Configuration is loaded from environment variables + /data/config.yml file.
+Environment variables override config file values.
 
 Environment variables:
 - PULSARCD_HOSTS: JSON array of host configs
@@ -9,6 +10,7 @@ Environment variables:
 - PULSARCD_COLLECTOR__LOG_INTERVAL_SECONDS: Log collection interval
 - PULSARCD_COLLECTOR__METRICS_INTERVAL_SECONDS: Metrics collection interval
 - PULSARCD_AI__MODEL: AI model name
+- PULSARCD_DATA_DIR: Data directory for config and users files (default: /data)
 """
 
 import json
@@ -130,6 +132,9 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
+    # Data directory for config file and users file
+    data_dir: str = "/data"
+
     # OS user for running terminal and git commands locally (via su)
     run_user: Optional[str] = None
 
@@ -151,11 +156,14 @@ class Settings(BaseSettings):
     # MCP
     mcp: MCPConfig = MCPConfig()
 
-    # Swarm agent API
+    # Swarm agent API (legacy, replaced by LLM agent)
     swarm: SwarmConfig = SwarmConfig()
 
     # Hosts (configured via PULSARCD_HOSTS env var)
     hosts: List[HostConfig] = []
+
+    # Config file (loaded from /data/config.yml)
+    pulsar_config: Optional[object] = None
 
     class Config:
         env_prefix = "PULSARCD_"
@@ -260,8 +268,11 @@ def load_config() -> Settings:
     if not settings.mcp.api_key:
         settings.mcp.api_key = uuid.uuid4().hex
 
-    # Swarm agent API settings
+    # Swarm agent API settings (legacy)
     load_env(settings.swarm, "secret_key", "PULSARCD_SWARM__SECRET_KEY")
+
+    # Data directory
+    load_env(settings, "data_dir", "PULSARCD_DATA_DIR")
 
     # Run user
     load_env(settings, "run_user", "PULSARCD_RUN_USER")
@@ -278,6 +289,13 @@ def load_config() -> Settings:
     load_env(settings.github, "registry_url", "PULSARCD_GITHUB__REGISTRY_URL")
     load_env(settings.github, "registry_username", "PULSARCD_GITHUB__REGISTRY_USERNAME")
     load_env(settings.github, "registry_password", "PULSARCD_GITHUB__REGISTRY_PASSWORD")
+
+    # Load config file from data directory
+    try:
+        from backend.config_file import load_config_file
+        settings.pulsar_config = load_config_file(settings.data_dir)
+    except Exception as e:
+        print(f"Warning: Failed to load config file: {e}")
 
     return settings
 

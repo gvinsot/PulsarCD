@@ -3,7 +3,7 @@
 Runs as a background task, periodically scanning recent ERROR/FATAL/CRITICAL logs
 from OpenSearch, vectorizing them with zvec, and detecting recurring patterns.
 When a recurring error pattern is confirmed (N occurrences across M services/containers),
-it posts a repair task to the QWEN agent.
+it delegates to the LLM agent for investigation and remediation.
 """
 
 import asyncio
@@ -14,7 +14,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-import aiohttp
 import structlog
 
 logger = structlog.get_logger()
@@ -107,15 +106,13 @@ class RecurringErrorDetector:
     - Patterns accumulate counts across scans and are evicted after
       `pattern_ttl_hours` of inactivity (default 12h)
     - When a pattern hits the threshold (count >= min_occurrences),
-      posts a task to the QWEN agent; re-notifies at most once per hour
+      delegates to the LLM agent for investigation; re-notifies at most once per hour
     """
 
     def __init__(
         self,
         opensearch_client,
-        swarm_api_base: str,
-        swarm_agent_name: str,
-        swarm_secret_key: str,
+        llm_agent=None,
         github_service=None,
         scan_interval: int = 60,
         initial_lookback_hours: int = 12,
@@ -126,9 +123,7 @@ class RecurringErrorDetector:
         burst_window_seconds: int = 10,
     ):
         self._opensearch = opensearch_client
-        self._swarm_api_base = swarm_api_base
-        self._swarm_agent_name = swarm_agent_name
-        self._swarm_secret_key = swarm_secret_key
+        self._llm_agent = llm_agent
         self._github_service = github_service
         self._scan_interval = scan_interval
         self._initial_lookback_hours = initial_lookback_hours
@@ -507,7 +502,7 @@ class RecurringErrorDetector:
         return None
 
     async def _notify_recurring_error(self, pattern: ErrorPattern):
-        """Record a recurring error in history and optionally post a task to the QWEN agent."""
+        """Record a recurring error in history and delegate to LLM agent."""
         # Always record in history so the dashboard panel is populated
         pattern.notified = True
         entry = {
@@ -526,83 +521,21 @@ class RecurringErrorDetector:
         self._notification_history.insert(0, entry)
         self._notification_history = self._notification_history[:20]
 
-        if not self._swarm_secret_key:
-            logger.warning("Swarm task NOT sent: no secret_key configured",
-                           fingerprint=pattern.fingerprint, count=pattern.count)
+        # Delegate to LLM agent for investigation and action
+        if not self._llm_agent:
+            logger.debug("LLM agent not configured, skipping recurring error notification",
+                         fingerprint=pattern.fingerprint, count=pattern.count)
             return
-
-        services_list = ', '.join(sorted(pattern.services)[:10])
-        duration = pattern.last_seen - pattern.first_seen
-        duration_str = f"{int(duration.total_seconds())}s" if duration.total_seconds() < 3600 else f"{duration.total_seconds() / 3600:.1f}h"
-
-        task_description = (
-            f"RECURRING ERROR DETECTED\n"
-            f"========================\n"
-            f"Occurrences: {pattern.count} in {duration_str}\n"
-            f"Affected services: {services_list}\n"
-            f"Error sample:\n```\n{pattern.sample_message}\n```\n\n"
-            f"3 possible actions:\n"
-            f"1. CORRIGER: Investigate root cause and fix the issue\n"
-            f"2. IGNORER: If this is a known/expected error, mark it as ignored\n"
-            f"3. ALERTER ADMIN: If MCP is available, send a message to the admin for manual review\n"
-        )
-
-        # Safety cap: truncate to 128 KB
-        max_bytes = 128 * 1024
-        encoded = task_description.encode('utf-8')
-        if len(encoded) > max_bytes:
-            task_description = encoded[:max_bytes].decode('utf-8', errors='ignore') + '\n... [truncated]'
-
-        # Resolve to the correct-cased GitHub project name.
-        # Try compose_projects first (stack names match repo names better),
-        # then fall back to service names.
-        project_name: Optional[str] = None
-        for candidate in list(sorted(pattern.compose_projects)) + list(sorted(pattern.services)):
-            project_name = await self._resolve_project_name(candidate)
-            if project_name:
-                break
-
-        if not project_name:
-            logger.warning("Skipping Swarm notification — no matching GitHub repo for any affected service/project",
-                           compose_projects=sorted(pattern.compose_projects),
-                           services=sorted(pattern.services),
-                           fingerprint=pattern.fingerprint,
-                           count=pattern.count)
-            return
-
-        url = f"{self._swarm_api_base}/agents/{self._swarm_agent_name}/tasks"
-        headers = {
-            "Authorization": f"Bearer {self._swarm_secret_key}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "task": task_description,
-            "project": project_name,
-        }
-
-        logger.info("Sending recurring error task to agent",
-                    url=url, agent=self._swarm_agent_name,
-                    project=project_name,
-                    count=pattern.count, services=services_list,
-                    task_bytes=len(task_description.encode('utf-8')),
-                    fingerprint=pattern.fingerprint)
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url, json=payload, headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=10),
-                ) as resp:
-                    body = await resp.text()
-                    if resp.status in (200, 201):
-                        logger.info("Recurring error task sent to agent",
-                                    agent=self._swarm_agent_name,
-                                    fingerprint=pattern.fingerprint,
-                                    count=pattern.count,
-                                    services=services_list)
-                    else:
-                        logger.error("Failed to send recurring error task",
-                                     status=resp.status, url=url, response=body[:500])
+            result = await self._llm_agent.handle_recurring_error(pattern)
+            if result:
+                # Store agent response in the notification entry
+                entry["agent_response"] = result[:500]
+                logger.info("LLM agent handled recurring error",
+                            fingerprint=pattern.fingerprint,
+                            count=pattern.count)
         except Exception as e:
-            logger.error("Error notifying agent of recurring error",
+            logger.error("LLM agent error for recurring error",
+                         fingerprint=pattern.fingerprint,
                          error_type=type(e).__name__, error=str(e))

@@ -51,6 +51,8 @@ services:
     volumes:
       # Mount Docker socket for Docker API access
       - /var/run/docker.sock:/var/run/docker.sock
+      # Data volume for config file and users
+      - pulsarcd-data:/data
       # Optional: Mount SSH keys for remote host access (SSH mode)
       # - ~/.ssh:/root/.ssh:ro
     environment:
@@ -121,4 +123,6 @@ networks:
 
 volumes:
   opensearch-data:
+    driver: local
+  pulsarcd-data:
     driver: local

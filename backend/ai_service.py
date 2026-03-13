@@ -521,13 +521,22 @@ ai_service: Optional[AIService] = None
 
 
 def get_ai_service() -> AIService:
-    """Get or create AI service instance."""
+    """Get or create AI service instance.
+
+    Uses config file settings (llm.url, llm.model) with env var fallback.
+    """
     import os
     from .config import settings
 
     global ai_service
     if ai_service is None:
-        vllm_url = os.environ.get("PULSARCD_VLLM_URL", "http://vllm:8000")
-        model = settings.ai.model
+        # Prefer config file settings, fall back to env vars
+        pulsar_config = getattr(settings, "pulsar_config", None)
+        if pulsar_config and hasattr(pulsar_config, "llm"):
+            vllm_url = pulsar_config.llm.url
+            model = pulsar_config.llm.model
+        else:
+            vllm_url = os.environ.get("PULSARCD_VLLM_URL", "http://vllm:8000")
+            model = settings.ai.model
         ai_service = AIService(vllm_url, model)
     return ai_service

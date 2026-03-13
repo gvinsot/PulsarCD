@@ -51,6 +51,8 @@ function logout() {
     showLogin();
 }
 
+let _currentUserRole = 'viewer';
+
 async function checkAuth() {
     const token = getAuthToken();
     if (!token) {
@@ -63,6 +65,9 @@ async function checkAuth() {
             showLogin();
             return;
         }
+        const data = await response.json();
+        _currentUserRole = data.role || 'viewer';
+        updateUserMenu(data.username || 'user', data.role || 'viewer');
         hideLogin();
         switchView(getViewFromHash() || 'dashboard');
     } catch {
@@ -99,6 +104,250 @@ function initLoginForm() {
         }
     });
 }
+
+// ============== User Menu ==============
+
+function updateUserMenu(username, role) {
+    const nameEl = document.getElementById('user-menu-name');
+    const usernameEl = document.getElementById('user-menu-username');
+    const roleEl = document.getElementById('user-menu-role');
+    if (nameEl) nameEl.textContent = username;
+    if (usernameEl) usernameEl.textContent = username;
+    if (roleEl) roleEl.textContent = role;
+
+    // Only show settings for admins
+    const settingsItem = document.getElementById('settings-menu-item');
+    if (settingsItem) settingsItem.style.display = role === 'admin' ? '' : 'none';
+}
+
+function toggleUserMenu() {
+    const menu = document.getElementById('user-menu');
+    menu.classList.toggle('open');
+}
+
+function closeUserMenu() {
+    const menu = document.getElementById('user-menu');
+    menu.classList.remove('open');
+}
+
+// Close user menu when clicking outside
+document.addEventListener('click', (e) => {
+    const menu = document.getElementById('user-menu');
+    if (menu && !menu.contains(e.target)) {
+        menu.classList.remove('open');
+    }
+});
+
+
+// ============== Settings Modal ==============
+
+let _settingsConfig = null;
+
+function switchSettingsTab(tabName) {
+    document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.settings-panel').forEach(p => p.classList.remove('active'));
+    document.querySelector(`.settings-tab[data-tab="${tabName}"]`).classList.add('active');
+    document.getElementById(`settings-panel-${tabName}`).classList.add('active');
+
+    if (tabName === 'users') loadUsersList();
+}
+
+async function openSettingsModal() {
+    const modal = document.getElementById('settings-modal');
+    const status = document.getElementById('settings-status');
+    status.textContent = '';
+    status.className = 'settings-status';
+
+    // Load config
+    const config = await apiGet('/admin/config');
+    if (!config) {
+        status.textContent = 'Failed to load configuration';
+        status.className = 'settings-status error';
+        modal.classList.add('active');
+        return;
+    }
+    _settingsConfig = config;
+
+    // Populate LLM fields
+    const llm = config.llm || {};
+    document.getElementById('settings-llm-url').value = llm.url || '';
+    document.getElementById('settings-llm-model').value = llm.model || '';
+    document.getElementById('settings-llm-apikey').value = llm.api_key || '';
+
+    // Populate MCP servers
+    renderMCPServers(config.mcp_servers || []);
+
+    // Populate error handling
+    const eh = config.error_handling || {};
+    document.getElementById('settings-error-enabled').checked = eh.enabled !== false;
+    document.getElementById('settings-error-instructions').value = eh.instructions || '';
+    document.getElementById('settings-error-build').value = eh.on_build_failure || '';
+    document.getElementById('settings-error-test').value = eh.on_test_failure || '';
+    document.getElementById('settings-error-deploy').value = eh.on_deploy_failure || '';
+    document.getElementById('settings-error-recurring').value = eh.on_recurring_error || '';
+
+    // Reset to LLM tab
+    switchSettingsTab('llm');
+    modal.classList.add('active');
+}
+
+function closeSettingsModal() {
+    document.getElementById('settings-modal').classList.remove('active');
+}
+
+function renderMCPServers(servers) {
+    const container = document.getElementById('mcp-servers-list');
+    container.innerHTML = servers.map((s, i) => `
+        <div class="mcp-server-card" data-index="${i}">
+            <div class="mcp-server-header">
+                <h4>Server ${i + 1}</h4>
+                <button class="mcp-server-remove" onclick="removeMCPServer(${i})" title="Remove">&times;</button>
+            </div>
+            <div class="settings-field">
+                <label>Name</label>
+                <input type="text" class="mcp-name" value="${escapeHtml(s.name || '')}" />
+            </div>
+            <div class="settings-field">
+                <label>URL</label>
+                <input type="text" class="mcp-url" value="${escapeHtml(s.url || '')}" />
+            </div>
+            <div class="settings-field">
+                <label>API Key</label>
+                <input type="password" class="mcp-apikey" value="${escapeHtml(s.api_key || '')}" />
+            </div>
+        </div>
+    `).join('');
+}
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+function addMCPServer() {
+    const servers = collectMCPServers();
+    servers.push({ name: '', url: '', api_key: '' });
+    renderMCPServers(servers);
+}
+
+function removeMCPServer(index) {
+    const servers = collectMCPServers();
+    servers.splice(index, 1);
+    renderMCPServers(servers);
+}
+
+function collectMCPServers() {
+    const cards = document.querySelectorAll('.mcp-server-card');
+    const servers = [];
+    cards.forEach(card => {
+        servers.push({
+            name: card.querySelector('.mcp-name').value,
+            url: card.querySelector('.mcp-url').value,
+            api_key: card.querySelector('.mcp-apikey').value,
+        });
+    });
+    return servers;
+}
+
+async function saveSettings() {
+    const status = document.getElementById('settings-status');
+    status.textContent = 'Saving...';
+    status.className = 'settings-status';
+
+    const config = {
+        llm: {
+            url: document.getElementById('settings-llm-url').value,
+            model: document.getElementById('settings-llm-model').value,
+            api_key: document.getElementById('settings-llm-apikey').value,
+        },
+        mcp_servers: collectMCPServers(),
+        error_handling: {
+            enabled: document.getElementById('settings-error-enabled').checked,
+            instructions: document.getElementById('settings-error-instructions').value,
+            on_build_failure: document.getElementById('settings-error-build').value,
+            on_test_failure: document.getElementById('settings-error-test').value,
+            on_deploy_failure: document.getElementById('settings-error-deploy').value,
+            on_recurring_error: document.getElementById('settings-error-recurring').value,
+        },
+    };
+
+    try {
+        const resp = await fetch(`${API_BASE}/admin/config`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify(config),
+        });
+        if (resp.ok) {
+            status.textContent = 'Saved';
+            status.className = 'settings-status';
+            setTimeout(() => { status.textContent = ''; }, 2000);
+        } else {
+            const err = await resp.json().catch(() => ({}));
+            status.textContent = err.detail || 'Save failed';
+            status.className = 'settings-status error';
+        }
+    } catch (e) {
+        status.textContent = 'Connection error';
+        status.className = 'settings-status error';
+    }
+}
+
+// ============== Users Management (Settings) ==============
+
+async function loadUsersList() {
+    const container = document.getElementById('users-list');
+    container.innerHTML = '<div class="loading-placeholder">Loading...</div>';
+
+    const data = await apiGet('/admin/users');
+    if (!data || !data.users) {
+        container.innerHTML = '<div class="empty-state">Failed to load users</div>';
+        return;
+    }
+
+    container.innerHTML = data.users.map(u => `
+        <div class="user-row">
+            <div class="user-row-info">
+                <span class="user-row-name">${escapeHtml(u.username)}</span>
+                <span class="user-row-role">${escapeHtml(u.role)}</span>
+            </div>
+            <div class="user-row-actions">
+                <button class="btn btn-xs btn-secondary" onclick="deleteUser('${escapeHtml(u.username)}')">Delete</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function createUser() {
+    const username = document.getElementById('new-user-username').value.trim();
+    const password = document.getElementById('new-user-password').value;
+    const role = document.getElementById('new-user-role').value;
+
+    if (!username || !password) return;
+
+    const result = await apiPost('/admin/users', { username, password, role });
+    if (result) {
+        document.getElementById('new-user-username').value = '';
+        document.getElementById('new-user-password').value = '';
+        loadUsersList();
+    }
+}
+
+async function deleteUser(username) {
+    if (!confirm(`Delete user "${username}"?`)) return;
+    try {
+        const resp = await fetch(`${API_BASE}/admin/users/${username}`, {
+            method: 'DELETE',
+            headers: authHeaders(),
+        });
+        if (resp.ok) loadUsersList();
+        else {
+            const err = await resp.json().catch(() => ({}));
+            alert(err.detail || 'Delete failed');
+        }
+    } catch { alert('Connection error'); }
+}
+
 
 // ============== Initialization ==============
 

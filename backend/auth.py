@@ -5,10 +5,11 @@ from datetime import datetime, timedelta, timezone
 import jwt
 
 
-def create_token(username: str, secret: str, expiry_hours: int = 24) -> str:
-    """Create a JWT token for the given username."""
+def create_token(username: str, secret: str, expiry_hours: int = 24, role: str = "viewer") -> str:
+    """Create a JWT token for the given username and role."""
     payload = {
         "sub": username,
+        "role": role,
         "exp": datetime.now(timezone.utc) + timedelta(hours=expiry_hours),
         "iat": datetime.now(timezone.utc),
     }

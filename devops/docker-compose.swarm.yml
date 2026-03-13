@@ -69,6 +69,8 @@ services:
       - ${SSH_KEYS_PATH:-/home/user/.ssh}:/root/.ssh:ro
       # Docker socket for Swarm API queries (read-only)
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Data volume for config file and users
+      - pulsarcd-data:/data
     environment:
       - PULSARCD_DEBUG=false
 
@@ -104,8 +106,6 @@ services:
       - PULSARCD_AUTH__AGENT_KEY=${PULSARCD_AUTH__AGENT_KEY:-}
 
       - PULSARCD_MCP__API_KEY=${PULSARCD_MCP__API_KEY:-}
-      # Swarm agent notification (repair tasks on failure)
-      - PULSARCD_SWARM__SECRET_KEY=${PULSARCD_SWARM__SECRET_KEY:-}
       # Swarm manager config - queries Swarm API to list all containers/services
       # Collection is disabled (agents_only=true), this is only for listing
       - PULSARCD_HOSTS=[{"name":"swarm-manager","mode":"docker","docker_url":"unix:///var/run/docker.sock","swarm_manager":true,"swarm_autodiscover":true}]
@@ -243,6 +243,8 @@ services:
 # ============================================================================
 volumes:
   opensearch-data:
+    driver: local
+  pulsarcd-data:
     driver: local
 
 # ============================================================================
