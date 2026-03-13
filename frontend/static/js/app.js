@@ -92,8 +92,7 @@ function initLoginForm() {
                 const data = await response.json();
                 setAuthToken(data.token);
                 errorEl.style.display = 'none';
-                hideLogin();
-                switchView(getViewFromHash() || 'dashboard');
+                await checkAuth();
             } else {
                 errorEl.textContent = 'Invalid username or password';
                 errorEl.style.display = 'block';
