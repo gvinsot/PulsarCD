@@ -473,21 +473,37 @@ class RecurringErrorDetector:
     # ------------------------------------------------------------------
 
     async def _resolve_project_name(self, compose_name: str) -> Optional[str]:
-        """Resolve a Docker compose project name to the correct-cased GitHub repo name.
+        """Resolve a Docker compose project/stack name to the correct-cased GitHub repo name.
 
-        Returns None if the name cannot be matched to a known starred repo,
-        so that notifications are not sent for unknown/infrastructure projects.
+        The compose_name is typically in the format "stack_service" (e.g. "pulsarteam_sandbox")
+        or just the stack name (e.g. "pulsarteam"). We need to:
+        1. Extract the stack name (first part before underscore, or the whole name)
+        2. Find the GitHub repo where repo_name.lower() == stack_name
+
+        Returns None if the name cannot be matched to a known starred repo.
         """
         if not self._github_service:
             return None
+        
         try:
             repos = await self._github_service.get_starred_repos()
-            lower = compose_name.lower()
+            if not repos:
+                return None
+            
+            # Extract the stack name from compose_name
+            # compose_name could be "pulsarteam_sandbox" or "pulsarteam"
+            # We need to find the repo where repo_name.lower() matches the stack part
+            stack_name = compose_name.split('_')[0].lower()
+            
             for repo in repos:
-                if repo["name"].lower() == lower:
+                repo_name_lower = repo["name"].lower()
+                if repo_name_lower == stack_name:
+                    logger.info("Resolved stack name to GitHub repo",
+                               stack=stack_name, repo=repo["name"])
                     return repo["name"]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to resolve project name", error=str(e))
+        
         return None
 
     async def _notify_recurring_error(self, pattern: ErrorPattern):
