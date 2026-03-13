@@ -371,7 +371,23 @@ function _agentHistoryTitle(entry) {
 }
 
 function _agentHistoryDetail(entry) {
-    return entry.response || entry.reason || entry.error || '';
+    const parts = [];
+    // Show parameters for investigation entries
+    if (entry.type === 'failure_handled' || entry.type === 'failure_error') {
+        const params = [entry.repo, entry.stage, entry.version].filter(Boolean);
+        if (params.length) parts.push('Params: ' + params.join(' / '));
+    }
+    if (entry.type === 'recurring_handled' || entry.type === 'recurring_error') {
+        const params = [entry.services, entry.count ? `${entry.count}x` : null].filter(Boolean);
+        if (params.length) parts.push('Params: ' + params.join(' / '));
+    }
+    if (entry.type === 'gate_decision' || entry.type === 'gate_error') {
+        const params = [entry.repo, entry.transition, entry.version].filter(Boolean);
+        if (params.length) parts.push('Params: ' + params.join(' / '));
+    }
+    const detail = entry.response || entry.reason || entry.error || '';
+    if (detail) parts.push(detail);
+    return parts.join('\n');
 }
 
 function _agentHistoryTime(ts) {

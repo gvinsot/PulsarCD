@@ -4930,11 +4930,10 @@ a.btn {
 .llm-test-messages {
     flex: 1;
     overflow-y: auto;
-    min-height: 200px;
-    max-height: 350px;
+    min-height: 0;
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
-    background: var(--bg-primary);
+    background: var(--bg-secondary);
     padding: 12px;
     display: flex;
     flex-direction: column;
@@ -5012,6 +5011,9 @@ a.btn {
 
 .llm-test-input input {
     flex: 1;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
 }
 
 .settings-field {
