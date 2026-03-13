@@ -67,6 +67,22 @@ def _mock_github():
     return m
 
 
+def _mock_user_manager():
+    """In-memory user manager that accepts testuser/testpass."""
+    m = MagicMock()
+    from types import SimpleNamespace
+    test_user = SimpleNamespace(username="testuser", role="admin")
+
+    def _authenticate(username, password):
+        if username == "testuser" and password == "testpass":
+            return test_user
+        return None
+
+    m.authenticate = _authenticate
+    m.list_users = MagicMock(return_value=[{"username": "testuser", "role": "admin"}])
+    return m
+
+
 # ---------------------------------------------------------------------------
 # Patch app lifespan before creating the TestClient
 # ---------------------------------------------------------------------------
@@ -80,6 +96,7 @@ def client():
     mock_os = _mock_opensearch()
     mock_col = _mock_collector()
     mock_gh = _mock_github()
+    mock_um = _mock_user_manager()
 
     @asynccontextmanager
     async def _test_lifespan(app):
@@ -89,6 +106,7 @@ def client():
         api_module.collector = mock_col
         api_module.github_service = mock_gh
         api_module.error_detector = None
+        api_module.user_manager = mock_um
         yield
         # No teardown needed for mocks
 

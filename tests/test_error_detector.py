@@ -16,9 +16,7 @@ def _make_detector(**kwargs):
     """Create a RecurringErrorDetector with dummy config (no real services)."""
     defaults = dict(
         opensearch_client=None,
-        swarm_api_base="https://example.com/api/swarm",
-        swarm_agent_name="TESTBOT",
-        swarm_secret_key="secret",
+        llm_agent=None,
         github_service=None,
     )
     defaults.update(kwargs)
