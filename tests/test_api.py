@@ -168,10 +168,19 @@ class TestActionStatus:
 # ---------------------------------------------------------------------------
 
 class TestPipelineHelpers:
+    def _fresh_manager(self, tmp_path=None):
+        """Create a fresh PipelineStateManager for testing."""
+        from backend.pipeline_state import PipelineStateManager
+        PipelineStateManager.reset_instance()
+        import tempfile
+        d = tmp_path or tempfile.mkdtemp()
+        mgr = PipelineStateManager(data_dir=str(d))
+        return mgr
+
     def test_set_pipeline_basic(self):
-        api_module._pipeline_state.clear()
-        api_module._set_pipeline("repo1", "build", "running", "1.0.0", build_id="abc")
-        state = api_module._pipeline_state["repo1"]
+        mgr = self._fresh_manager()
+        mgr.set_pipeline("repo1", "build", "running", "1.0.0", build_id="abc")
+        state = mgr.get_legacy("repo1")
         assert state["stage"] == "build"
         assert state["status"] == "running"
         assert state["version"] == "1.0.0"
@@ -180,27 +189,21 @@ class TestPipelineHelpers:
         assert state["deploy_action_id"] is None
 
     def test_set_pipeline_inherits_previous_ids(self):
-        api_module._pipeline_state["repo2"] = {
-            "stage": "build", "status": "success",
-            "build_action_id": "build-1", "test_action_id": None, "deploy_action_id": None,
-            "version": "1.0.0",
-        }
-        api_module._set_pipeline("repo2", "test", "running", "1.0.0", test_id="test-1")
-        state = api_module._pipeline_state["repo2"]
+        mgr = self._fresh_manager()
+        mgr.set_pipeline("repo2", "build", "success", "1.0.0", build_id="build-1")
+        mgr.set_pipeline("repo2", "test", "running", "1.0.0", test_id="test-1")
+        state = mgr.get_legacy("repo2")
         assert state["build_action_id"] == "build-1"  # preserved
         assert state["test_action_id"] == "test-1"    # newly set
         assert state["deploy_action_id"] is None      # preserved as None
 
     def test_set_pipeline_explicit_none_clears(self):
-        api_module._pipeline_state["repo3"] = {
-            "stage": "build", "status": "success",
-            "build_action_id": "old-build", "test_action_id": None, "deploy_action_id": None,
-            "version": "1.0.0",
-        }
+        mgr = self._fresh_manager()
+        mgr.set_pipeline("repo3", "build", "success", "1.0.0", build_id="old-build")
         # Explicitly pass build_id=None to clear it (tag-based deploy scenario)
-        api_module._set_pipeline("repo3", "deploy", "running", "1.0.0",
-                                  build_id=None, deploy_id="dep-1")
-        state = api_module._pipeline_state["repo3"]
+        mgr.set_pipeline("repo3", "deploy", "running", "1.0.0",
+                         build_id=None, deploy_id="dep-1")
+        state = mgr.get_legacy("repo3")
         assert state["build_action_id"] is None  # explicitly cleared
 
     def test_get_swarm_manager_host_none_when_no_hosts(self, client):

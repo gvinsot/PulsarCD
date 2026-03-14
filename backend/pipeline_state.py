@@ -18,6 +18,9 @@ logger = structlog.get_logger()
 # Maximum log lines stored per stage
 _MAX_LOG_LINES = 50
 
+# Sentinel for set_pipeline's optional IDs
+_UNSET = object()
+
 
 class StageState:
     """State for a single pipeline stage (build / test / deploy)."""
@@ -297,9 +300,9 @@ class PipelineStateManager:
         stage: str,
         status: str,
         version: str,
-        build_id=None,
-        test_id=None,
-        deploy_id=None,
+        build_id=_UNSET,
+        test_id=_UNSET,
+        deploy_id=_UNSET,
     ):
         """Backward-compatible wrapper matching the old _set_pipeline signature.
 
@@ -394,7 +397,3 @@ class PipelineStateManager:
 
     def __contains__(self, repo_name: str) -> bool:
         return repo_name in self._state
-
-
-# Sentinel for set_pipeline's optional IDs
-_UNSET = object()
