@@ -3809,6 +3809,17 @@ function renderStacksList() {
             if (fromStep === 'success' && (toStep === 'running' || toStep === 'success' || toStep === 'failed')) return 'arrow-approved';
             return '';
         }
+        // Find gate decision for a transition
+        function _gateDecision(pipeline, transition) {
+            if (!pipeline || !pipeline.gates) return null;
+            // Find most recent decision for this transition
+            for (let i = pipeline.gates.length - 1; i >= 0; i--) {
+                if (pipeline.gates[i].transition === transition) return pipeline.gates[i];
+            }
+            return null;
+        }
+        const gateBuildTest = _gateDecision(pipeline, 'build_to_test');
+        const gateTestDeploy = _gateDecision(pipeline, 'test_to_deploy');
 
         // Monitoring tooltip content
         const tooltipLines = [];
@@ -3872,13 +3883,13 @@ function renderStacksList() {
                             <span>Build</span>
                             ${!skipBuild && buildActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${buildActionId}', 'Build Logs', '${escapeHtml(repo.name)}')" title="View build logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
                         </div>
-                        <span class="pipeline-arrow ${_gateArrowClass(pipeline, 'build', buildStep, testStep)}">\u2192</span>
+                        <span class="pipeline-arrow ${_gateArrowClass(pipeline, 'build', buildStep, testStep)}${gateBuildTest ? ' has-gate' : ''}" ${gateBuildTest ? `onclick="event.stopPropagation(); showGateDecision('${escapeHtml(repo.name)}', 'build_to_test')" title="${gateBuildTest.approved ? 'Approved' : 'Rejected'}: ${escapeHtml((gateBuildTest.reason || '').substring(0, 60))}" style="cursor:pointer"` : ''}>\u2192</span>
                         <div class="pipeline-step step-${testStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'test')" title="Test">
                             ${stepIcon(testStep)}
                             <span>Test</span>
                             ${testActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${testActionId}', 'Test Logs', '${escapeHtml(repo.name)}')" title="View test logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
                         </div>
-                        <span class="pipeline-arrow ${_gateArrowClass(pipeline, 'test', testStep, deployStep)}">\u2192</span>
+                        <span class="pipeline-arrow ${_gateArrowClass(pipeline, 'test', testStep, deployStep)}${gateTestDeploy ? ' has-gate' : ''}" ${gateTestDeploy ? `onclick="event.stopPropagation(); showGateDecision('${escapeHtml(repo.name)}', 'test_to_deploy')" title="${gateTestDeploy.approved ? 'Approved' : 'Rejected'}: ${escapeHtml((gateTestDeploy.reason || '').substring(0, 60))}" style="cursor:pointer"` : ''}>\u2192</span>
                         <div class="pipeline-step step-${deployStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'deploy')" title="Deploy">
                             ${stepIcon(deployStep)}
                             <span>Deploy</span>
@@ -3926,6 +3937,53 @@ function pipelineStepClick(repoName, sshUrl, step) {
     else if (step === 'build') buildStack(repoName, sshUrl);
     else if (step === 'test') testStack(repoName, sshUrl);
     else if (step === 'deploy') deployStack(repoName, sshUrl);
+}
+
+// ============== Gate Decision Modal ==============
+
+function showGateDecision(repoName, transition) {
+    const pipeline = stacksPipelineState[repoName];
+    if (!pipeline || !pipeline.gates) return;
+
+    // Find the decision for this transition
+    let decision = null;
+    for (let i = pipeline.gates.length - 1; i >= 0; i--) {
+        if (pipeline.gates[i].transition === transition) { decision = pipeline.gates[i]; break; }
+    }
+    if (!decision) return;
+
+    const label = transition === 'build_to_test' ? 'Build → Test' : 'Test → Deploy';
+    const statusIcon = decision.approved
+        ? '<span style="color: var(--success-color);">&#10003; Approved</span>'
+        : '<span style="color: var(--danger-color);">&#10007; Rejected</span>';
+    const ts = decision.timestamp ? new Date(decision.timestamp).toLocaleString() : '';
+
+    const modal = document.getElementById('gate-decision-modal');
+    if (!modal) {
+        // Create modal dynamically
+        const m = document.createElement('div');
+        m.id = 'gate-decision-modal';
+        m.className = 'modal-overlay';
+        m.innerHTML = `
+            <div class="modal-container" style="max-width: 600px;">
+                <div class="modal-header">
+                    <h3 id="gate-decision-title">Gate Decision</h3>
+                    <button class="modal-close" onclick="document.getElementById('gate-decision-modal').classList.remove('active')">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div id="gate-decision-meta" style="margin-bottom: 12px; font-size: 13px; color: var(--text-muted);"></div>
+                    <div id="gate-decision-status" style="margin-bottom: 12px; font-size: 15px; font-weight: 600;"></div>
+                    <div id="gate-decision-reason" style="white-space: pre-wrap; font-size: 13px; line-height: 1.5; background: var(--bg-secondary); padding: 12px; border-radius: 8px; max-height: 400px; overflow-y: auto;"></div>
+                </div>
+            </div>`;
+        document.body.appendChild(m);
+    }
+
+    document.getElementById('gate-decision-title').textContent = `Gate: ${label}`;
+    document.getElementById('gate-decision-meta').innerHTML = `<strong>${escapeHtml(repoName)}</strong>${pipeline.project_name && pipeline.project_name !== repoName ? ` (${escapeHtml(pipeline.project_name)})` : ''}${pipeline.stack_name ? ` &mdash; Stack: <code>${escapeHtml(pipeline.stack_name)}</code>` : ''}${ts ? ` &mdash; ${ts}` : ''}`;
+    document.getElementById('gate-decision-status').innerHTML = statusIcon;
+    document.getElementById('gate-decision-reason').textContent = decision.reason || 'No reason provided';
+    document.getElementById('gate-decision-modal').classList.add('active');
 }
 
 // ============== Pipeline Modal (Version → Build → Test → Deploy) ==============

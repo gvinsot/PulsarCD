@@ -28,6 +28,7 @@ from .models import (
 from .opensearch_client import OpenSearchClient
 from .github_service import GitHubService, StackDeployer
 from .actions_queue import actions_queue, ActionType, ActionStatus
+from .pipeline_state import PipelineStateManager, _UNSET
 try:
     from .mcp_server import mcp as mcp_server, get_mcp_app
     from .mcp_auth import MCPAuthMiddleware
@@ -45,6 +46,7 @@ github_service: GitHubService = None
 error_detector = None
 user_manager = None
 llm_agent = None
+pipeline_state: Optional[PipelineStateManager] = None
 
 
 async def _notify_agent_failure(stage: str, repo_name: str, version: str, error_output: str):
@@ -100,13 +102,17 @@ _background_actions: Dict[str, BackgroundAction] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    global settings, opensearch, collector, github_service, error_detector, user_manager, llm_agent
+    global settings, opensearch, collector, github_service, error_detector, user_manager, llm_agent, pipeline_state
 
     # Startup
     logger.info("Starting PulsarCD API")
 
     settings = load_config()
     opensearch = OpenSearchClient(settings.opensearch)
+
+    # Initialize persistent pipeline state
+    pipeline_state = PipelineStateManager.get_instance(settings.data_dir)
+    logger.info("Pipeline state manager initialized", data_dir=settings.data_dir)
 
     # Initialize user manager (file-based multi-user auth)
     from .user_manager import UserManager
@@ -1780,31 +1786,27 @@ def _get_swarm_manager_host() -> Optional[str]:
     return None
 
 
-_MISSING = object()  # Sentinel for _set_pipeline optional IDs
-
-
 def _set_pipeline(
     repo_name: str,
     stage: str,
     status: str,
     version: str,
-    build_id=_MISSING,
-    test_id=_MISSING,
-    deploy_id=_MISSING,
+    build_id=_UNSET,
+    test_id=_UNSET,
+    deploy_id=_UNSET,
+    log_lines: Optional[List[str]] = None,
 ) -> None:
-    """Update _pipeline_state for repo_name, inheriting unspecified action IDs from prev state.
+    """Update pipeline state for repo_name (persisted to disk).
 
     Pass an explicit value (including None) to override; omit to inherit from the current state.
+    If log_lines is provided, updates the last_log for the current stage.
     """
-    prev = _pipeline_state.get(repo_name, {})
-    _pipeline_state[repo_name] = {
-        "stage": stage,
-        "status": status,
-        "build_action_id": prev.get("build_action_id") if build_id is _MISSING else build_id,
-        "test_action_id": prev.get("test_action_id") if test_id is _MISSING else test_id,
-        "deploy_action_id": prev.get("deploy_action_id") if deploy_id is _MISSING else deploy_id,
-        "version": version,
-    }
+    pipeline_state.set_pipeline(
+        repo_name, stage, status, version,
+        build_id=build_id, test_id=test_id, deploy_id=deploy_id,
+    )
+    if log_lines and stage in ("build", "test", "deploy"):
+        pipeline_state.update_log(repo_name, stage, log_lines)
 
 
 def _get_deployer_and_host():
@@ -1888,7 +1890,7 @@ async def build_stack(
             if action.cancel_event.is_set():
                 action.status = "cancelled"
             status = "success" if result.get("success") else "failed"
-            _set_pipeline(repo_name, "build", status, version, build_id=action_id)
+            _set_pipeline(repo_name, "build", status, version, build_id=action_id, log_lines=action.output_lines)
             if not result.get("success"):
                 await _notify_agent_failure("build", repo_name, version, result.get("output", ""))
         except Exception as e:
@@ -1897,7 +1899,7 @@ async def build_stack(
             action.status = "failed"
             action.result = {"success": False, "output": error_detail, "action": "build", "repo": repo_name}
             action.append_output(error_detail)
-            _set_pipeline(repo_name, "build", "failed", version, build_id=action_id)
+            _set_pipeline(repo_name, "build", "failed", version, build_id=action_id, log_lines=action.output_lines)
             await _notify_agent_failure("build", repo_name, version, error_detail)
 
     action.task = asyncio.create_task(_run_build())
@@ -1933,7 +1935,7 @@ async def deploy_stack(
     # Use the tag as display version when deploying a specific tag
     deploy_version = tag.lstrip('v') if tag else version
     # When deploying a specific tag (no prior build), clear build_action_id
-    prev_build_id = _pipeline_state.get(repo_name, {}).get("build_action_id") if not tag else None
+    prev_build_id = pipeline_state.get_legacy(repo_name).get("build_action_id") if not tag else None
 
     _set_pipeline(repo_name, "deploy", "running", deploy_version, build_id=prev_build_id, deploy_id=action_id)
 
@@ -1950,9 +1952,9 @@ async def deploy_stack(
             if action.cancel_event.is_set():
                 action.status = "cancelled"
             if result.get("success"):
-                _set_pipeline(repo_name, "done", "success", deploy_version, deploy_id=action_id)
+                _set_pipeline(repo_name, "done", "success", deploy_version, deploy_id=action_id, log_lines=action.output_lines)
             else:
-                _set_pipeline(repo_name, "deploy", "failed", deploy_version, deploy_id=action_id)
+                _set_pipeline(repo_name, "deploy", "failed", deploy_version, deploy_id=action_id, log_lines=action.output_lines)
                 await _notify_agent_failure("deploy", repo_name, deploy_version, result.get("output", ""))
         except Exception as e:
             error_detail = f"{type(e).__name__}: {e}"
@@ -1960,7 +1962,7 @@ async def deploy_stack(
             action.status = "failed"
             action.result = {"success": False, "output": error_detail, "action": "deploy", "repo": repo_name}
             action.append_output(error_detail)
-            _set_pipeline(repo_name, "deploy", "failed", deploy_version, deploy_id=action_id)
+            _set_pipeline(repo_name, "deploy", "failed", deploy_version, deploy_id=action_id, log_lines=action.output_lines)
             await _notify_agent_failure("deploy", repo_name, deploy_version, error_detail)
 
     action.task = asyncio.create_task(_run_deploy())
@@ -2010,7 +2012,7 @@ async def test_stack(
     _background_actions[action_id] = action
 
     # Use tag version if provided, otherwise keep previous version
-    version = tag.lstrip('v') if tag else _pipeline_state.get(repo_name, {}).get("version", "")
+    version = tag.lstrip('v') if tag else pipeline_state.get_legacy(repo_name).get("version", "")
 
     # Update pipeline state
     _set_pipeline(repo_name, "test", "running", version, test_id=action_id)
@@ -2028,7 +2030,7 @@ async def test_stack(
             if action.cancel_event.is_set():
                 action.status = "cancelled"
             status = "success" if result.get("success") else "failed"
-            _set_pipeline(repo_name, "test", status, version, test_id=action_id)
+            _set_pipeline(repo_name, "test", status, version, test_id=action_id, log_lines=action.output_lines)
             if not result.get("success"):
                 await _notify_agent_failure("test", repo_name, version, result.get("output", ""))
         except Exception as e:
@@ -2037,7 +2039,7 @@ async def test_stack(
             action.status = "failed"
             action.result = {"success": False, "output": error_detail, "action": "test", "repo": repo_name}
             action.append_output(error_detail)
-            _set_pipeline(repo_name, "test", "failed", version, test_id=action_id)
+            _set_pipeline(repo_name, "test", "failed", version, test_id=action_id, log_lines=action.output_lines)
             await _notify_agent_failure("test", repo_name, version, error_detail)
 
     action.task = asyncio.create_task(_run_test())
@@ -2248,7 +2250,6 @@ def invalidate_buildable_cache(repo_name: str = None):
 # ============== Pipeline (Auto Build → Test → Deploy) ==============
 
 _auto_build_state = {}  # {repo_name: {"last_sha": str, "building": bool, "untagged_commits": int}}
-_pipeline_state = {}  # {repo_name: {"stage": str, "status": str, "build_action_id": str|None, "test_action_id": str|None, "deploy_action_id": str|None, "version": str}}
 _auto_build_task = None
 
 
@@ -2271,7 +2272,7 @@ async def trigger_pipeline_endpoint(
         raise HTTPException(status_code=400, detail="Either 'tag' or 'commit' must be provided")
 
     # Check if pipeline is already running for this repo
-    existing = _pipeline_state.get(repo_name, {})
+    existing = pipeline_state.get_legacy(repo_name)
     if existing.get("status") == "running":
         raise HTTPException(status_code=409, detail=f"Pipeline already running for {repo_name}")
 
@@ -2353,7 +2354,13 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
 
     initial_stage = "build" if buildable else "deploy"
     _set_pipeline(repo_name, initial_stage, "running", version, build_id=None, test_id=None, deploy_id=None)
-    _pipeline_state[repo_name]["skip_build"] = not buildable
+    pipeline_state.set_skip_build(repo_name, not buildable)
+
+    # Set project and stack metadata
+    stack_name = StackDeployer._repo_to_stack_name(repo_name)
+    pipeline_state.set_project_info(repo_name, project_name=repo_name, stack_name=stack_name)
+    # Clear previous gate decisions for new pipeline run
+    pipeline_state.clear_gates(repo_name)
 
     # Determine build version param: exact "1.0.5" or auto-increment "1.0"
     build_version = version if version else "1.0"
@@ -2367,7 +2374,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                 build_id = str(uuid.uuid4())[:8]
                 build_action = BackgroundAction(build_id, "build", repo_name)
                 _background_actions[build_id] = build_action
-                _pipeline_state[repo_name]["build_action_id"] = build_id
+                pipeline_state.get_or_create(repo_name).stages["build"].action_id = build_id
 
                 logger.info("Pipeline: starting build", repo=repo_name, action_id=build_id, version=build_version, tag=tag)
                 result = await deployer.build(
@@ -2382,13 +2389,16 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                 build_action.status = "completed" if result.get("success") else "failed"
 
                 if not result.get("success"):
-                    _set_pipeline(repo_name, "build", "failed", version, build_id=build_id, test_id=None, deploy_id=None)
+                    _set_pipeline(repo_name, "build", "failed", version, build_id=build_id, test_id=None, deploy_id=None, log_lines=build_action.output_lines)
                     await _notify_agent_failure("build", repo_name, version or "", result.get("output", ""))
                     return
 
                 # Extract version from build output, or use provided version
                 built_version = _extract_version_from_output(build_action.output_lines) or version
-                _pipeline_state[repo_name]["version"] = built_version
+                pipeline_state.update_version(repo_name, "build", built_version)
+                pipeline_state.update_log(repo_name, "build", build_action.output_lines)
+                # Mark build stage as success with current_version
+                pipeline_state.set_stage(repo_name, "build", "success", built_version, action_id=build_id, log_lines=build_action.output_lines)
                 logger.info("Pipeline: build succeeded", repo=repo_name, version=built_version)
 
                 # ── Gate: Build → Test ──
@@ -2397,11 +2407,12 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                         "build_to_test", repo_name, built_version or "",
                         result.get("output", "")
                     )
+                    pipeline_state.record_gate(repo_name, "build_to_test", approved, reason)
                     if not approved:
                         logger.warning("Pipeline: gate build→test REJECTED",
                                        repo=repo_name, reason=reason[:200])
                         _set_pipeline(repo_name, "build", "gate_rejected", built_version,
-                                      build_id=build_id, test_id=None, deploy_id=None)
+                                      build_id=build_id, test_id=None, deploy_id=None, log_lines=build_action.output_lines)
                         return
                     logger.info("Pipeline: gate build→test approved", repo=repo_name, reason=reason[:100])
 
@@ -2427,12 +2438,12 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
             test_action.status = "completed" if test_result.get("success") else "failed"
 
             if not test_result.get("success"):
-                _set_pipeline(repo_name, "test", "failed", built_version, build_id=build_id, test_id=test_id, deploy_id=None)
+                _set_pipeline(repo_name, "test", "failed", built_version, build_id=build_id, test_id=test_id, deploy_id=None, log_lines=test_action.output_lines)
                 logger.warning("Pipeline: test failed", repo=repo_name)
                 await _notify_agent_failure("test", repo_name, built_version or "", test_result.get("output", ""))
                 return
 
-            _set_pipeline(repo_name, "test", "success", built_version, build_id=build_id, test_id=test_id, deploy_id=None)
+            _set_pipeline(repo_name, "test", "success", built_version, build_id=build_id, test_id=test_id, deploy_id=None, log_lines=test_action.output_lines)
             logger.info("Pipeline: test succeeded", repo=repo_name)
 
             # ── Gate: Test → Deploy ──
@@ -2441,11 +2452,12 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                     "test_to_deploy", repo_name, built_version or "",
                     test_result.get("output", "")
                 )
+                pipeline_state.record_gate(repo_name, "test_to_deploy", approved, reason)
                 if not approved:
                     logger.warning("Pipeline: gate test→deploy REJECTED",
                                    repo=repo_name, reason=reason[:200])
                     _set_pipeline(repo_name, "test", "gate_rejected", built_version,
-                                  build_id=build_id, test_id=test_id, deploy_id=None)
+                                  build_id=build_id, test_id=test_id, deploy_id=None, log_lines=test_action.output_lines)
                     return
                 logger.info("Pipeline: gate test→deploy approved", repo=repo_name, reason=reason[:100])
 
@@ -2469,15 +2481,15 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
             deploy_action.status = "completed" if deploy_result.get("success") else "failed"
 
             if deploy_result.get("success"):
-                _set_pipeline(repo_name, "done", "success", built_version, build_id=build_id, test_id=test_id, deploy_id=deploy_id)
+                _set_pipeline(repo_name, "done", "success", built_version, build_id=build_id, test_id=test_id, deploy_id=deploy_id, log_lines=deploy_action.output_lines)
                 logger.info("Pipeline: deploy succeeded", repo=repo_name, version=built_version)
             else:
-                _set_pipeline(repo_name, "deploy", "failed", built_version, build_id=build_id, test_id=test_id, deploy_id=deploy_id)
+                _set_pipeline(repo_name, "deploy", "failed", built_version, build_id=build_id, test_id=test_id, deploy_id=deploy_id, log_lines=deploy_action.output_lines)
                 await _notify_agent_failure("deploy", repo_name, built_version or "", deploy_result.get("output", ""))
 
         except Exception as e:
             logger.exception("Pipeline failed", repo=repo_name, error=str(e))
-            current_stage = _pipeline_state.get(repo_name, {}).get("stage", "build")
+            current_stage = pipeline_state.get_legacy(repo_name).get("stage", "build")
             _set_pipeline(repo_name, current_stage, "failed", built_version)
         finally:
             if repo_name in _auto_build_state:
@@ -2596,7 +2608,7 @@ async def auto_build_poller():
 @app.get("/api/stacks/pipeline/status")
 async def get_pipeline_status():
     """Get pipeline state for all repos."""
-    return {"pipelines": _pipeline_state}
+    return {"pipelines": pipeline_state.get_all_legacy()}
 
 
 @app.get("/api/stacks/auto-build/status")

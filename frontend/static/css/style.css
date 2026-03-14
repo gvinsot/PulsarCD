@@ -3371,6 +3371,24 @@ a.btn {
     font-weight: bold;
 }
 
+.pipeline-arrow.has-gate {
+    position: relative;
+    font-size: 0.8rem;
+}
+.pipeline-arrow.has-gate::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--accent-primary);
+}
+.pipeline-arrow.has-gate.arrow-approved::after { background: var(--status-success); }
+.pipeline-arrow.has-gate.arrow-rejected::after { background: var(--status-error); }
+
 /* Step states */
 .pipeline-step.step-idle { background: var(--bg-tertiary); color: var(--text-muted); }
 .pipeline-step.step-running { background: rgba(14, 165, 233, 0.15); color: var(--accent-secondary); }
