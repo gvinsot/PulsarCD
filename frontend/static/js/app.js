@@ -328,7 +328,7 @@ async function loadAgentHistory() {
                 <div class="agent-history-icon">${icon}</div>
                 <div class="agent-history-content">
                     <div class="agent-history-title">${escapeHtml(title)}</div>
-                    <div class="agent-history-detail">${escapeHtml(detail)}</div>
+                    <div class="agent-history-detail" onclick="this.classList.toggle('expanded')">${escapeHtml(detail)}</div>
                 </div>
                 <div class="agent-history-time">${time}</div>
             </div>
@@ -360,9 +360,9 @@ function _agentHistoryTitle(entry) {
         case 'failure_error':
             return `${(entry.stage || '').toUpperCase()} failure error — ${entry.repo || ''}`;
         case 'recurring_handled':
-            return `Recurring error handled (${entry.count || 0}x) — ${entry.projects || entry.services || ''}`;
+            return `Recurring error handled (${entry.count || 0}x) — ${entry.label || entry.services || entry.projects || ''}`;
         case 'recurring_error':
-            return `Recurring error handling failed — ${entry.projects || entry.services || ''}`;
+            return `Recurring error handling failed — ${entry.label || entry.services || entry.projects || ''}`;
         case 'chat':
             return `Chat: ${(entry.message || '').substring(0, 60)}`;
         default:
@@ -1351,11 +1351,21 @@ async function loadRecurringErrors() {
         const stackLabel = stacks.length ? stacks.join(', ') + ' / ' : '';
         const services = stackLabel + svcs.slice(0, 3).join(', ') + (svcs.length > 3 ? ` +${svcs.length - 3}` : '');
         const age = formatRelativeTime(p.notified_at || p.last_seen);
+        // Delivery status icon
+        let deliveryIcon = '';
+        if (p.delivered === true) {
+            deliveryIcon = '<span class="rerr-delivery delivered" title="Agent task delivered successfully">&#10003;</span>';
+        } else if (p.delivered === false) {
+            deliveryIcon = '<span class="rerr-delivery failed" title="Agent task delivery failed">&#10007;</span>';
+        } else {
+            deliveryIcon = '<span class="rerr-delivery pending" title="Not yet sent to agent">&#8943;</span>';
+        }
         return `
         <div class="recurring-error-item" onclick="showRecurringErrorDetail(${i})">
             <div class="recurring-error-header">
                 <span class="recurring-error-count">${p.count}×</span>
                 <span class="recurring-error-services">${escapeHtml(services)}</span>
+                ${deliveryIcon}
                 <span class="recurring-error-age">${age}</span>
             </div>
             <div class="recurring-error-message">${escapeHtml(p.sample_message)}</div>
@@ -1384,6 +1394,15 @@ function showRecurringErrorDetail(index) {
         formatRelativeTime(p.first_seen);
     document.getElementById('recurring-error-modal-last-seen').textContent =
         formatRelativeTime(p.last_seen);
+    const deliveredEl = document.getElementById('recurring-error-modal-delivered');
+    if (p.delivered === true) {
+        deliveredEl.innerHTML = '<span class="rerr-delivery delivered">&#10003;</span> Delivered successfully';
+    } else if (p.delivered === false) {
+        deliveredEl.innerHTML = '<span class="rerr-delivery failed">&#10007;</span> Delivery failed' +
+            (p.delivery_error ? ': ' + escapeHtml(p.delivery_error) : '');
+    } else {
+        deliveredEl.innerHTML = '<span class="rerr-delivery pending">&#8943;</span> Not sent (no agent configured)';
+    }
     document.getElementById('recurring-error-modal-message').textContent = p.sample_message;
 
     const modal = document.getElementById('recurring-error-modal');

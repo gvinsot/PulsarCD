@@ -595,6 +595,16 @@ a.btn {
     color: var(--text-muted);
     white-space: nowrap;
 }
+.rerr-delivery {
+    font-size: 0.85rem;
+    font-weight: 700;
+    width: 18px;
+    text-align: center;
+    flex-shrink: 0;
+}
+.rerr-delivery.delivered { color: var(--status-success, #22c55e); }
+.rerr-delivery.failed { color: var(--status-error, #ef4444); }
+.rerr-delivery.pending { color: var(--text-muted); }
 .recurring-error-message {
     font-size: 0.78rem;
     color: var(--text-muted);
@@ -4713,6 +4723,20 @@ a.btn {
     word-break: break-word;
     max-height: 80px;
     overflow: hidden;
+    cursor: pointer;
+    position: relative;
+}
+.agent-history-detail.expanded {
+    max-height: none;
+    overflow: visible;
+}
+.agent-history-detail:not(.expanded)::after {
+    content: '... (click to expand)';
+    display: block;
+    color: var(--text-muted);
+    font-style: italic;
+    font-size: 0.72rem;
+    margin-top: 2px;
 }
 
 .agent-history-time {

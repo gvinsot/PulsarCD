@@ -130,6 +130,23 @@ class RecurringErrorDetector:
       delegates to the LLM agent for investigation; re-notifies at most once per hour
     """
 
+    # Messages matching these patterns are PulsarCD's own internal logs
+    # and should not be detected as recurring errors (avoids self-detection loops).
+    _SELF_LOG_PATTERNS = [
+        re.compile(r'Error detector', re.IGNORECASE),
+        re.compile(r'Error pattern threshold', re.IGNORECASE),
+        re.compile(r'LLM agent', re.IGNORECASE),
+        re.compile(r'Recurring error', re.IGNORECASE),
+        re.compile(r'MCP tool', re.IGNORECASE),
+        re.compile(r'Log collection error', re.IGNORECASE),
+        re.compile(r'Metrics collection error', re.IGNORECASE),
+        re.compile(r'Node discovery error', re.IGNORECASE),
+        re.compile(r'Failed to discover Swarm', re.IGNORECASE),
+        re.compile(r'agent handled', re.IGNORECASE),
+        re.compile(r'agent error', re.IGNORECASE),
+        re.compile(r'gate evaluation', re.IGNORECASE),
+    ]
+
     def __init__(
         self,
         opensearch_client,
@@ -142,6 +159,7 @@ class RecurringErrorDetector:
         zvec_similarity_threshold: float = 0.92,
         zvec_db_path: str = "/tmp/pulsarcd_zvec",
         burst_window_seconds: int = 10,
+        exclude_compose_projects: Optional[List[str]] = None,
     ):
         self._opensearch = opensearch_client
         self._llm_agent = llm_agent
@@ -153,6 +171,8 @@ class RecurringErrorDetector:
         self._similarity_threshold = zvec_similarity_threshold
         self._zvec_db_path = zvec_db_path
         self._burst_window_seconds = burst_window_seconds
+        # Compose projects to exclude from error detection (e.g. PulsarCD's own stack)
+        self._exclude_projects = exclude_compose_projects or ["pulsarcd"]
 
         # State
         self._patterns: Dict[str, ErrorPattern] = {}
@@ -369,16 +389,33 @@ class RecurringErrorDetector:
     # OpenSearch queries
     # ------------------------------------------------------------------
 
+    def _is_self_log(self, message: str) -> bool:
+        """Check if a log message is from PulsarCD's own internal operations."""
+        for pattern in self._SELF_LOG_PATTERNS:
+            if pattern.search(message):
+                return True
+        return False
+
     async def _fetch_recent_errors(self, since: datetime) -> List[dict]:
-        """Fetch recent ERROR/FATAL/CRITICAL logs from OpenSearch."""
+        """Fetch recent ERROR/FATAL/CRITICAL logs from OpenSearch.
+
+        Excludes PulsarCD's own compose projects and internal log messages
+        to avoid self-detection loops.
+        """
         try:
+            must_not = []
+            # Exclude PulsarCD's own stacks
+            if self._exclude_projects:
+                must_not.append({"terms": {"compose_project": self._exclude_projects}})
+
             body = {
                 "query": {
                     "bool": {
                         "must": [
                             {"terms": {"level": ["ERROR", "FATAL", "CRITICAL"]}},
                             {"range": {"timestamp": {"gte": since.isoformat()}}},
-                        ]
+                        ],
+                        "must_not": must_not,
                     }
                 },
                 "size": 2000,
@@ -389,7 +426,9 @@ class RecurringErrorDetector:
             response = await self._opensearch._client.search(
                 index=self._opensearch.logs_index, body=body
             )
-            return [hit["_source"] for hit in response["hits"]["hits"]]
+            hits = [hit["_source"] for hit in response["hits"]["hits"]]
+            # Filter out PulsarCD's own internal log messages by content
+            return [h for h in hits if not self._is_self_log(h.get("message", ""))]
         except Exception as e:
             logger.error("Error detector: failed to fetch errors", error=str(e))
             return []
@@ -541,6 +580,7 @@ class RecurringErrorDetector:
             "first_seen": pattern.first_seen.isoformat(),
             "last_seen": pattern.last_seen.isoformat(),
             "notified_at": datetime.utcnow().isoformat(),
+            "delivered": None,  # None = not yet attempted, True = success, False = failed
         }
         self._notification_history = [
             e for e in self._notification_history
@@ -558,12 +598,16 @@ class RecurringErrorDetector:
         try:
             result = await self._llm_agent.handle_recurring_error(pattern)
             if result:
-                # Store agent response in the notification entry
-                entry["agent_response"] = result[:500]
+                entry["agent_response"] = result[:2000]
+                entry["delivered"] = True
                 logger.info("LLM agent handled recurring error",
                             fingerprint=pattern.fingerprint,
                             count=pattern.count)
+            else:
+                entry["delivered"] = False
         except Exception as e:
+            entry["delivered"] = False
+            entry["delivery_error"] = str(e)[:200]
             logger.error("LLM agent error for recurring error",
                          fingerprint=pattern.fingerprint,
                          error_type=type(e).__name__, error=str(e))
