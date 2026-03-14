@@ -125,6 +125,8 @@ class PipelineEntry:
         self.stack_name: Optional[str] = None
         # Gate decisions log (most recent last)
         self.gates: List[GateDecision] = []
+        # Timestamp of the last successful deployment
+        self.last_deployed_at: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -135,6 +137,7 @@ class PipelineEntry:
             "project_name": self.project_name,
             "stack_name": self.stack_name,
             "gates": [g.to_dict() for g in self.gates],
+            "last_deployed_at": self.last_deployed_at,
         }
 
     @classmethod
@@ -152,6 +155,7 @@ class PipelineEntry:
         entry.gates = [
             GateDecision.from_dict(g) for g in data.get("gates", [])
         ]
+        entry.last_deployed_at = data.get("last_deployed_at")
         return entry
 
     # ── Convenience for backward-compatible API response ──
@@ -177,6 +181,7 @@ class PipelineEntry:
             "project_name": self.project_name,
             "stack_name": self.stack_name,
             "gates": [g.to_dict() for g in self.gates],
+            "last_deployed_at": self.last_deployed_at,
             # New enriched per-stage data
             "stages": {name: s.to_dict() for name, s in self.stages.items()},
         }
@@ -269,6 +274,7 @@ class PipelineStateManager:
             # Pipeline completed successfully — mark deploy as success
             entry.current_stage = "done"
             entry.overall_status = "success"
+            entry.last_deployed_at = now
             deploy_s = entry.stages["deploy"]
             deploy_s.status = "success"
             deploy_s.current_version = version
@@ -330,6 +336,7 @@ class PipelineStateManager:
             entry.stages["deploy"].current_version = version
             entry.stages["deploy"].status = "success"
             entry.stages["deploy"].updated_at = now
+            entry.last_deployed_at = now
 
         entry.current_stage = stage
         entry.overall_status = status
