@@ -174,6 +174,7 @@ class PipelineEntry:
             "stage": self.current_stage or "idle",
             "status": self.overall_status,
             "version": version,
+            "deployed_version": self.stages["deploy"].current_version,
             "build_action_id": self.stages["build"].action_id,
             "test_action_id": self.stages["test"].action_id,
             "deploy_action_id": self.stages["deploy"].action_id,

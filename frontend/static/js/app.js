@@ -3506,7 +3506,8 @@ function renderStacksList() {
     listEl.className = 'containers-grouped';
     
     listEl.innerHTML = stacksRepos.map(repo => {
-        const deployedTag = stacksDeployedTags[repo.name];
+        const pipelineData = stacksPipelineState[repo.name];
+        const deployedTag = (pipelineData && pipelineData.deployed_version) ? pipelineData.deployed_version : stacksDeployedTags[repo.name];
         const latestBuilt = stacksLatestBuilt[repo.name];
         const hasUpdate = deployedTag && latestBuilt && normalizeVersion(latestBuilt) !== normalizeVersion(deployedTag);
         const isDeployed = !!deployedTag;
