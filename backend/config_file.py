@@ -20,6 +20,8 @@ class LLMConfig(BaseModel):
     url: str = "http://vllm:8000"
     model: str = "txn545/Qwen3.5-122B-A10B-NVFP4"
     api_key: str = ""
+    context_tokens: int = 256000
+    max_output_tokens: int = 128000
 
 
 class MCPServerConfig(BaseModel):

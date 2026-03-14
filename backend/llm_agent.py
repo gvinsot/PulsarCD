@@ -5,6 +5,12 @@ Replaces direct Swarm API notifications with an agentic loop that:
 2. Discovers MCP tools from configured servers
 3. Runs an iterative tool-calling loop via vLLM (OpenAI-compatible API)
 4. Uses MCP tools to investigate and take action
+
+Context compaction:
+- Estimates token usage per message (~4 chars/token)
+- Progressively compresses oldest tool results when approaching the context budget
+- Preserves the system prompt, latest user message, and recent tool exchanges
+- Supports 256k context windows with 128k output
 """
 
 import json
@@ -21,15 +27,198 @@ from .config_file import PulsarConfig
 logger = structlog.get_logger()
 
 _NOTIFICATION_COOLDOWN = timedelta(hours=1)
-_MAX_ITERATIONS = 10
+_MAX_ITERATIONS = 25  # More iterations with context compaction
 _MAX_OUTPUT_BYTES = 64 * 1024  # 64 KB for error output in prompts
 _MAX_HISTORY = 100  # Max entries in agent history
+
+# Token estimation: ~4 chars per token for mixed content (code, logs, natural language).
+# This is a conservative estimate; actual ratio varies by language/content.
+_CHARS_PER_TOKEN = 4
+
+# When compacting, keep at least this many of the most recent message pairs intact
+_MIN_RECENT_MESSAGES = 4
+
+# Compaction triggers when estimated tokens exceed this fraction of the context budget
+_COMPACTION_TRIGGER_RATIO = 0.65  # Trigger at 65% of context budget (leaves room for output)
 
 _ERROR_LINE_RE = re.compile(
     r'\b(error|ERROR|Error|FAIL|failed|FAILED|exception|Exception|'
     r'Traceback|traceback|fatal|FATAL|critical|CRITICAL)\b'
 )
 
+
+# ---------------------------------------------------------------------------
+# Token estimation & context compaction
+# ---------------------------------------------------------------------------
+
+def _estimate_tokens(text: str) -> int:
+    """Estimate token count from text length. Conservative: ~4 chars/token."""
+    if not text:
+        return 0
+    return max(1, len(text) // _CHARS_PER_TOKEN)
+
+
+def _estimate_message_tokens(msg: dict) -> int:
+    """Estimate tokens for a single chat message (content + tool_calls metadata)."""
+    tokens = 4  # overhead per message (role, separators)
+    content = msg.get("content") or ""
+    tokens += _estimate_tokens(content)
+    # Tool calls in assistant messages add JSON overhead
+    tool_calls = msg.get("tool_calls")
+    if tool_calls:
+        tokens += _estimate_tokens(json.dumps(tool_calls))
+    return tokens
+
+
+def _estimate_messages_tokens(messages: List[dict]) -> int:
+    """Estimate total tokens across all messages."""
+    return sum(_estimate_message_tokens(m) for m in messages)
+
+
+def _truncate_tool_result(content: str, max_chars: int) -> str:
+    """Truncate a tool result to max_chars, keeping head + tail for context."""
+    if len(content) <= max_chars:
+        return content
+    if max_chars < 200:
+        return content[:max_chars] + "\n... [truncated]"
+    # Keep 60% head, 40% tail to preserve both start context and final output
+    head_size = int(max_chars * 0.6)
+    tail_size = max_chars - head_size - 50  # 50 chars for truncation marker
+    head = content[:head_size]
+    tail = content[-tail_size:] if tail_size > 0 else ""
+    # Cut at line boundaries when possible
+    head_nl = head.rfind('\n')
+    if head_nl > head_size // 2:
+        head = head[:head_nl]
+    tail_nl = tail.find('\n')
+    if tail_nl > 0 and tail_nl < len(tail) // 2:
+        tail = tail[tail_nl + 1:]
+    original_lines = content.count('\n') + 1
+    return f"{head}\n\n... [{original_lines} lines, truncated to fit context budget] ...\n\n{tail}"
+
+
+def _summarize_tool_result(content: str, max_chars: int = 300) -> str:
+    """Aggressively summarize a tool result — keep only error lines + stats."""
+    lines = content.strip().splitlines()
+    error_lines = [l for l in lines if _ERROR_LINE_RE.search(l)]
+
+    if error_lines:
+        summary_parts = error_lines[:5]  # Keep up to 5 error lines
+        summary = '\n'.join(summary_parts)
+        if len(error_lines) > 5:
+            summary += f"\n... (+{len(error_lines) - 5} more error lines)"
+    else:
+        # No error lines — keep first 2 and last 2 lines
+        if len(lines) <= 4:
+            summary = '\n'.join(lines)
+        else:
+            summary = '\n'.join(lines[:2]) + f"\n... [{len(lines)} lines] ...\n" + '\n'.join(lines[-2:])
+
+    if len(summary) > max_chars:
+        summary = summary[:max_chars] + "..."
+    return f"[COMPACTED] {summary}"
+
+
+def compact_messages(
+    messages: List[dict],
+    context_budget_tokens: int,
+    output_budget_tokens: int,
+) -> List[dict]:
+    """Compact conversation messages to fit within the context token budget.
+
+    Strategy (applied in order until we fit):
+    1. Truncate old tool results progressively (oldest first, 50% reduction each pass)
+    2. Summarize old tool results to just error lines + stats
+    3. Drop oldest tool result/response pairs entirely (preserving conversation flow)
+
+    Never touches:
+    - The system prompt (messages[0])
+    - The initial user message (messages[1])
+    - The most recent _MIN_RECENT_MESSAGES messages
+    """
+    # Available budget for input messages = context - output reservation
+    input_budget = context_budget_tokens - output_budget_tokens
+    if input_budget < 4000:
+        input_budget = 4000  # Absolute minimum
+
+    current_tokens = _estimate_messages_tokens(messages)
+    if current_tokens <= input_budget:
+        return messages  # No compaction needed
+
+    logger.debug("Context compaction triggered",
+                 current_tokens=current_tokens,
+                 input_budget=input_budget,
+                 message_count=len(messages))
+
+    # Work on a copy
+    messages = [dict(m) for m in messages]
+
+    # Identify compactable tool-result messages (skip system, first user, and recent)
+    # Tool results are messages with role="tool"
+    protected_count = max(_MIN_RECENT_MESSAGES, 2)  # At least system + user
+    compactable_indices = []
+    for i in range(2, max(2, len(messages) - protected_count)):
+        if messages[i].get("role") == "tool":
+            compactable_indices.append(i)
+
+    # Phase 1: Progressive truncation (oldest first, reduce by 50% each pass)
+    for pass_num in range(3):  # Up to 3 passes
+        if _estimate_messages_tokens(messages) <= input_budget:
+            break
+        for idx in compactable_indices:
+            content = messages[idx].get("content", "")
+            current_len = len(content)
+            # Each pass halves the allowed length, minimum 500 chars
+            target_len = max(500, current_len // 2)
+            if current_len > target_len:
+                messages[idx] = dict(messages[idx])
+                messages[idx]["content"] = _truncate_tool_result(content, target_len)
+        if _estimate_messages_tokens(messages) <= input_budget:
+            break
+
+    # Phase 2: Aggressive summarization of oldest tool results
+    if _estimate_messages_tokens(messages) > input_budget:
+        for idx in compactable_indices:
+            content = messages[idx].get("content", "")
+            if len(content) > 400 and not content.startswith("[COMPACTED]"):
+                messages[idx] = dict(messages[idx])
+                messages[idx]["content"] = _summarize_tool_result(content, 300)
+            if _estimate_messages_tokens(messages) <= input_budget:
+                break
+
+    # Phase 3: Drop oldest tool exchange pairs (tool_call assistant + tool result)
+    if _estimate_messages_tokens(messages) > input_budget:
+        # Find droppable pairs: (assistant with tool_calls, following tool results)
+        drop_indices = set()
+        for idx in compactable_indices:
+            if _estimate_messages_tokens(messages) <= input_budget:
+                break
+            # Mark this tool result for dropping
+            drop_indices.add(idx)
+            # Also check if the preceding assistant message only had tool_calls
+            # (no useful text content) — if so, drop it too
+            if idx > 0 and messages[idx - 1].get("role") == "assistant":
+                assistant_msg = messages[idx - 1]
+                if assistant_msg.get("tool_calls") and not assistant_msg.get("content", "").strip():
+                    # Check no other tool results reference this assistant's tool_calls
+                    drop_indices.add(idx - 1)
+
+        if drop_indices:
+            messages = [m for i, m in enumerate(messages) if i not in drop_indices]
+
+    final_tokens = _estimate_messages_tokens(messages)
+    logger.info("Context compaction complete",
+                original_tokens=current_tokens,
+                compacted_tokens=final_tokens,
+                reduction_pct=round((1 - final_tokens / max(1, current_tokens)) * 100, 1),
+                message_count=len(messages))
+
+    return messages
+
+
+# ---------------------------------------------------------------------------
+# Error output builder
+# ---------------------------------------------------------------------------
 
 def _build_error_output(output: str, max_bytes: int = _MAX_OUTPUT_BYTES) -> str:
     """Build compact error output prioritizing error lines + tail context."""
@@ -66,6 +255,8 @@ class LLMAgent:
         self._llm_url = config.llm.url.rstrip("/")
         self._llm_model = config.llm.model
         self._llm_api_key = config.llm.api_key
+        self._context_tokens = config.llm.context_tokens
+        self._max_output_tokens = config.llm.max_output_tokens
         self._mcp_servers = config.mcp_servers
         self._error_handling = config.error_handling
         self._pipeline_gates = config.pipeline_gates
@@ -228,14 +419,35 @@ class LLMAgent:
                            tool=name, error_type=type(e).__name__, error=str(e))
             return f"Error calling tool '{name}': {e}"
 
+    def _compute_max_output_tokens(self, messages: List[dict]) -> int:
+        """Compute max_tokens for the LLM response based on remaining context budget.
+
+        Ensures we don't request more output tokens than the context can hold,
+        while still being generous with the output budget.
+        """
+        input_tokens = _estimate_messages_tokens(messages)
+        # Reserve the full output budget, but cap so input + output <= context
+        available = self._context_tokens - input_tokens
+        # Use the configured max output but don't exceed what's available
+        max_out = min(self._max_output_tokens, max(2048, available))
+        return max_out
+
     async def _run_agent(self, system_prompt: str, user_message: str) -> str:
-        """Run the agentic tool-calling loop.
+        """Run the agentic tool-calling loop with context compaction.
 
         Sends messages to the LLM with available MCP tools, processes tool calls,
         and iterates until the LLM gives a final text response.
+
+        Context management:
+        - Before each LLM call, estimates total token usage
+        - When approaching the context budget, compacts older messages
+        - Preserves the system prompt, initial user message, and recent exchanges
         """
         tools = await self._discover_tools()
         openai_tools = tools if tools else None
+
+        # Estimate tokens consumed by tools schema (sent with every request)
+        tools_tokens = _estimate_tokens(json.dumps(openai_tools)) if openai_tools else 0
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -243,11 +455,23 @@ class LLMAgent:
         ]
 
         for iteration in range(_MAX_ITERATIONS):
+            # --- Context compaction before each LLM call ---
+            # Budget = context_tokens - tools overhead
+            effective_budget = self._context_tokens - tools_tokens
+            messages = compact_messages(
+                messages,
+                context_budget_tokens=effective_budget,
+                output_budget_tokens=self._max_output_tokens,
+            )
+
+            # Compute dynamic max_tokens for this call
+            max_output = self._compute_max_output_tokens(messages)
+
             # Build LLM request
             payload: Dict[str, Any] = {
                 "model": self._llm_model,
                 "messages": messages,
-                "max_tokens": 4096,
+                "max_tokens": max_output,
                 "temperature": 0.2,
             }
             if openai_tools:
@@ -291,7 +515,8 @@ class LLMAgent:
                 final_content = assistant_msg.get("content", "")
                 logger.info("LLM agent completed",
                             iterations=iteration + 1,
-                            response_len=len(final_content))
+                            response_len=len(final_content),
+                            context_tokens=_estimate_messages_tokens(messages))
                 return final_content
 
             # Execute each tool call
@@ -309,9 +534,9 @@ class LLMAgent:
 
                     result = await self._call_tool(fn_name, fn_args)
 
-                    # Truncate large tool results
-                    if len(result) > 32 * 1024:
-                        result = result[:32 * 1024] + "\n... [truncated]"
+                    # Initial truncation of very large tool results (256KB hard cap)
+                    if len(result) > 256 * 1024:
+                        result = _truncate_tool_result(result, 256 * 1024)
 
                     messages.append({
                         "role": "tool",
