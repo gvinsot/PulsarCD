@@ -3199,9 +3199,9 @@ a.btn {
     background: var(--text-muted);
 }
 
-/* Mobile Menu Toggle Button */
+/* Mobile Menu Toggle Button (deprecated - logo-icon is used instead) */
 .mobile-menu-toggle {
-    display: none;
+    display: none !important;
     width: 36px;
     height: 36px;
     background: transparent;
@@ -3702,13 +3702,24 @@ a.btn {
         overflow: auto;
     }
     
-    /* Show mobile menu toggle, hide desktop nav */
-    .mobile-menu-toggle {
-        display: flex;
-    }
-
+    /* Hide desktop nav on mobile, logo-icon becomes the menu toggle */
     .nav {
         display: none;
+    }
+
+    .logo-icon {
+        cursor: pointer;
+        transition: transform 0.25s ease, box-shadow 0.25s ease;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    .logo-icon:active {
+        transform: scale(0.9);
+    }
+
+    .logo-icon.menu-open {
+        box-shadow: 0 0 0 3px var(--accent-primary), 0 10px 15px -3px rgba(99, 102, 241, 0.3);
+        transform: rotate(15deg);
     }
 
     .connection-status .status-text {

@@ -582,12 +582,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function toggleMobileMenu() {
     const dropdown = document.getElementById('mobile-nav-dropdown');
+    const logoIcon = document.getElementById('logo-icon');
     dropdown.classList.toggle('open');
+    if (logoIcon) logoIcon.classList.toggle('menu-open', dropdown.classList.contains('open'));
 }
 
 function closeMobileMenu() {
     const dropdown = document.getElementById('mobile-nav-dropdown');
+    const logoIcon = document.getElementById('logo-icon');
     if (dropdown) dropdown.classList.remove('open');
+    if (logoIcon) logoIcon.classList.remove('menu-open');
 }
 
 function initNavigation() {
