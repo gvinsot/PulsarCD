@@ -152,6 +152,7 @@ class RecurringErrorDetector:
         opensearch_client,
         llm_agent=None,
         github_service=None,
+        pipeline_state: Optional[Dict] = None,
         scan_interval: int = 60,
         initial_lookback_hours: int = 12,
         min_occurrences: int = 10,
@@ -164,6 +165,7 @@ class RecurringErrorDetector:
         self._opensearch = opensearch_client
         self._llm_agent = llm_agent
         self._github_service = github_service
+        self._pipeline_state = pipeline_state or {}
         self._scan_interval = scan_interval
         self._initial_lookback_hours = initial_lookback_hours
         self._min_occurrences = min_occurrences
@@ -533,50 +535,37 @@ class RecurringErrorDetector:
     # QWEN agent notification
     # ------------------------------------------------------------------
 
-    async def _resolve_project_name(self, compose_name: str) -> Optional[str]:
-        """Resolve a Docker compose project/stack name to the correct-cased GitHub repo name.
+    def _resolve_stacks(self, compose_projects: Set[str]) -> List[str]:
+        """Resolve compose project names to correct stack names from pipeline state.
 
-        The compose_name is typically in the format "stack_service" (e.g. "pulsarteam_sandbox")
-        or just the stack name (e.g. "pulsarteam"). We need to:
-        1. Extract the stack name (first part before underscore, or the whole name)
-        2. Find the GitHub repo where repo_name.lower() == stack_name
-
-        Returns None if the name cannot be matched to a known starred repo.
+        Pipeline state keys are the canonical repo/stack names (proper case).
+        Docker compose_project values are typically lowercased versions.
         """
-        if not self._github_service:
-            return None
-        
-        try:
-            repos = await self._github_service.get_starred_repos()
-            if not repos:
-                return None
-            
-            # Extract the stack name from compose_name
-            # compose_name could be "pulsarteam_sandbox" or "pulsarteam"
-            # We need to find the repo where repo_name.lower() matches the stack part
-            stack_name = compose_name.split('_')[0].lower()
-            
-            for repo in repos:
-                repo_name_lower = repo["name"].lower()
-                if repo_name_lower == stack_name:
-                    logger.info("Resolved stack name to GitHub repo",
-                               stack=stack_name, repo=repo["name"])
-                    return repo["name"]
-        except Exception as e:
-            logger.warning("Failed to resolve project name", error=str(e))
-        
-        return None
+        if not compose_projects:
+            return []
+        resolved = []
+        for cp in sorted(compose_projects):
+            matched = False
+            for repo_name in self._pipeline_state:
+                if repo_name.lower() == cp.lower():
+                    resolved.append(repo_name)
+                    matched = True
+                    break
+            if not matched:
+                resolved.append(cp)
+        return resolved
 
     async def _notify_recurring_error(self, pattern: ErrorPattern):
         """Record a recurring error in history and delegate to LLM agent."""
         # Always record in history so the dashboard panel is populated
         pattern.notified = True
+        stacks = self._resolve_stacks(pattern.compose_projects)
         entry = {
             "fingerprint": pattern.fingerprint,
             "sample_message": pattern.sample_message,
             "count": pattern.count,
             "services": sorted(pattern.services),
-            "stacks": sorted(pattern.compose_projects) if pattern.compose_projects else [],
+            "stacks": stacks,
             "first_seen": pattern.first_seen.isoformat(),
             "last_seen": pattern.last_seen.isoformat(),
             "notified_at": datetime.utcnow().isoformat(),
@@ -596,7 +585,7 @@ class RecurringErrorDetector:
             return
 
         try:
-            result = await self._llm_agent.handle_recurring_error(pattern)
+            result = await self._llm_agent.handle_recurring_error(pattern, resolved_stacks=stacks)
             if result:
                 entry["agent_response"] = result[:2000]
                 entry["delivered"] = True

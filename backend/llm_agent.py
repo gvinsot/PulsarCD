@@ -600,7 +600,7 @@ class LLMAgent:
                          stage=stage, repo=repo_name,
                          error_type=type(e).__name__, error=str(e))
 
-    async def handle_recurring_error(self, pattern) -> Optional[str]:
+    async def handle_recurring_error(self, pattern, resolved_stacks: list = None) -> Optional[str]:
         """Handle a recurring error pattern via the LLM agent.
 
         Called from error_detector.py when a recurring error pattern
@@ -608,6 +608,7 @@ class LLMAgent:
 
         Args:
             pattern: ErrorPattern with count, services, sample_message, etc.
+            resolved_stacks: Stack names resolved from pipeline state (proper case).
 
         Returns:
             LLM agent's final response text, or None on failure.
@@ -631,7 +632,10 @@ class LLMAgent:
         )
 
         services_list = ', '.join(sorted(pattern.services)[:10])
-        projects_list = ', '.join(sorted(pattern.compose_projects)[:10]) if pattern.compose_projects else ''
+        stacks = resolved_stacks if resolved_stacks is not None else (
+            sorted(pattern.compose_projects)[:10] if pattern.compose_projects else []
+        )
+        projects_list = ', '.join(stacks) if stacks else ''
         # Build a readable label: "stack / service1, service2" for display
         stack_service_label = ''
         if projects_list and services_list:
