@@ -164,7 +164,7 @@ async def lifespan(app: FastAPI):
         opensearch_client=opensearch,
         llm_agent=llm_agent,
         github_service=github_service,
-        pipeline_state=_pipeline_state,
+        pipeline_state=pipeline_state,
     )
     await error_detector.start()
     logger.info("Recurring error detector started")

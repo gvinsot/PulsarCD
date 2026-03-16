@@ -165,7 +165,7 @@ class RecurringErrorDetector:
         self._opensearch = opensearch_client
         self._llm_agent = llm_agent
         self._github_service = github_service
-        self._pipeline_state = pipeline_state or {}
+        self._pipeline_state = pipeline_state
         self._scan_interval = scan_interval
         self._initial_lookback_hours = initial_lookback_hours
         self._min_occurrences = min_occurrences
@@ -543,10 +543,12 @@ class RecurringErrorDetector:
         """
         if not compose_projects:
             return []
+        # Build lookup from pipeline state repo names
+        repo_names = [repo for repo, _ in self._pipeline_state.items()] if self._pipeline_state else []
         resolved = []
         for cp in sorted(compose_projects):
             matched = False
-            for repo_name in self._pipeline_state:
+            for repo_name in repo_names:
                 if repo_name.lower() == cp.lower():
                     resolved.append(repo_name)
                     matched = True
