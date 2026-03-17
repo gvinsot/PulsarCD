@@ -340,6 +340,10 @@ async function loadAgentHistory(page) {
     }).join('');
 
     container.innerHTML = entries;
+    // Mark details that overflow their max-height so "click to expand" only shows when needed
+    container.querySelectorAll('.agent-history-detail').forEach(el => {
+        if (el.scrollHeight > el.clientHeight) el.classList.add('overflows');
+    });
     _renderHistoryPagination(container, data);
 }
 
