@@ -536,25 +536,27 @@ class RecurringErrorDetector:
     # ------------------------------------------------------------------
 
     def _resolve_stacks(self, compose_projects: Set[str]) -> List[str]:
-        """Resolve compose project names to correct stack names from pipeline state.
+        """Resolve Docker compose project names to repo names via pipeline state.
 
-        Pipeline state keys are the canonical repo/stack names (proper case).
-        Docker compose_project values are typically lowercased versions.
+        Docker compose_project values (e.g. "devops") correspond to the
+        stack_name stored in each PipelineEntry, not to the repo name key.
+        We match compose_project against entry.stack_name to find the
+        canonical repo name.
         """
         if not compose_projects:
             return []
-        # Build lookup from pipeline state repo names
-        repo_names = [repo for repo, _ in self._pipeline_state.items()] if self._pipeline_state else []
+        if not self._pipeline_state:
+            return sorted(compose_projects)
+        # Build a lookup: stack_name → repo_name
+        stack_to_repo = {}
+        for repo_name, entry in self._pipeline_state.items():
+            sn = getattr(entry, 'stack_name', None)
+            if sn:
+                stack_to_repo[sn.lower()] = repo_name
         resolved = []
         for cp in sorted(compose_projects):
-            matched = False
-            for repo_name in repo_names:
-                if repo_name.lower() == cp.lower():
-                    resolved.append(repo_name)
-                    matched = True
-                    break
-            if not matched:
-                resolved.append(cp)
+            repo = stack_to_repo.get(cp.lower())
+            resolved.append(repo if repo else cp)
         return resolved
 
     async def _notify_recurring_error(self, pattern: ErrorPattern):
