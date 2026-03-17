@@ -289,9 +289,8 @@ async function sendLLMTest() {
 
 function openAgentModal() {
     const modal = document.getElementById('agent-modal');
-    switchAgentTab('chat');
+    switchAgentTab('history');
     modal.classList.add('active');
-    document.getElementById('llm-test-input').focus();
 }
 
 function closeAgentModal() {

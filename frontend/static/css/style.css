@@ -4821,6 +4821,11 @@ a.btn {
     padding: 12px 0 4px;
     border-top: 1px solid var(--border-color);
     margin-top: 8px;
+    position: sticky;
+    bottom: 0;
+    background: var(--bg-secondary);
+    z-index: 1;
+    padding-bottom: 8px;
 }
 
 .pagination-btn {

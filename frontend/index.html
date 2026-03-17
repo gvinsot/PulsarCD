@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/css/style.css?v=38">
+    <link rel="stylesheet" href="/static/css/style.css?v=39">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
     <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
@@ -1266,14 +1266,14 @@
                     <div class="modal-header">
                         <h2>AI Agent</h2>
                         <div class="agent-modal-tabs">
-                            <button class="agent-tab active" data-tab="chat" onclick="switchAgentTab('chat')">Chat</button>
-                            <button class="agent-tab" data-tab="history" onclick="switchAgentTab('history')">History</button>
+                            <button class="agent-tab" data-tab="chat" onclick="switchAgentTab('chat')">Chat</button>
+                            <button class="agent-tab active" data-tab="history" onclick="switchAgentTab('history')">History</button>
                         </div>
                         <button class="modal-close" onclick="closeAgentModal()">&times;</button>
                     </div>
                     <div class="modal-body agent-modal-body">
                         <!-- Chat Tab -->
-                        <div class="agent-panel active" id="agent-panel-chat">
+                        <div class="agent-panel" id="agent-panel-chat">
                             <div class="llm-test-messages" id="llm-test-messages"></div>
                             <div class="llm-test-input">
                                 <input type="text" id="llm-test-input" placeholder="Ask the agent... (e.g. 'list tools', 'check container health', 'what errors occurred recently?')" onkeydown="if(event.key==='Enter')sendLLMTest()" />
@@ -1281,7 +1281,7 @@
                             </div>
                         </div>
                         <!-- History Tab -->
-                        <div class="agent-panel" id="agent-panel-history">
+                        <div class="agent-panel active" id="agent-panel-history">
                             <div id="agent-history-list" class="agent-history-list">
                                 <div class="loading-placeholder">Loading...</div>
                             </div>
@@ -1292,6 +1292,6 @@
         </main>
     </div>
 
-    <script src="/static/js/app.js?v=31"></script>
+    <script src="/static/js/app.js?v=32"></script>
 </body>
 </html>
