@@ -108,6 +108,20 @@ class OpenSearchClient:
         if not await self._client.indices.exists(index=self.metrics_index):
             await self._client.indices.create(index=self.metrics_index, body=mapping)
             logger.info("Created metrics index", index=self.metrics_index)
+        else:
+            # Verify container_id is mapped as keyword (not text).
+            # If auto-mapped as text, aggregations fail; recreate the index.
+            try:
+                existing = await self._client.indices.get_mapping(index=self.metrics_index)
+                props = existing.get(self.metrics_index, {}).get("mappings", {}).get("properties", {})
+                cid_type = props.get("container_id", {}).get("type")
+                if cid_type and cid_type != "keyword":
+                    logger.warning("Metrics index has container_id mapped as %s, recreating", cid_type)
+                    await self._client.indices.delete(index=self.metrics_index)
+                    await self._client.indices.create(index=self.metrics_index, body=mapping)
+                    logger.info("Recreated metrics index with correct mappings", index=self.metrics_index)
+            except Exception as e:
+                logger.warning("Could not verify metrics index mapping", error=str(e))
     
     async def _create_host_metrics_index(self):
         """Create host metrics index."""

@@ -504,19 +504,123 @@ if [ "$NO_CACHE" = "--no-cache" ]; then
     log_info "Building with --no-cache (forced fresh build)"
 fi
 
-# Build all images using docker compose (env already loaded in Step 3)
-if ! docker compose -f "$COMPOSE_PATH" build $BUILD_ARGS; then
-    log_error "Docker build failed!"
-    
-    # Restore original state
-    if [ -n "$ORIGINAL_BRANCH" ]; then
-        git checkout "$ORIGINAL_BRANCH" 2>/dev/null || true
+# Multi-platform build support
+# Set BUILD_PLATFORMS env var to enable (e.g., "linux/amd64,linux/arm64")
+BUILD_PLATFORMS="${BUILD_PLATFORMS:-}"
+
+if [ -n "$BUILD_PLATFORMS" ]; then
+    # ── Multi-arch build using docker buildx ──
+    log_info "Multi-arch build enabled: $BUILD_PLATFORMS"
+
+    # Ensure a buildx builder with multi-platform support exists
+    BUILDER_NAME="pulsarcd-multiarch"
+    if ! docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
+        log_info "Creating buildx builder: $BUILDER_NAME"
+        docker buildx create --name "$BUILDER_NAME" --driver docker-container --use
+    else
+        docker buildx use "$BUILDER_NAME"
     fi
-    if [ "$STASHED" = true ]; then
-        git stash pop 2>/dev/null || true
+
+    # Parse compose file to extract service build contexts and Dockerfiles
+    # Then build each image individually with buildx
+    BUILD_FAILED=false
+    for img in $IMAGES; do
+        RESOLVED_IMG=$(echo "$img" | envsubst 2>/dev/null || echo "$img")
+        if [[ "$RESOLVED_IMG" =~ \$\{ ]]; then
+            RESOLVED_IMG=$(echo "$RESOLVED_IMG" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g')
+        fi
+        BASE_IMAGE="${RESOLVED_IMG%:*}"
+
+        # Find the service name and its build context/dockerfile from compose
+        SERVICE_BUILD_INFO=$(awk -v target_img="$img" '
+        /^[[:space:]]{2}[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ {
+            service = $0; gsub(/^[[:space:]]+/, "", service); gsub(/:.*/, "", service)
+            current_image = ""; context = "."; dockerfile = "Dockerfile"; target = ""
+        }
+        /^[[:space:]]{4}image:[[:space:]]*/ {
+            img_line = $0; gsub(/^[[:space:]]+image:[[:space:]]*/, "", img_line); gsub(/[[:space:]]*$/, "", img_line)
+            gsub(/"/, "", img_line); gsub(/\047/, "", img_line)
+            current_image = img_line
+        }
+        /^[[:space:]]{6}context:[[:space:]]*/ {
+            ctx = $0; gsub(/^[[:space:]]+context:[[:space:]]*/, "", ctx); gsub(/[[:space:]]*$/, "", ctx)
+            context = ctx
+        }
+        /^[[:space:]]{6}dockerfile:[[:space:]]*/ {
+            df = $0; gsub(/^[[:space:]]+dockerfile:[[:space:]]*/, "", df); gsub(/[[:space:]]*$/, "", df)
+            dockerfile = df
+        }
+        /^[[:space:]]{6}target:[[:space:]]*/ {
+            tgt = $0; gsub(/^[[:space:]]+target:[[:space:]]*/, "", tgt); gsub(/[[:space:]]*$/, "", tgt)
+            target = tgt
+        }
+        /^[[:space:]]{2}[a-zA-Z]/ {
+            if (current_image == target_img && context != "") {
+                printf "%s|%s|%s", context, dockerfile, target
+                exit
+            }
+        }
+        END {
+            if (current_image == target_img && context != "") {
+                printf "%s|%s|%s", context, dockerfile, target
+            }
+        }
+        ' "$COMPOSE_PATH")
+
+        BUILD_CONTEXT=$(echo "$SERVICE_BUILD_INFO" | cut -d'|' -f1)
+        BUILD_DOCKERFILE=$(echo "$SERVICE_BUILD_INFO" | cut -d'|' -f2)
+        BUILD_TARGET=$(echo "$SERVICE_BUILD_INFO" | cut -d'|' -f3)
+
+        # Resolve context path relative to compose file location
+        if [[ "$BUILD_CONTEXT" != /* ]]; then
+            BUILD_CONTEXT="$DEVOPS_PATH/$BUILD_CONTEXT"
+        fi
+
+        BUILDX_CMD="docker buildx build --platform $BUILD_PLATFORMS"
+        BUILDX_CMD+=" -f $BUILD_CONTEXT/$BUILD_DOCKERFILE"
+        [ -n "$BUILD_TARGET" ] && BUILDX_CMD+=" --target $BUILD_TARGET"
+        BUILDX_CMD+=" -t ${BASE_IMAGE}:latest"
+        BUILDX_CMD+=" --push"
+        [ -n "$BUILD_ARGS" ] && BUILDX_CMD+=" $BUILD_ARGS"
+        BUILDX_CMD+=" $BUILD_CONTEXT"
+
+        log_info "Building multi-arch: $BASE_IMAGE"
+        log_info "  Platforms: $BUILD_PLATFORMS"
+        log_info "  Context: $BUILD_CONTEXT"
+        log_info "  Dockerfile: $BUILD_DOCKERFILE"
+        [ -n "$BUILD_TARGET" ] && log_info "  Target: $BUILD_TARGET"
+
+        if ! eval $BUILDX_CMD; then
+            log_error "Multi-arch build failed for $BASE_IMAGE!"
+            BUILD_FAILED=true
+            break
+        fi
+        log_success "Built and pushed: $BASE_IMAGE (multi-arch)"
+    done
+
+    if [ "$BUILD_FAILED" = true ]; then
+        if [ -n "$ORIGINAL_BRANCH" ]; then
+            git checkout "$ORIGINAL_BRANCH" 2>/dev/null || true
+        fi
+        if [ "$STASHED" = true ]; then
+            git stash pop 2>/dev/null || true
+        fi
+        exit 1
     fi
-    
-    exit 1
+else
+    # ── Single-arch build using docker compose ──
+    if ! docker compose -f "$COMPOSE_PATH" build $BUILD_ARGS; then
+        log_error "Docker build failed!"
+
+        if [ -n "$ORIGINAL_BRANCH" ]; then
+            git checkout "$ORIGINAL_BRANCH" 2>/dev/null || true
+        fi
+        if [ "$STASHED" = true ]; then
+            git stash pop 2>/dev/null || true
+        fi
+
+        exit 1
+    fi
 fi
 
 log_success "All images built successfully!"
@@ -526,84 +630,76 @@ log_success "All images built successfully!"
 # ============================================================================
 log_info "Tagging images with version: $FULL_VERSION"
 
-for img in $IMAGES; do
-    # Resolve environment variables in image name (e.g., ${LLM_VERSION:-latest} -> latest or actual value)
-    # Use eval to expand variables, but be safe about it
-    RESOLVED_IMG=$(echo "$img" | envsubst 2>/dev/null || echo "$img")
-    
-    # If still contains ${}, try to resolve with defaults
-    if [[ "$RESOLVED_IMG" =~ \$\{ ]]; then
-        # Replace ${VAR:-default} with default or VAR value
-        RESOLVED_IMG=$(echo "$RESOLVED_IMG" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g')
-    fi
-    
-    # Extract base image name (remove tag)
-    BASE_IMAGE="${RESOLVED_IMG%:*}"
-    
-    # Get the actual built image name (docker compose uses the image name from compose file)
-    # We need to find what docker compose actually built
-    BUILT_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^${BASE_IMAGE}:" | head -1)
-    
-    if [ -z "$BUILT_IMAGE" ]; then
-        # Fallback: try to find by repository name only
-        BUILT_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^${BASE_IMAGE}" | head -1)
-    fi
-    
-    if [ -z "$BUILT_IMAGE" ]; then
-        log_warning "Could not find built image for $BASE_IMAGE, skipping tags"
-        continue
-    fi
-    
-    log_info "Tagging $BUILT_IMAGE as ${BASE_IMAGE}:${FULL_VERSION}"
-    
-    # Tag with full version (e.g., 1.0.1)
-    docker tag "$BUILT_IMAGE" "${BASE_IMAGE}:${FULL_VERSION}"
-    log_success "Tagged: ${BASE_IMAGE}:${FULL_VERSION}"
-    
-    # Tag with major.minor version (e.g., 1.0)
-    docker tag "$BUILT_IMAGE" "${BASE_IMAGE}:${VERSION}"
-    log_success "Tagged: ${BASE_IMAGE}:${VERSION}"
-    
-    # Tag with commit hash
-    docker tag "$BUILT_IMAGE" "${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}"
-    log_success "Tagged: ${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}"
-done
+if [ -n "$BUILD_PLATFORMS" ]; then
+    # Multi-arch: images are already pushed with :latest tag by buildx.
+    # Use 'docker buildx imagetools create' to add version tags to the manifest.
+    for img in $IMAGES; do
+        RESOLVED_IMG=$(echo "$img" | envsubst 2>/dev/null || echo "$img")
+        if [[ "$RESOLVED_IMG" =~ \$\{ ]]; then
+            RESOLVED_IMG=$(echo "$RESOLVED_IMG" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g')
+        fi
+        BASE_IMAGE="${RESOLVED_IMG%:*}"
+        SOURCE_TAG="${RESOLVED_IMG##*:}"
 
-# ============================================================================
-# Step 6: Push images to registry
-# ============================================================================
-log_info "Pushing images to $REGISTRY..."
+        log_info "Creating multi-arch tags for $BASE_IMAGE"
+        docker buildx imagetools create -t "${BASE_IMAGE}:${FULL_VERSION}" "${BASE_IMAGE}:${SOURCE_TAG}" \
+            && log_success "Tagged: ${BASE_IMAGE}:${FULL_VERSION}" \
+            || log_error "Failed to tag ${BASE_IMAGE}:${FULL_VERSION}"
+        docker buildx imagetools create -t "${BASE_IMAGE}:${VERSION}" "${BASE_IMAGE}:${SOURCE_TAG}" \
+            && log_success "Tagged: ${BASE_IMAGE}:${VERSION}" \
+            || log_error "Failed to tag ${BASE_IMAGE}:${VERSION}"
+        docker buildx imagetools create -t "${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}" "${BASE_IMAGE}:${SOURCE_TAG}" \
+            && log_success "Tagged: ${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}" \
+            || log_error "Failed to tag ${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}"
+    done
 
-for img in $IMAGES; do
-    # Resolve environment variables in image name (same as tagging step)
-    RESOLVED_IMG=$(echo "$img" | envsubst 2>/dev/null || echo "$img")
-    
-    # If still contains ${}, try to resolve with defaults
-    if [[ "$RESOLVED_IMG" =~ \$\{ ]]; then
-        RESOLVED_IMG=$(echo "$RESOLVED_IMG" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g')
-    fi
-    
-    BASE_IMAGE="${RESOLVED_IMG%:*}"
-    RESOLVED_TAG="${RESOLVED_IMG##*:}"
-    
-    # Push all tags
-    log_info "Pushing ${BASE_IMAGE}:${FULL_VERSION}"
-    docker push "${BASE_IMAGE}:${FULL_VERSION}" || log_error "Failed to push ${BASE_IMAGE}:${FULL_VERSION}"
-    
-    log_info "Pushing ${BASE_IMAGE}:${VERSION}"
-    docker push "${BASE_IMAGE}:${VERSION}" || log_error "Failed to push ${BASE_IMAGE}:${VERSION}"
-    
-    log_info "Pushing ${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}"
-    docker push "${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}" || log_error "Failed to push ${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}"
-    
-    # Also push the resolved tag (e.g., "latest") if it's different from version tags
-    if [ "$RESOLVED_TAG" != "$FULL_VERSION" ] && [ "$RESOLVED_TAG" != "$VERSION" ] && [ "$RESOLVED_TAG" != "$CURRENT_COMMIT_SHORT" ]; then
-        log_info "Pushing ${BASE_IMAGE}:${RESOLVED_TAG}"
-        docker push "${BASE_IMAGE}:${RESOLVED_TAG}" || log_warning "Could not push ${BASE_IMAGE}:${RESOLVED_TAG}"
-    fi
-done
+    log_success "All multi-arch images tagged and pushed!"
+else
+    # Single-arch: tag locally then push
+    for img in $IMAGES; do
+        RESOLVED_IMG=$(echo "$img" | envsubst 2>/dev/null || echo "$img")
+        if [[ "$RESOLVED_IMG" =~ \$\{ ]]; then
+            RESOLVED_IMG=$(echo "$RESOLVED_IMG" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g')
+        fi
+        BASE_IMAGE="${RESOLVED_IMG%:*}"
 
-log_success "All images pushed successfully!"
+        BUILT_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^${BASE_IMAGE}:" | head -1)
+        if [ -z "$BUILT_IMAGE" ]; then
+            BUILT_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^${BASE_IMAGE}" | head -1)
+        fi
+        if [ -z "$BUILT_IMAGE" ]; then
+            log_warning "Could not find built image for $BASE_IMAGE, skipping tags"
+            continue
+        fi
+
+        log_info "Tagging $BUILT_IMAGE as ${BASE_IMAGE}:${FULL_VERSION}"
+        docker tag "$BUILT_IMAGE" "${BASE_IMAGE}:${FULL_VERSION}"
+        log_success "Tagged: ${BASE_IMAGE}:${FULL_VERSION}"
+        docker tag "$BUILT_IMAGE" "${BASE_IMAGE}:${VERSION}"
+        log_success "Tagged: ${BASE_IMAGE}:${VERSION}"
+        docker tag "$BUILT_IMAGE" "${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}"
+        log_success "Tagged: ${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}"
+    done
+
+    # ── Push (single-arch only — multi-arch images are pushed during build) ──
+    log_info "Pushing images to $REGISTRY..."
+    for img in $IMAGES; do
+        RESOLVED_IMG=$(echo "$img" | envsubst 2>/dev/null || echo "$img")
+        if [[ "$RESOLVED_IMG" =~ \$\{ ]]; then
+            RESOLVED_IMG=$(echo "$RESOLVED_IMG" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g')
+        fi
+        BASE_IMAGE="${RESOLVED_IMG%:*}"
+        RESOLVED_TAG="${RESOLVED_IMG##*:}"
+
+        docker push "${BASE_IMAGE}:${FULL_VERSION}" || log_error "Failed to push ${BASE_IMAGE}:${FULL_VERSION}"
+        docker push "${BASE_IMAGE}:${VERSION}" || log_error "Failed to push ${BASE_IMAGE}:${VERSION}"
+        docker push "${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}" || log_error "Failed to push ${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}"
+        if [ "$RESOLVED_TAG" != "$FULL_VERSION" ] && [ "$RESOLVED_TAG" != "$VERSION" ] && [ "$RESOLVED_TAG" != "$CURRENT_COMMIT_SHORT" ]; then
+            docker push "${BASE_IMAGE}:${RESOLVED_TAG}" || log_warning "Could not push ${BASE_IMAGE}:${RESOLVED_TAG}"
+        fi
+    done
+    log_success "All images pushed successfully!"
+fi
 
 # ============================================================================
 # Step 7: Tag git repository with version (skip if full version was provided)
