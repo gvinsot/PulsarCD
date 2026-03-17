@@ -133,6 +133,7 @@ class SwarmProxyClient:
                     labels={
                         "com.docker.swarm.service.name": service_name,
                         "com.docker.stack.namespace": stack,
+                        "com.docker.swarm.stack.namespace": stack,
                         "com.docker.swarm.task.id": task["id"],
                         "com.docker.swarm.service.id": task.get("service_id", ""),
                     } if stack else {
