@@ -159,9 +159,11 @@ class Agent:
 
     async def _log_collection_loop(self):
         """Periodically collect logs from all containers."""
-        logger.debug("Log collection loop started", interval=self.config.log_interval)
+        logger.info("Log collection loop started", interval=self.config.log_interval)
+        cycle = 0
 
         while self._running:
+            cycle += 1
             try:
                 logs = await self.docker.collect_all_logs(
                     tail=self.config.log_lines_per_fetch
@@ -172,7 +174,7 @@ class Agent:
                     logger.debug("Collected logs", count=len(logs))
 
             except Exception as e:
-                logger.error("Log collection error", error=str(e))
+                logger.error("Log collection error", error=str(e), cycle=cycle)
 
             await asyncio.sleep(self.config.log_interval)
 

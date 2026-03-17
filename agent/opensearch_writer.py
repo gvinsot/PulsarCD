@@ -167,7 +167,11 @@ class OpenSearchWriter:
                 self._client, actions, raise_on_error=False
             )
             if failed:
-                logger.warning("Some logs failed to index", failed=len(failed))
+                # Log first failure detail to help diagnose mapping/schema issues
+                first_err = failed[0] if failed else {}
+                logger.warning("Some logs failed to index",
+                               failed=len(failed), total=len(actions),
+                               first_error=str(first_err)[:300])
             self._write_count += 1
             if self._write_count % 50 == 0:
                 sample = actions[0]["_source"] if actions else {}
@@ -177,7 +181,7 @@ class OpenSearchWriter:
                                sample_container=sample.get("container_name"))
             logger.debug("Indexed logs", count=success)
         except Exception as e:
-            logger.error("Failed to index logs", error=str(e))
+            logger.error("Failed to index logs", error=str(e), batch_size=len(actions))
 
     async def index_container_stats(self, stats: Dict[str, Any]):
         """Index container statistics."""

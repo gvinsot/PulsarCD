@@ -2,6 +2,7 @@
 
 import asyncio
 import aiohttp
+import calendar
 import json
 import re
 import subprocess
@@ -405,8 +406,9 @@ class DockerAPIClient:
         params = ["timestamps=true", "stdout=true", "stderr=true"]
         
         if since:
-            # Docker API uses Unix timestamp
-            params.append(f"since={int(since.timestamp())}")
+            # Docker API uses Unix timestamp — calendar.timegm treats naive datetimes
+            # as UTC (unlike datetime.timestamp() which assumes local timezone)
+            params.append(f"since={int(calendar.timegm(since.timetuple()))}")
         elif tail:
             params.append(f"tail={tail}")
         

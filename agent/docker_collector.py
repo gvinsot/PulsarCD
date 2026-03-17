@@ -1,6 +1,7 @@
 """Docker collector for the agent - collects containers, stats, and logs locally."""
 
 import asyncio
+import calendar
 import json
 import re
 from datetime import datetime, timedelta
@@ -14,8 +15,22 @@ from . import utils
 logger = structlog.get_logger()
 
 
+def _datetime_to_unix_utc(dt: datetime) -> int:
+    """Convert a naive datetime (assumed UTC) to Unix timestamp.
+
+    Python's ``datetime.timestamp()`` treats naive datetimes as *local* time,
+    which silently shifts the value when the host timezone is not UTC.
+    ``calendar.timegm`` always interprets the tuple as UTC.
+    """
+    return int(calendar.timegm(dt.timetuple()))
+
+
 class DockerCollector:
     """Local Docker collector using Docker API."""
+
+    # After this many consecutive empty collections for a container,
+    # reset its ``since`` timestamp and fall back to tail-based fetch.
+    _STALE_CYCLES_THRESHOLD = 20
 
     def __init__(self, docker_url: str, host_name: str):
         self.docker_url = docker_url
@@ -24,6 +39,8 @@ class DockerCollector:
         self._connector: Optional[aiohttp.BaseConnector] = None
         self._closing = False
         self._last_log_timestamp: Dict[str, datetime] = {}
+        self._empty_cycles: Dict[str, int] = {}
+        self._collection_cycle: int = 0
 
         # Determine connection type
         if docker_url.startswith("unix://"):
@@ -294,7 +311,7 @@ class DockerCollector:
         params = ["timestamps=true", "stdout=true", "stderr=true"]
 
         if since:
-            params.append(f"since={int(since.timestamp())}")
+            params.append(f"since={_datetime_to_unix_utc(since)}")
         elif tail:
             params.append(f"tail={tail}")
 
@@ -420,10 +437,28 @@ class DockerCollector:
         containers = await self.get_containers()
         running = [c for c in containers if c.get("status") == "running"]
 
+        self._collection_cycle += 1
         all_logs = []
+        containers_with_logs = 0
+
         for container in running:
             container_key = container["id"]
             last_timestamp = self._last_log_timestamp.get(container_key)
+
+            # Stale timestamp detection: if we've had too many consecutive
+            # empty collections for this container, reset the timestamp
+            # and fall back to tail-based fetch to recover.
+            if last_timestamp and self._empty_cycles.get(container_key, 0) >= self._STALE_CYCLES_THRESHOLD:
+                logger.warning(
+                    "Resetting stale log timestamp",
+                    container=container["name"],
+                    container_id=container_key,
+                    stale_since=last_timestamp.isoformat(),
+                    empty_cycles=self._empty_cycles[container_key],
+                )
+                del self._last_log_timestamp[container_key]
+                self._empty_cycles[container_key] = 0
+                last_timestamp = None
 
             logs = await self.get_container_logs(
                 container_id=container["id"],
@@ -436,8 +471,30 @@ class DockerCollector:
 
             if logs:
                 all_logs.extend(logs)
+                containers_with_logs += 1
                 newest_log = max(logs, key=lambda x: x["timestamp"])
                 self._last_log_timestamp[container_key] = newest_log["timestamp"] + timedelta(milliseconds=1)
+                self._empty_cycles[container_key] = 0
+            else:
+                self._empty_cycles[container_key] = self._empty_cycles.get(container_key, 0) + 1
+
+        # Periodic diagnostic (every 10 cycles ≈ every 5 minutes at 30s interval)
+        if self._collection_cycle % 10 == 0:
+            logger.warning(
+                "[diagnostic] Log collection status",
+                cycle=self._collection_cycle,
+                running_containers=len(running),
+                containers_with_logs=containers_with_logs,
+                total_logs=len(all_logs),
+                tracked_containers=len(self._last_log_timestamp),
+            )
+
+        # Cleanup stale entries for containers that no longer exist
+        running_ids = {c["id"] for c in running}
+        stale_keys = [k for k in self._last_log_timestamp if k not in running_ids]
+        for k in stale_keys:
+            del self._last_log_timestamp[k]
+            self._empty_cycles.pop(k, None)
 
         return all_logs
 
