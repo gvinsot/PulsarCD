@@ -597,6 +597,35 @@ async def get_error_detector_status():
     return error_detector.get_status()
 
 
+@app.get("/api/admin/opensearch-status")
+async def get_opensearch_status():
+    """Diagnostic endpoint: check OpenSearch index health and document counts."""
+    result = {}
+    for index_name in [opensearch.logs_index, opensearch.metrics_index, opensearch.host_metrics_index]:
+        try:
+            exists = await opensearch._client.indices.exists(index=index_name)
+            if exists:
+                count_resp = await opensearch._client.count(index=index_name)
+                doc_count = count_resp.get("count", 0)
+                # Get latest document timestamp
+                latest = await opensearch._client.search(
+                    index=index_name,
+                    body={"size": 1, "sort": [{"timestamp": "desc"}], "_source": ["timestamp", "host"]},
+                )
+                latest_hit = latest.get("hits", {}).get("hits", [])
+                latest_ts = latest_hit[0]["_source"].get("timestamp") if latest_hit else None
+                latest_host = latest_hit[0]["_source"].get("host") if latest_hit else None
+                result[index_name] = {
+                    "exists": True, "doc_count": doc_count,
+                    "latest_timestamp": latest_ts, "latest_host": latest_host,
+                }
+            else:
+                result[index_name] = {"exists": False}
+        except Exception as e:
+            result[index_name] = {"exists": "unknown", "error": str(e)}
+    return result
+
+
 # ============== Containers ==============
 
 @app.get("/api/containers", response_model=List[ContainerInfo])

@@ -414,7 +414,11 @@ class DockerCollector:
 
         # Extract timestamp and message
         timestamp, message = utils.extract_timestamp_and_message(line)
-        
+
+        # Strip ANSI escape codes from message — improves searchability,
+        # display quality, and ensures level/status detection works correctly
+        message = utils.strip_ansi(message)
+
         # Parse log level, HTTP status, and structured fields
         level, http_status, parsed_fields = utils.parse_log_message(message)
 

@@ -504,12 +504,13 @@ class OpenSearchClient:
         try:
             response = await self._client.search(index=self.logs_index, body=body)
             aggs = response.get("aggregations", {})
-            
+
             errors_24h = aggs.get("errors", {}).get("doc_count", 0)
             warnings_24h = aggs.get("warnings", {}).get("doc_count", 0)
             http_4xx = aggs.get("http_4xx", {}).get("doc_count", 0)
             http_5xx = aggs.get("http_5xx", {}).get("doc_count", 0)
-        except:
+        except Exception as e:
+            logger.error("Dashboard stats: logs query failed", error=str(e), index=self.logs_index)
             errors_24h = warnings_24h = http_4xx = http_5xx = 0
         
         # Get average metrics from last hour
@@ -536,7 +537,8 @@ class OpenSearchClient:
             avg_gpu = metrics_aggs.get("avg_gpu", {}).get("value")  # Keep None if no GPU data
             avg_vram_used = metrics_aggs.get("avg_vram_used", {}).get("value")
             avg_vram_total = metrics_aggs.get("avg_vram_total", {}).get("value")
-        except:
+        except Exception as e:
+            logger.error("Dashboard stats: host-metrics query failed", error=str(e), index=self.host_metrics_index)
             avg_cpu = avg_memory = 0
             avg_gpu = avg_vram_used = avg_vram_total = None
 

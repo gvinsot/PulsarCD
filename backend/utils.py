@@ -94,6 +94,22 @@ def parse_io_string(io_str: str) -> Tuple[int, int]:
     )
 
 
+# ============== ANSI Escape Code Stripping ==============
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+
+
+def strip_ansi(text: str) -> str:
+    """Strip ANSI escape codes from text.
+
+    Many containers (structlog ConsoleRenderer, coloredlogs, etc.) output ANSI
+    colour/style codes.  These break regex-based detection of log levels and
+    other patterns because escape sequences like ``\\x1b[1m`` sit directly
+    adjacent to the level word, eliminating the ``\\b`` word boundary.
+    """
+    return _ANSI_RE.sub('', text)
+
+
 # ============== Log Level Detection ==============
 
 # Log levels in order of severity
@@ -102,30 +118,31 @@ LOG_LEVELS = ["CRITICAL", "FATAL", "ERROR", "WARN", "WARNING", "INFO", "DEBUG", 
 
 def detect_log_level(message: str) -> Optional[str]:
     """Detect log level from message content.
-    
+
     Looks for common log level patterns in the message.
     Returns normalized level name (WARNING -> WARN).
-    
+
     Args:
         message: Log message to analyze
-        
+
     Returns:
         Detected log level or None
     """
-    msg_upper = message.upper()
-    
+    # Strip ANSI escape codes first — they break word-boundary matching
+    msg_upper = strip_ansi(message).upper()
+
     # Check for level in brackets first (e.g., "[ERROR]", "[info]")
     bracket_match = re.search(r'\[(\w+)\]', msg_upper)
     if bracket_match:
         level = bracket_match.group(1)
         if level in LOG_LEVELS:
             return level.replace("WARNING", "WARN")
-    
+
     # Check for level followed by separator (e.g., "ERROR:", "INFO -")
     for level in LOG_LEVELS:
         if re.search(rf'\b{level}\b', msg_upper):
             return level.replace("WARNING", "WARN")
-    
+
     return None
 
 
@@ -294,6 +311,10 @@ def build_log_entry(
         return None
 
     timestamp, message = extract_timestamp_and_message(line)
+
+    # Strip ANSI escape codes — improves searchability, display quality,
+    # and ensures level/status detection works correctly
+    message = strip_ansi(message)
 
     if not message.strip():
         return None
