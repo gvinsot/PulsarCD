@@ -226,8 +226,8 @@ else
     DEVOPS_PATH="$REPO_PATH/$DEVOPS_FOLDER"
 fi
 
-# Derive stack name
-STACK_NAME=$(get_stack_name "$REPO_FOLDER")
+# Derive stack name from the resolved REPO_PATH (not raw REPO_FOLDER)
+STACK_NAME=$(get_stack_name "$REPO_PATH")
 
 echo ""
 echo "=============================================="
