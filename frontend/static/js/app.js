@@ -307,17 +307,22 @@ function switchAgentTab(tabName) {
     if (tabName === 'history') loadAgentHistory();
 }
 
-async function loadAgentHistory() {
+let _agentHistoryPage = 1;
+const _AGENT_HISTORY_PAGE_SIZE = 15;
+
+async function loadAgentHistory(page) {
+    if (page !== undefined) _agentHistoryPage = page;
     const container = document.getElementById('agent-history-list');
     container.innerHTML = '<div class="loading-placeholder">Loading...</div>';
 
-    const data = await apiGet('/admin/agent-history');
+    const data = await apiGet(`/admin/agent-history?page=${_agentHistoryPage}&page_size=${_AGENT_HISTORY_PAGE_SIZE}`);
     if (!data || !data.history || data.history.length === 0) {
         container.innerHTML = '<div class="agent-history-empty">No agent activity yet.</div>';
+        _renderHistoryPagination(container, data);
         return;
     }
 
-    container.innerHTML = data.history.map(entry => {
+    const entries = data.history.map(entry => {
         const typeClass = `type-${entry.type}${entry.approved === false ? ' rejected' : ''}`;
         const icon = _agentHistoryIcon(entry.type);
         const title = _agentHistoryTitle(entry);
@@ -334,6 +339,29 @@ async function loadAgentHistory() {
             </div>
         `;
     }).join('');
+
+    container.innerHTML = entries;
+    _renderHistoryPagination(container, data);
+}
+
+function _renderHistoryPagination(container, data) {
+    if (!data || data.total_pages <= 1) return;
+    const page = data.page;
+    const total = data.total_pages;
+    const totalEntries = data.total;
+
+    const nav = document.createElement('div');
+    nav.className = 'agent-history-pagination';
+    nav.innerHTML = `
+        <button class="pagination-btn" ${page <= 1 ? 'disabled' : ''} onclick="loadAgentHistory(${page - 1})" title="Previous">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <span class="pagination-info">${page} / ${total} <span class="pagination-total">(${totalEntries})</span></span>
+        <button class="pagination-btn" ${page >= total ? 'disabled' : ''} onclick="loadAgentHistory(${page + 1})" title="Next">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+    `;
+    container.appendChild(nav);
 }
 
 function _agentHistoryIcon(type) {

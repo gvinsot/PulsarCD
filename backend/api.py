@@ -450,11 +450,17 @@ async def admin_llm_test(request: Request):
 
 
 @app.get("/api/admin/agent-history")
-async def admin_agent_history():
-    """Get LLM agent action history (admin only)."""
+async def admin_agent_history(page: int = 1, page_size: int = 15):
+    """Get LLM agent action history (admin only), paginated."""
     if not llm_agent:
-        return {"history": []}
-    return {"history": llm_agent.get_history()}
+        return {"history": [], "total": 0, "page": 1, "page_size": page_size, "total_pages": 0}
+    all_history = llm_agent.get_history()
+    total = len(all_history)
+    total_pages = max(1, (total + page_size - 1) // page_size)
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * page_size
+    end = start + page_size
+    return {"history": all_history[start:end], "total": total, "page": page, "page_size": page_size, "total_pages": total_pages}
 
 
 # ============== Dashboard ==============
