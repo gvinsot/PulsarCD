@@ -32,6 +32,7 @@ class OpenSearchWriter:
             verify_certs=False,
             ssl_show_warn=False,
         )
+        self._write_count = 0
 
     async def initialize(self):
         """Ensure indices exist (create if needed)."""
@@ -167,6 +168,13 @@ class OpenSearchWriter:
             )
             if failed:
                 logger.warning("Some logs failed to index", failed=len(failed))
+            self._write_count += 1
+            if self._write_count % 50 == 0:
+                sample = actions[0]["_source"] if actions else {}
+                logger.warning("[periodic] Indexed logs", write_num=self._write_count,
+                               count=success, failed=len(failed) if failed else 0,
+                               sample_keys=list(sample.keys()), sample_host=sample.get("host"),
+                               sample_container=sample.get("container_name"))
             logger.debug("Indexed logs", count=success)
         except Exception as e:
             logger.error("Failed to index logs", error=str(e))
@@ -179,10 +187,16 @@ class OpenSearchWriter:
             doc["timestamp"] = timestamp.isoformat()
 
         try:
-            await self._client.index(
+            resp = await self._client.index(
                 index=self.metrics_index,
                 body=doc,
             )
+            self._write_count += 1
+            if self._write_count % 50 == 0:
+                logger.warning("[periodic] Indexed container stats", write_num=self._write_count,
+                               container=doc.get("container_name"), host=doc.get("host"),
+                               cpu=doc.get("cpu_percent"), mem_pct=doc.get("memory_percent"),
+                               result=resp.get("result"), index=resp.get("_index"))
         except Exception as e:
             logger.error("Failed to index container stats", error=str(e))
 
@@ -198,9 +212,15 @@ class OpenSearchWriter:
             doc["timestamp"] = timestamp.isoformat()
 
         try:
-            await self._client.index(
+            resp = await self._client.index(
                 index=self.host_metrics_index,
                 body=doc,
             )
+            self._write_count += 1
+            if self._write_count % 50 == 0:
+                logger.warning("[periodic] Indexed host metrics", write_num=self._write_count,
+                               host=doc.get("host"), cpu=doc.get("cpu_percent"),
+                               mem_pct=doc.get("memory_percent"),
+                               result=resp.get("result"), index=resp.get("_index"))
         except Exception as e:
             logger.error("Failed to index host metrics", error=str(e))

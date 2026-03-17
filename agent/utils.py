@@ -396,7 +396,7 @@ def parse_rocm_smi_csv(stdout: str) -> Tuple[Optional[float], Optional[float], O
                     vram_used_bytes = float(parts[3].strip())
                     mem_total = vram_total_bytes / (1024 * 1024)
                     mem_used = vram_used_bytes / (1024 * 1024)
-                    logger.info("AMD GPU metrics collected", 
+                    logger.debug("AMD GPU metrics collected", 
                                gpu_percent=gpu_use, mem_used_mb=round(mem_used, 2), mem_total_mb=round(mem_total, 2))
                     return gpu_use, mem_used, mem_total
                 except (ValueError, IndexError) as e:
