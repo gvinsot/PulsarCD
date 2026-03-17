@@ -952,8 +952,12 @@ async def remove_stack(stack_name: str, host: Optional[str] = Query(default=None
         raise HTTPException(status_code=404, detail=f"Host '{target_host}' not found")
     
     success, message = await client.remove_stack(stack_name)
-    
+
     if success:
+        # Reset pipeline state so the stack shows as undeployed
+        repo_name = pipeline_state.find_repo_by_stack(stack_name)
+        if repo_name:
+            pipeline_state.reset(repo_name)
         return {"success": True, "message": message, "stack_name": stack_name}
     else:
         raise HTTPException(status_code=500, detail=message)

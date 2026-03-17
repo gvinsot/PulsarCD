@@ -400,6 +400,24 @@ class PipelineStateManager:
             return entry.to_legacy_dict()
         return {}
 
+    def reset(self, repo_name: str):
+        """Reset pipeline state for a repo (e.g. after stack removal).
+
+        Clears all stage statuses, versions, logs, and gates so the
+        stack appears as undeployed in the UI.
+        """
+        if repo_name in self._state:
+            self._state[repo_name] = PipelineEntry()
+            self._save()
+            logger.info("Pipeline state reset", repo=repo_name)
+
+    def find_repo_by_stack(self, stack_name: str) -> Optional[str]:
+        """Reverse-lookup: find repo_name from a Docker stack name."""
+        for repo_name, entry in self._state.items():
+            if entry.stack_name and entry.stack_name.lower() == stack_name.lower():
+                return repo_name
+        return None
+
     def items(self):
         return self._state.items()
 
