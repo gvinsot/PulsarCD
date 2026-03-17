@@ -132,19 +132,23 @@ class RecurringErrorDetector:
 
     # Messages matching these patterns are PulsarCD's own internal logs
     # and should not be detected as recurring errors (avoids self-detection loops).
+    # Messages matching these patterns are PulsarCD's own internal logs
+    # and should not be detected as recurring errors (avoids self-detection loops).
+    # IMPORTANT: patterns must be specific enough to avoid filtering real app errors.
+    # Use anchored phrases from PulsarCD's own structlog events, not broad substrings.
     _SELF_LOG_PATTERNS = [
-        re.compile(r'Error detector', re.IGNORECASE),
+        re.compile(r'Error detector scan', re.IGNORECASE),
         re.compile(r'Error pattern threshold', re.IGNORECASE),
-        re.compile(r'LLM agent', re.IGNORECASE),
-        re.compile(r'Recurring error', re.IGNORECASE),
-        re.compile(r'MCP tool', re.IGNORECASE),
-        re.compile(r'Log collection error', re.IGNORECASE),
+        re.compile(r'LLM agent (handling|handled|error|skipped)', re.IGNORECASE),
+        re.compile(r'Recurring error (detected|handled)', re.IGNORECASE),
+        re.compile(r'MCP tool(s| call)', re.IGNORECASE),
+        re.compile(r'Log collection (error|loop)', re.IGNORECASE),
         re.compile(r'Metrics collection error', re.IGNORECASE),
         re.compile(r'Node discovery error', re.IGNORECASE),
         re.compile(r'Failed to discover Swarm', re.IGNORECASE),
-        re.compile(r'agent handled', re.IGNORECASE),
-        re.compile(r'agent error', re.IGNORECASE),
-        re.compile(r'gate evaluation', re.IGNORECASE),
+        re.compile(r'LLM gate (evaluation|decision)', re.IGNORECASE),
+        re.compile(r'Pipeline state', re.IGNORECASE),
+        re.compile(r'Context compaction', re.IGNORECASE),
     ]
 
     def __init__(
@@ -184,10 +188,45 @@ class RecurringErrorDetector:
         self._notification_history: List[dict] = []
         self._running = False
         self._last_scan_ts: Optional[datetime] = None
+        self._scan_cycle: int = 0
+        self._total_errors_found: int = 0
+        self._total_notifications: int = 0
 
         # zvec collection (lazy init)
         self._zvec_collection = None
         self._zvec_dim = 0
+
+    def get_status(self) -> dict:
+        """Return detector internal state for diagnostics."""
+        patterns_info = []
+        for fp, p in sorted(self._patterns.items(), key=lambda x: -x[1].count):
+            patterns_info.append({
+                "fingerprint": fp,
+                "count": p.count,
+                "services": sorted(p.services),
+                "compose_projects": sorted(p.compose_projects),
+                "sample": p.sample_message[:150],
+                "first_seen": p.first_seen.isoformat(),
+                "last_seen": p.last_seen.isoformat(),
+                "notified": p.notified,
+            })
+        return {
+            "running": self._running,
+            "scan_cycle": self._scan_cycle,
+            "total_errors_found": self._total_errors_found,
+            "total_notifications": self._total_notifications,
+            "last_scan_ts": self._last_scan_ts.isoformat() if self._last_scan_ts else None,
+            "active_patterns": len(self._patterns),
+            "patterns": patterns_info[:20],
+            "notification_history_count": len(self._notification_history),
+            "config": {
+                "scan_interval": self._scan_interval,
+                "min_occurrences": self._min_occurrences,
+                "initial_lookback_hours": self._initial_lookback_hours,
+                "pattern_ttl_hours": self._pattern_ttl_hours,
+                "exclude_compose_projects": self._exclude_projects,
+            },
+        }
 
     async def start(self):
         if self._running:
@@ -222,6 +261,7 @@ class RecurringErrorDetector:
     async def _scan(self):
         """One scan cycle: fetch new errors, fingerprint, detect patterns."""
         now = datetime.utcnow()
+        self._scan_cycle += 1
 
         if self._last_scan_ts is None:
             # First scan: bootstrap with the full initial lookback window
@@ -234,12 +274,26 @@ class RecurringErrorDetector:
 
         # Query OpenSearch for new error logs
         errors = await self._fetch_recent_errors(since)
+
+        # Periodic INFO summary every 10 cycles (~10 minutes) for visibility
+        if self._scan_cycle % 10 == 0:
+            logger.info("Error detector periodic summary",
+                        cycle=self._scan_cycle,
+                        active_patterns=len(self._patterns),
+                        total_errors_found=self._total_errors_found,
+                        total_notifications=self._total_notifications,
+                        patterns_above_threshold=sum(
+                            1 for p in self._patterns.values()
+                            if p.count >= self._min_occurrences
+                        ),
+                        errors_this_cycle=len(errors) if errors else 0,
+                        since=since.isoformat())
+
         if not errors:
-            logger.debug("Error detector scan: 0 new errors",
-                         since=since.isoformat(),
-                         active_patterns=len(self._patterns))
             self._last_scan_ts = now
             return
+
+        self._total_errors_found += len(errors)
 
         # Deduplicate bursts: for each project, drop errors that are within
         # burst_window_seconds of a preceding error on the same project.
@@ -289,11 +343,13 @@ class RecurringErrorDetector:
             if pattern.count >= self._min_occurrences:
                 last_notified = self._notified_fingerprints.get(fp)
                 if last_notified is None or (now - last_notified) >= cooldown:
-                    logger.info("Error pattern threshold reached, will notify",
+                    self._total_notifications += 1
+                    logger.info("Error pattern threshold reached, notifying",
                                 fingerprint=fp,
                                 count=pattern.count,
                                 threshold=self._min_occurrences,
                                 services=sorted(pattern.services),
+                                compose_projects=sorted(pattern.compose_projects),
                                 sample=pattern.sample_message[:200])
                     await self._notify_recurring_error(pattern)
                     self._notified_fingerprints[fp] = now
@@ -429,8 +485,19 @@ class RecurringErrorDetector:
                 index=self._opensearch.logs_index, body=body
             )
             hits = [hit["_source"] for hit in response["hits"]["hits"]]
+            total_hits = response["hits"].get("total", {})
+            total_count = total_hits.get("value", len(hits)) if isinstance(total_hits, dict) else total_hits
             # Filter out PulsarCD's own internal log messages by content
-            return [h for h in hits if not self._is_self_log(h.get("message", ""))]
+            filtered = [h for h in hits if not self._is_self_log(h.get("message", ""))]
+            self_filtered = len(hits) - len(filtered)
+            if hits:
+                logger.info("Error detector fetched errors from OpenSearch",
+                            total_in_index=total_count,
+                            returned=len(hits),
+                            self_filtered=self_filtered,
+                            kept=len(filtered),
+                            since=since.isoformat())
+            return filtered
         except Exception as e:
             logger.error("Error detector: failed to fetch errors", error=str(e))
             return []

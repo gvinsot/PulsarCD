@@ -589,6 +589,14 @@ async def get_recurring_errors(limit: int = Query(default=5, ge=1, le=50)) -> Li
     return error_detector._notification_history[:limit]
 
 
+@app.get("/api/admin/error-detector-status")
+async def get_error_detector_status():
+    """Diagnostic endpoint: return the error detector's internal state."""
+    if not error_detector:
+        return {"error": "Error detector not initialized"}
+    return error_detector.get_status()
+
+
 # ============== Containers ==============
 
 @app.get("/api/containers", response_model=List[ContainerInfo])

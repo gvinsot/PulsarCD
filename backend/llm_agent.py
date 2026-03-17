@@ -613,13 +613,37 @@ class LLMAgent:
         Returns:
             LLM agent's final response text, or None on failure.
         """
+        # Build label info for history recording (needed regardless of enabled/cooldown)
+        services_list = ', '.join(sorted(pattern.services)[:10])
+        stacks = resolved_stacks if resolved_stacks is not None else (
+            sorted(pattern.compose_projects)[:10] if pattern.compose_projects else []
+        )
+        projects_list = ', '.join(stacks) if stacks else ''
+        stack_service_label = ''
+        if projects_list and services_list:
+            stack_service_label = f"{projects_list} / {services_list}"
+        elif services_list:
+            stack_service_label = services_list
+        elif projects_list:
+            stack_service_label = projects_list
+
         if not self._error_handling.enabled:
+            logger.info("LLM agent: error handling disabled, recording detection only",
+                        fingerprint=pattern.fingerprint, count=pattern.count)
+            self._record("recurring_detected", services=services_list,
+                         projects=projects_list, label=stack_service_label,
+                         count=pattern.count,
+                         response="Error handling disabled — detection only (no LLM investigation)")
             return None
 
         dedup_key = f"recurring:{pattern.fingerprint}"
         if self._is_cooled_down(dedup_key):
             logger.info("LLM agent skipped recurring error (cooldown)",
-                        fingerprint=pattern.fingerprint)
+                        fingerprint=pattern.fingerprint, count=pattern.count)
+            self._record("recurring_cooldown", services=services_list,
+                         projects=projects_list, label=stack_service_label,
+                         count=pattern.count,
+                         response="Skipped — cooldown active (max 1 investigation per hour per pattern)")
             return None
 
         system_prompt = (
@@ -631,19 +655,6 @@ class LLMAgent:
             f"Respond with your analysis and recommended action."
         )
 
-        services_list = ', '.join(sorted(pattern.services)[:10])
-        stacks = resolved_stacks if resolved_stacks is not None else (
-            sorted(pattern.compose_projects)[:10] if pattern.compose_projects else []
-        )
-        projects_list = ', '.join(stacks) if stacks else ''
-        # Build a readable label: "stack / service1, service2" for display
-        stack_service_label = ''
-        if projects_list and services_list:
-            stack_service_label = f"{projects_list} / {services_list}"
-        elif services_list:
-            stack_service_label = services_list
-        elif projects_list:
-            stack_service_label = projects_list
         duration = pattern.last_seen - pattern.first_seen
         if duration.total_seconds() < 3600:
             duration_str = f"{int(duration.total_seconds())}s"
