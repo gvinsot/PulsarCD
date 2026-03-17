@@ -328,7 +328,7 @@ async function loadAgentHistory() {
                 <div class="agent-history-icon">${icon}</div>
                 <div class="agent-history-content">
                     <div class="agent-history-title">${escapeHtml(title)}</div>
-                    <div class="agent-history-detail" onclick="this.classList.toggle('expanded')">${escapeHtml(detail)}</div>
+                    <div class="agent-history-detail" onclick="this.classList.toggle('expanded')">${simpleMarkdown(detail)}</div>
                 </div>
                 <div class="agent-history-time">${time}</div>
             </div>
@@ -432,6 +432,31 @@ function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+}
+
+/** Lightweight markdown→HTML: escapes HTML first, then applies common markdown patterns. */
+function simpleMarkdown(str) {
+    if (!str) return '';
+    let h = escapeHtml(str);
+    // Fenced code blocks: ```lang\n...\n```
+    h = h.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+    // Inline code: `code`
+    h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // Headers: ### h3, ## h2, # h1
+    h = h.replace(/^### (.+)$/gm, '<strong>$1</strong>');
+    h = h.replace(/^## (.+)$/gm, '<strong style="font-size:1.05em">$1</strong>');
+    h = h.replace(/^# (.+)$/gm, '<strong style="font-size:1.1em">$1</strong>');
+    // Bold: **text**
+    h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    // Italic: *text*
+    h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    // Unordered list items: - item or * item
+    h = h.replace(/^[\-\*] (.+)$/gm, '• $1');
+    // Numbered list items: 1. item
+    h = h.replace(/^\d+\. (.+)$/gm, '‣ $1');
+    // Line breaks
+    h = h.replace(/\n/g, '<br>');
+    return h;
 }
 
 function addMCPServer() {
