@@ -2,7 +2,7 @@
 
 import hashlib
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import structlog
 from opensearchpy import AsyncOpenSearch, helpers
