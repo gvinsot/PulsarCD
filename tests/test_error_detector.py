@@ -149,3 +149,37 @@ class TestNormalizeMessage:
 
     def test_different_errors_not_equal(self):
         assert normalize_message("timeout") != normalize_message("disk full")
+
+
+# ── _fixup_compose_project ───────────────────────────────────────────────────
+
+class TestFixupComposeProject:
+    def test_swarm_container_name_overrides_devops(self):
+        """Swarm container name 'pulsarcd_agent.1.abc' → compose_project='pulsarcd'."""
+        entry = {"compose_project": "devops", "container_name": "pulsarcd_agent.1.4sz1iuqpv26b"}
+        RecurringErrorDetector._fixup_compose_project(entry)
+        assert entry["compose_project"] == "pulsarcd"
+
+    def test_swarm_container_hyphenated_stack(self):
+        """Stack with hyphens: 'art-retrainer_web.2.xyz' → 'art-retrainer'."""
+        entry = {"compose_project": "devops", "container_name": "art-retrainer_web.2.abc123def"}
+        RecurringErrorDetector._fixup_compose_project(entry)
+        assert entry["compose_project"] == "art-retrainer"
+
+    def test_non_swarm_container_not_modified(self):
+        """Non-Swarm container name without .slot.taskid → no change."""
+        entry = {"compose_project": "myapp", "container_name": "myapp_web_1"}
+        RecurringErrorDetector._fixup_compose_project(entry)
+        assert entry["compose_project"] == "myapp"
+
+    def test_no_container_name(self):
+        """Missing container_name → no change."""
+        entry = {"compose_project": "devops"}
+        RecurringErrorDetector._fixup_compose_project(entry)
+        assert entry["compose_project"] == "devops"
+
+    def test_correct_project_stays(self):
+        """Already correct compose_project is overridden by container name (always wins)."""
+        entry = {"compose_project": "pulsarcd", "container_name": "pulsarcd_agent.1.abc123"}
+        RecurringErrorDetector._fixup_compose_project(entry)
+        assert entry["compose_project"] == "pulsarcd"

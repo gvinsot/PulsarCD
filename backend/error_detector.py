@@ -37,6 +37,10 @@ def _get_zvec():
     return _zvec
 
 
+# Swarm container names: "{stack}_{service}.{slot}.{taskid}"
+# e.g. "pulsarcd_agent.1.4sz1iuqpv26b1befmacmsawtr"
+_SWARM_CONTAINER_RE = re.compile(r'^(.+?)_[^.]+\.\d+\.\w+$')
+
 # ---------------------------------------------------------------------------
 # Text normalization — strip variable parts (timestamps, IDs, hex, IPs, paths)
 # so that structurally identical errors produce the same fingerprint.
@@ -463,6 +467,20 @@ class RecurringErrorDetector:
                 return True
         return False
 
+    @staticmethod
+    def _fixup_compose_project(entry: dict) -> None:
+        """Fix compose_project from container_name for Swarm containers.
+
+        When compose files live in a 'devops/' directory, Docker may set
+        com.docker.compose.project='devops' instead of the real stack name.
+        Swarm container names always include the stack namespace, so we
+        can reliably infer the correct value.
+        """
+        cn = entry.get("container_name", "")
+        m = _SWARM_CONTAINER_RE.match(cn)
+        if m:
+            entry["compose_project"] = m.group(1)
+
     async def _fetch_recent_errors(self, since: datetime) -> List[dict]:
         """Fetch recent ERROR/FATAL/CRITICAL logs from OpenSearch.
 
@@ -496,6 +514,18 @@ class RecurringErrorDetector:
             hits = [hit["_source"] for hit in response["hits"]["hits"]]
             total_hits = response["hits"].get("total", {})
             total_count = total_hits.get("value", len(hits)) if isinstance(total_hits, dict) else total_hits
+
+            # Fix compose_project from Swarm container names (handles
+            # 'devops' directory-name artifacts before exclusion filtering)
+            for h in hits:
+                self._fixup_compose_project(h)
+
+            # Re-apply project exclusion after fixup (OpenSearch query only
+            # excluded the original compose_project, not the corrected one)
+            if self._exclude_projects:
+                excl = set(self._exclude_projects)
+                hits = [h for h in hits if h.get("compose_project") not in excl]
+
             # Filter out PulsarCD's own internal log messages by content
             filtered = [h for h in hits if not self._is_self_log(h.get("message", ""))]
             self_filtered = len(hits) - len(filtered)
