@@ -1149,7 +1149,6 @@
                         <div class="settings-tabs">
                             <button class="settings-tab active" data-tab="llm" onclick="switchSettingsTab('llm')">LLM</button>
                             <button class="settings-tab" data-tab="mcp" onclick="switchSettingsTab('mcp')">MCP Servers</button>
-                            <button class="settings-tab" data-tab="errors" onclick="switchSettingsTab('errors')">Error Handling</button>
                             <button class="settings-tab" data-tab="users" onclick="switchSettingsTab('users')">Users</button>
                         </div>
 
@@ -1173,65 +1172,6 @@
                         <div class="settings-panel" id="settings-panel-mcp">
                             <div id="mcp-servers-list"></div>
                             <button class="btn btn-sm btn-secondary" onclick="addMCPServer()">+ Add MCP Server</button>
-                        </div>
-
-                        <!-- Error Handling Tab -->
-                        <div class="settings-panel" id="settings-panel-errors">
-                            <div class="settings-field">
-                                <label class="settings-toggle-label">
-                                    <input type="checkbox" id="settings-error-enabled" />
-                                    Enable LLM error handling
-                                </label>
-                            </div>
-                            <div class="settings-field">
-                                <label>General instructions</label>
-                                <textarea id="settings-error-instructions" rows="3"></textarea>
-                            </div>
-                            <div class="settings-field">
-                                <label>On build failure</label>
-                                <textarea id="settings-error-build" rows="2"></textarea>
-                            </div>
-                            <div class="settings-field">
-                                <label>On test failure</label>
-                                <textarea id="settings-error-test" rows="2"></textarea>
-                            </div>
-                            <div class="settings-field">
-                                <label>On deploy failure</label>
-                                <textarea id="settings-error-deploy" rows="2"></textarea>
-                            </div>
-                            <div class="settings-field">
-                                <label>On recurring error</label>
-                                <textarea id="settings-error-recurring" rows="2"></textarea>
-                            </div>
-
-                            <div class="settings-section-divider"></div>
-                            <h4 class="settings-section-title">Pipeline Gates</h4>
-                            <p class="settings-section-desc">The LLM agent reviews logs and code changes between stages to decide if the pipeline should proceed.</p>
-
-                            <div class="settings-field">
-                                <label class="settings-toggle-label">
-                                    <input type="checkbox" id="settings-gate-build-test" />
-                                    Gate: Build → Test
-                                </label>
-                            </div>
-                            <div class="settings-field">
-                                <label>Build → Test instructions</label>
-                                <textarea id="settings-gate-build-test-instructions" rows="2"></textarea>
-                            </div>
-                            <div class="settings-field">
-                                <label class="settings-toggle-label">
-                                    <input type="checkbox" id="settings-gate-test-deploy" />
-                                    Gate: Test → Deploy
-                                </label>
-                            </div>
-                            <div class="settings-field">
-                                <label>Test → Deploy instructions</label>
-                                <textarea id="settings-gate-test-deploy-instructions" rows="2"></textarea>
-                            </div>
-                            <div class="settings-field">
-                                <label>General gate instructions</label>
-                                <textarea id="settings-gate-instructions" rows="2"></textarea>
-                            </div>
                         </div>
 
                         <!-- Users Tab -->
@@ -1268,6 +1208,7 @@
                         <div class="agent-modal-tabs">
                             <button class="agent-tab" data-tab="chat" onclick="switchAgentTab('chat')">Chat</button>
                             <button class="agent-tab active" data-tab="history" onclick="switchAgentTab('history')">History</button>
+                            <button class="agent-tab" data-tab="instructions" onclick="switchAgentTab('instructions')">Instructions</button>
                         </div>
                         <button class="modal-close" onclick="closeAgentModal()">&times;</button>
                     </div>
@@ -1284,6 +1225,68 @@
                         <div class="agent-panel active" id="agent-panel-history">
                             <div id="agent-history-list" class="agent-history-list">
                                 <div class="loading-placeholder">Loading...</div>
+                            </div>
+                        </div>
+                        <!-- Instructions Tab -->
+                        <div class="agent-panel" id="agent-panel-instructions">
+                            <div class="agent-instructions-form">
+                                <div class="settings-field">
+                                    <label class="settings-toggle-label">
+                                        <input type="checkbox" id="settings-error-enabled" />
+                                        Enable LLM error handling
+                                    </label>
+                                </div>
+                                <div class="settings-field">
+                                    <label>General instructions</label>
+                                    <textarea id="settings-error-instructions" rows="3"></textarea>
+                                </div>
+                                <div class="settings-field">
+                                    <label>On build failure</label>
+                                    <textarea id="settings-error-build" rows="2"></textarea>
+                                </div>
+                                <div class="settings-field">
+                                    <label>On test failure</label>
+                                    <textarea id="settings-error-test" rows="2"></textarea>
+                                </div>
+                                <div class="settings-field">
+                                    <label>On deploy failure</label>
+                                    <textarea id="settings-error-deploy" rows="2"></textarea>
+                                </div>
+                                <div class="settings-field">
+                                    <label>On recurring error</label>
+                                    <textarea id="settings-error-recurring" rows="2"></textarea>
+                                </div>
+
+                                <div class="settings-section-divider"></div>
+                                <h4 class="settings-section-title">Pipeline Gates</h4>
+                                <p class="settings-section-desc">The LLM agent reviews logs and code changes between stages to decide if the pipeline should proceed.</p>
+
+                                <div class="settings-field">
+                                    <label class="settings-toggle-label">
+                                        <input type="checkbox" id="settings-gate-build-test" />
+                                        Gate: Build → Test
+                                    </label>
+                                </div>
+                                <div class="settings-field">
+                                    <label>Build → Test instructions</label>
+                                    <textarea id="settings-gate-build-test-instructions" rows="2"></textarea>
+                                </div>
+                                <div class="settings-field">
+                                    <label class="settings-toggle-label">
+                                        <input type="checkbox" id="settings-gate-test-deploy" />
+                                        Gate: Test → Deploy
+                                    </label>
+                                </div>
+                                <div class="settings-field">
+                                    <label>Test → Deploy instructions</label>
+                                    <textarea id="settings-gate-test-deploy-instructions" rows="2"></textarea>
+                                </div>
+                                <div class="settings-field">
+                                    <label>General gate instructions</label>
+                                    <textarea id="settings-gate-instructions" rows="2"></textarea>
+                                </div>
+
+                                <button class="btn btn-primary" onclick="saveSettingsFromAgent()">Save Instructions</button>
                             </div>
                         </div>
                     </div>

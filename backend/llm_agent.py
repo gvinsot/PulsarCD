@@ -455,6 +455,7 @@ class LLMAgent:
         """
         tools = await self._discover_tools()
         openai_tools = tools if tools else None
+        self._last_tools_called: List[str] = []
 
         # Estimate tokens consumed by tools schema (sent with every request)
         tools_tokens = _estimate_tokens(json.dumps(openai_tools)) if openai_tools else 0
@@ -545,6 +546,7 @@ class LLMAgent:
 
                     logger.info("LLM agent calling tool",
                                 tool=fn_name, iteration=iteration + 1)
+                    self._last_tools_called.append(fn_name)
 
                     result = await self._call_tool(fn_name, fn_args)
 

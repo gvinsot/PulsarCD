@@ -4684,6 +4684,18 @@ a.btn {
     display: flex;
 }
 
+.agent-instructions-form {
+    overflow-y: auto;
+    flex: 1;
+}
+
+.agent-instructions-form textarea {
+    width: 100%;
+    font-family: monospace;
+    font-size: 12px;
+    resize: vertical;
+}
+
 /* Agent History */
 .agent-history-list {
     flex: 1;

@@ -193,23 +193,6 @@ async function openSettingsModal() {
     // Populate MCP servers
     renderMCPServers(config.mcp_servers || []);
 
-    // Populate error handling
-    const eh = config.error_handling || {};
-    document.getElementById('settings-error-enabled').checked = eh.enabled !== false;
-    document.getElementById('settings-error-instructions').value = eh.instructions || '';
-    document.getElementById('settings-error-build').value = eh.on_build_failure || '';
-    document.getElementById('settings-error-test').value = eh.on_test_failure || '';
-    document.getElementById('settings-error-deploy').value = eh.on_deploy_failure || '';
-    document.getElementById('settings-error-recurring').value = eh.on_recurring_error || '';
-
-    // Populate pipeline gates
-    const pg = config.pipeline_gates || {};
-    document.getElementById('settings-gate-build-test').checked = pg.build_to_test === true;
-    document.getElementById('settings-gate-test-deploy').checked = pg.test_to_deploy === true;
-    document.getElementById('settings-gate-instructions').value = pg.instructions || '';
-    document.getElementById('settings-gate-build-test-instructions').value = pg.on_build_to_test || '';
-    document.getElementById('settings-gate-test-deploy-instructions').value = pg.on_test_to_deploy || '';
-
     // Reset to LLM tab
     switchSettingsTab('llm');
     modal.classList.add('active');
@@ -304,6 +287,60 @@ function switchAgentTab(tabName) {
     document.getElementById(`agent-panel-${tabName}`).classList.add('active');
 
     if (tabName === 'history') loadAgentHistory();
+    if (tabName === 'instructions') loadInstructionsTab();
+}
+
+async function loadInstructionsTab() {
+    // Reuse the settings load to populate the instruction fields
+    const config = await apiGet('/admin/config');
+    if (!config) return;
+    const eh = config.error_handling || {};
+    document.getElementById('settings-error-enabled').checked = eh.enabled !== false;
+    document.getElementById('settings-error-instructions').value = eh.instructions || '';
+    document.getElementById('settings-error-build').value = eh.on_build_failure || '';
+    document.getElementById('settings-error-test').value = eh.on_test_failure || '';
+    document.getElementById('settings-error-deploy').value = eh.on_deploy_failure || '';
+    document.getElementById('settings-error-recurring').value = eh.on_recurring_error || '';
+
+    const gates = config.pipeline_gates || {};
+    document.getElementById('settings-gate-build-test').checked = !!gates.build_to_test;
+    document.getElementById('settings-gate-test-deploy').checked = !!gates.test_to_deploy;
+    document.getElementById('settings-gate-build-test-instructions').value = gates.on_build_to_test || '';
+    document.getElementById('settings-gate-test-deploy-instructions').value = gates.on_test_to_deploy || '';
+    document.getElementById('settings-gate-instructions').value = gates.instructions || '';
+}
+
+async function saveSettingsFromAgent() {
+    // Load current config, overlay instruction changes, save
+    const config = await apiGet('/admin/config');
+    if (!config) { showNotification('error', 'Failed to load config'); return; }
+
+    config.error_handling = config.error_handling || {};
+    config.error_handling.enabled = document.getElementById('settings-error-enabled').checked;
+    config.error_handling.instructions = document.getElementById('settings-error-instructions').value;
+    config.error_handling.on_build_failure = document.getElementById('settings-error-build').value;
+    config.error_handling.on_test_failure = document.getElementById('settings-error-test').value;
+    config.error_handling.on_deploy_failure = document.getElementById('settings-error-deploy').value;
+    config.error_handling.on_recurring_error = document.getElementById('settings-error-recurring').value;
+
+    config.pipeline_gates = config.pipeline_gates || {};
+    config.pipeline_gates.build_to_test = document.getElementById('settings-gate-build-test').checked;
+    config.pipeline_gates.test_to_deploy = document.getElementById('settings-gate-test-deploy').checked;
+    config.pipeline_gates.on_build_to_test = document.getElementById('settings-gate-build-test-instructions').value;
+    config.pipeline_gates.on_test_to_deploy = document.getElementById('settings-gate-test-deploy-instructions').value;
+    config.pipeline_gates.instructions = document.getElementById('settings-gate-instructions').value;
+
+    try {
+        const resp = await fetch(`${API_BASE}/admin/config`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(config),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        showNotification('success', 'Instructions saved');
+    } catch (e) {
+        showNotification('error', 'Failed to save: ' + (e.message || e));
+    }
 }
 
 let _agentHistoryPage = 1;
@@ -321,23 +358,31 @@ async function loadAgentHistory(page) {
         return;
     }
 
-    const entries = data.history.map(entry => {
-        const typeClass = `type-${entry.type}${entry.approved === false ? ' rejected' : ''}`;
-        const icon = _agentHistoryIcon(entry.type);
-        const title = _agentHistoryTitle(entry);
-        const detail = _agentHistoryDetail(entry);
-        const time = _agentHistoryTime(entry.timestamp);
-        return `
-            <div class="agent-history-entry ${typeClass}">
-                <div class="agent-history-icon">${icon}</div>
-                <div class="agent-history-content">
-                    <div class="agent-history-title">${escapeHtml(title)}</div>
-                    <div class="agent-history-detail" onclick="this.classList.toggle('expanded')">${simpleMarkdown(detail)}</div>
+    const entries = data.history
+        .filter(entry => {
+            // Hide chat entries unless MCP tools were called
+            if (entry.type === 'chat') {
+                return entry.tools_called && entry.tools_called.length > 0;
+            }
+            return true;
+        })
+        .map(entry => {
+            const typeClass = `type-${entry.type}${entry.approved === false ? ' rejected' : ''}`;
+            const icon = _agentHistoryIcon(entry.type);
+            const title = _agentHistoryTitle(entry);
+            const detail = _agentHistoryDetail(entry);
+            const time = _agentHistoryTime(entry.timestamp);
+            return `
+                <div class="agent-history-entry ${typeClass}">
+                    <div class="agent-history-icon">${icon}</div>
+                    <div class="agent-history-content">
+                        <div class="agent-history-title">${escapeHtml(title)}</div>
+                        <div class="agent-history-detail" onclick="this.classList.toggle('expanded')">${simpleMarkdown(detail)}</div>
+                    </div>
+                    <div class="agent-history-time">${time}</div>
                 </div>
-                <div class="agent-history-time">${time}</div>
-            </div>
-        `;
-    }).join('');
+            `;
+        }).join('');
 
     container.innerHTML = entries;
     // Mark details that overflow their max-height so "click to expand" only shows when needed
@@ -439,10 +484,7 @@ function renderMCPServers(servers) {
     const container = document.getElementById('mcp-servers-list');
     container.innerHTML = servers.map((s, i) => `
         <div class="mcp-server-card" data-index="${i}">
-            <div class="mcp-server-header">
-                <h4>Server ${i + 1}</h4>
-                <button class="mcp-server-remove" onclick="removeMCPServer(${i})" title="Remove">&times;</button>
-            </div>
+            <button class="mcp-server-remove" onclick="removeMCPServer(${i})" title="Remove">&times;</button>
             <div class="settings-field">
                 <label>Name</label>
                 <input type="text" class="mcp-name" value="${escapeHtml(s.name || '')}" />
@@ -568,6 +610,8 @@ async function saveSettings() {
     status.textContent = 'Saving...';
     status.className = 'settings-status';
 
+    // Merge: LLM + MCP from Settings, error_handling + gates from stored config
+    const stored = _settingsConfig || {};
     const config = {
         llm: {
             url: document.getElementById('settings-llm-url').value,
@@ -575,21 +619,8 @@ async function saveSettings() {
             api_key: document.getElementById('settings-llm-apikey').value,
         },
         mcp_servers: collectMCPServers(),
-        error_handling: {
-            enabled: document.getElementById('settings-error-enabled').checked,
-            instructions: document.getElementById('settings-error-instructions').value,
-            on_build_failure: document.getElementById('settings-error-build').value,
-            on_test_failure: document.getElementById('settings-error-test').value,
-            on_deploy_failure: document.getElementById('settings-error-deploy').value,
-            on_recurring_error: document.getElementById('settings-error-recurring').value,
-        },
-        pipeline_gates: {
-            build_to_test: document.getElementById('settings-gate-build-test').checked,
-            test_to_deploy: document.getElementById('settings-gate-test-deploy').checked,
-            instructions: document.getElementById('settings-gate-instructions').value,
-            on_build_to_test: document.getElementById('settings-gate-build-test-instructions').value,
-            on_test_to_deploy: document.getElementById('settings-gate-test-deploy-instructions').value,
-        },
+        error_handling: stored.error_handling || {},
+        pipeline_gates: stored.pipeline_gates || {},
     };
 
     try {

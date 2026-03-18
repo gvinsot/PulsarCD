@@ -481,7 +481,9 @@ async def admin_llm_test(request: Request):
 
     try:
         result = await llm_agent._run_agent(system_prompt, user_message)
-        llm_agent._record("chat", message=user_message[:200], response=result[:500] if result else "")
+        tools_called = list(llm_agent._last_tools_called) if hasattr(llm_agent, '_last_tools_called') else []
+        llm_agent._record("chat", message=user_message[:200], response=result[:500] if result else "",
+                          tools_called=tools_called)
         return {"response": result}
     except Exception as e:
         logger.error("LLM test error", error=str(e))
