@@ -493,86 +493,65 @@ done
 echo ""
 
 # ============================================================================
-# Step 3b: Auto-detect multi-arch build requirement
+# Step 3b: Detect per-service and global multi-arch build requirements
 # ============================================================================
-# Check if BUILD_PLATFORMS is already set explicitly (env var or .env file)
+# Global BUILD_PLATFORMS from env var or .env file (applies to ALL images)
 BUILD_PLATFORMS="${BUILD_PLATFORMS:-}"
 
+# Check for global x-build-platforms in compose file
 if [ -z "$BUILD_PLATFORMS" ]; then
-    # Check for explicit x-build-platforms in compose file first
     COMPOSE_PLATFORMS=$(awk '/^x-build-platforms:/{gsub(/^x-build-platforms:[[:space:]]*/, ""); gsub(/[[:space:]]*$/, ""); gsub(/"/, ""); gsub(/\047/, ""); print}' "$COMPOSE_PATH" 2>/dev/null)
     if [ -n "$COMPOSE_PLATFORMS" ]; then
         BUILD_PLATFORMS="$COMPOSE_PLATFORMS"
-        log_info "Multi-arch platforms from compose x-build-platforms: $BUILD_PLATFORMS"
-    else
-        # Auto-detect: scan Dockerfiles for multi-arch patterns
-        MULTIARCH_DETECTED=false
-        MULTIARCH_REASON=""
-
-        for img in $IMAGES; do
-            # Extract dockerfile path for this image (same awk as Step 4)
-            SERVICE_INFO=$(envsubst < "$COMPOSE_PATH" | awk -v target_img="$img" '
-            /^[[:space:]]{2}[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ {
-                # Check previous service before resetting
-                if (current_image == target_img && context != "") {
-                    printf "%s|%s", context, dockerfile
-                    found = 1; exit
-                }
-                current_image = ""; context = "."; dockerfile = "Dockerfile"
-            }
-            /^[[:space:]]{4}image:[[:space:]]*/ {
-                img_line = $0; gsub(/^[[:space:]]+image:[[:space:]]*/, "", img_line); gsub(/[[:space:]]*$/, "", img_line)
-                gsub(/"/, "", img_line); gsub(/\047/, "", img_line)
-                current_image = img_line
-            }
-            /^[[:space:]]{6}context:[[:space:]]*/ {
-                ctx = $0; gsub(/^[[:space:]]+context:[[:space:]]*/, "", ctx); gsub(/[[:space:]]*$/, "", ctx)
-                context = ctx
-            }
-            /^[[:space:]]{6}dockerfile:[[:space:]]*/ {
-                df = $0; gsub(/^[[:space:]]+dockerfile:[[:space:]]*/, "", df); gsub(/[[:space:]]*$/, "", df)
-                dockerfile = df
-            }
-            END {
-                if (!found && current_image == target_img && context != "") {
-                    printf "%s|%s", context, dockerfile
-                }
-            }
-            ')
-
-            if [ -n "$SERVICE_INFO" ]; then
-                CTX=$(echo "$SERVICE_INFO" | cut -d'|' -f1)
-                DF=$(echo "$SERVICE_INFO" | cut -d'|' -f2)
-
-                # Resolve context relative to compose file location
-                if [[ "$CTX" != /* ]]; then
-                    CTX="$DEVOPS_PATH/$CTX"
-                fi
-                DOCKERFILE_PATH="$CTX/$DF"
-
-                if [ -f "$DOCKERFILE_PATH" ]; then
-                    # Pattern 1: Architecture-conditional logic (dpkg --print-architecture in if/RUN)
-                    if grep -qE 'dpkg --print-architecture|TARGETARCH|TARGETPLATFORM|BUILDPLATFORM' "$DOCKERFILE_PATH" 2>/dev/null; then
-                        MULTIARCH_DETECTED=true
-                        MULTIARCH_REASON="$DF contains arch-conditional logic"
-                        break
-                    fi
-                    # Pattern 2: Multi-stage with --platform in FROM
-                    if grep -qE '^FROM\s+--platform=' "$DOCKERFILE_PATH" 2>/dev/null; then
-                        MULTIARCH_DETECTED=true
-                        MULTIARCH_REASON="$DF uses --platform in FROM"
-                        break
-                    fi
-                fi
-            fi
-        done
-
-        if [ "$MULTIARCH_DETECTED" = true ]; then
-            BUILD_PLATFORMS="linux/amd64,linux/arm64"
-            log_info "Multi-arch auto-detected ($MULTIARCH_REASON)"
-            log_info "Enabling multi-arch build: $BUILD_PLATFORMS"
-        fi
+        log_info "Global multi-arch platforms from compose: $BUILD_PLATFORMS"
     fi
+fi
+
+# Build a map of per-service x-platforms from compose file.
+# Services with x-platforms will use buildx multi-arch; others use single-arch.
+# Format: "image_name=platforms" lines, e.g. "registry.../app:latest=linux/amd64,linux/arm64"
+declare -A IMAGE_PLATFORMS
+if [ -z "$BUILD_PLATFORMS" ]; then
+    # Only read per-service platforms if there's no global override
+    while IFS='=' read -r img plat; do
+        [ -n "$img" ] && [ -n "$plat" ] && IMAGE_PLATFORMS["$img"]="$plat"
+    done < <(envsubst < "$COMPOSE_PATH" | awk '
+    /^[[:space:]]{2}[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ {
+        if (current_image != "" && platforms != "") {
+            print current_image "=" platforms
+        }
+        current_image = ""; platforms = ""
+    }
+    /^[[:space:]]{4}image:[[:space:]]*/ {
+        img_line = $0; gsub(/^[[:space:]]+image:[[:space:]]*/, "", img_line); gsub(/[[:space:]]*$/, "", img_line)
+        gsub(/"/, "", img_line); gsub(/\047/, "", img_line)
+        current_image = img_line
+    }
+    /^[[:space:]]{4}x-platforms:[[:space:]]*/ {
+        p = $0; gsub(/^[[:space:]]+x-platforms:[[:space:]]*/, "", p); gsub(/[[:space:]]*$/, "", p)
+        gsub(/"/, "", p); gsub(/\047/, "", p)
+        platforms = p
+    }
+    END {
+        if (current_image != "" && platforms != "") {
+            print current_image "=" platforms
+        }
+    }
+    ')
+
+    if [ ${#IMAGE_PLATFORMS[@]} -gt 0 ]; then
+        for img in "${!IMAGE_PLATFORMS[@]}"; do
+            log_info "Per-service multi-arch: $img -> ${IMAGE_PLATFORMS[$img]}"
+        done
+    fi
+fi
+
+# Determine if ANY image needs multi-arch (to know if we need a buildx builder)
+NEEDS_BUILDX=false
+if [ -n "$BUILD_PLATFORMS" ]; then
+    NEEDS_BUILDX=true
+elif [ ${#IMAGE_PLATFORMS[@]} -gt 0 ]; then
+    NEEDS_BUILDX=true
 fi
 
 # ============================================================================
@@ -587,11 +566,44 @@ if [ "$NO_CACHE" = "--no-cache" ]; then
     log_info "Building with --no-cache (forced fresh build)"
 fi
 
-if [ -n "$BUILD_PLATFORMS" ]; then
-    # ── Multi-arch build using docker buildx ──
-    log_info "Multi-arch build enabled: $BUILD_PLATFORMS"
+# Helper: extract build context/dockerfile/target for a given image from compose
+_get_service_build_info() {
+    local img="$1"
+    envsubst < "$COMPOSE_PATH" | awk -v target_img="$img" '
+    /^[[:space:]]{2}[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ {
+        if (current_image == target_img && context != "") {
+            printf "%s|%s|%s", context, dockerfile, target
+            found = 1; exit
+        }
+        current_image = ""; context = "."; dockerfile = "Dockerfile"; target = ""
+    }
+    /^[[:space:]]{4}image:[[:space:]]*/ {
+        img_line = $0; gsub(/^[[:space:]]+image:[[:space:]]*/, "", img_line); gsub(/[[:space:]]*$/, "", img_line)
+        gsub(/"/, "", img_line); gsub(/\047/, "", img_line)
+        current_image = img_line
+    }
+    /^[[:space:]]{6}context:[[:space:]]*/ {
+        ctx = $0; gsub(/^[[:space:]]+context:[[:space:]]*/, "", ctx); gsub(/[[:space:]]*$/, "", ctx)
+        context = ctx
+    }
+    /^[[:space:]]{6}dockerfile:[[:space:]]*/ {
+        df = $0; gsub(/^[[:space:]]+dockerfile:[[:space:]]*/, "", df); gsub(/[[:space:]]*$/, "", df)
+        dockerfile = df
+    }
+    /^[[:space:]]{6}target:[[:space:]]*/ {
+        tgt = $0; gsub(/^[[:space:]]+target:[[:space:]]*/, "", tgt); gsub(/[[:space:]]*$/, "", tgt)
+        target = tgt
+    }
+    END {
+        if (!found && current_image == target_img && context != "") {
+            printf "%s|%s|%s", context, dockerfile, target
+        }
+    }
+    '
+}
 
-    # Ensure a buildx builder with multi-platform support exists
+# Ensure buildx builder exists if any image needs multi-arch
+if [ "$NEEDS_BUILDX" = true ]; then
     BUILDER_NAME="pulsarcd-multiarch"
     if ! docker buildx inspect "$BUILDER_NAME" >/dev/null 2>&1; then
         log_info "Creating buildx builder: $BUILDER_NAME"
@@ -599,61 +611,35 @@ if [ -n "$BUILD_PLATFORMS" ]; then
     else
         docker buildx use "$BUILDER_NAME"
     fi
+fi
 
-    # Parse compose file to extract service build contexts and Dockerfiles
-    # Then build each image individually with buildx
-    BUILD_FAILED=false
-    for img in $IMAGES; do
-        RESOLVED_IMG=$(echo "$img" | envsubst 2>/dev/null || echo "$img")
-        if [[ "$RESOLVED_IMG" =~ \$\{ ]]; then
-            RESOLVED_IMG=$(echo "$RESOLVED_IMG" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g')
-        fi
-        BASE_IMAGE="${RESOLVED_IMG%:*}"
+# Collect single-arch images to build via docker compose
+SINGLEARCH_IMAGES=""
 
-        # Find the service name and its build context/dockerfile from compose
-        SERVICE_BUILD_INFO=$(envsubst < "$COMPOSE_PATH" | awk -v target_img="$img" '
-        /^[[:space:]]{2}[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ {
-            # Check previous service before resetting
-            if (current_image == target_img && context != "") {
-                printf "%s|%s|%s", context, dockerfile, target
-                found = 1; exit
-            }
-            current_image = ""; context = "."; dockerfile = "Dockerfile"; target = ""
-        }
-        /^[[:space:]]{4}image:[[:space:]]*/ {
-            img_line = $0; gsub(/^[[:space:]]+image:[[:space:]]*/, "", img_line); gsub(/[[:space:]]*$/, "", img_line)
-            gsub(/"/, "", img_line); gsub(/\047/, "", img_line)
-            current_image = img_line
-        }
-        /^[[:space:]]{6}context:[[:space:]]*/ {
-            ctx = $0; gsub(/^[[:space:]]+context:[[:space:]]*/, "", ctx); gsub(/[[:space:]]*$/, "", ctx)
-            context = ctx
-        }
-        /^[[:space:]]{6}dockerfile:[[:space:]]*/ {
-            df = $0; gsub(/^[[:space:]]+dockerfile:[[:space:]]*/, "", df); gsub(/[[:space:]]*$/, "", df)
-            dockerfile = df
-        }
-        /^[[:space:]]{6}target:[[:space:]]*/ {
-            tgt = $0; gsub(/^[[:space:]]+target:[[:space:]]*/, "", tgt); gsub(/[[:space:]]*$/, "", tgt)
-            target = tgt
-        }
-        END {
-            if (!found && current_image == target_img && context != "") {
-                printf "%s|%s|%s", context, dockerfile, target
-            }
-        }
-        ')
+BUILD_FAILED=false
+for img in $IMAGES; do
+    RESOLVED_IMG=$(echo "$img" | envsubst 2>/dev/null || echo "$img")
+    if [[ "$RESOLVED_IMG" =~ \$\{ ]]; then
+        RESOLVED_IMG=$(echo "$RESOLVED_IMG" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g')
+    fi
+    BASE_IMAGE="${RESOLVED_IMG%:*}"
+
+    # Determine platforms for this image: per-service > global > single-arch
+    IMG_PLATFORMS="${IMAGE_PLATFORMS[$img]:-$BUILD_PLATFORMS}"
+
+    if [ -n "$IMG_PLATFORMS" ]; then
+        # ── Multi-arch build using docker buildx ──
+        SERVICE_BUILD_INFO=$(_get_service_build_info "$img")
 
         BUILD_CONTEXT=$(echo "$SERVICE_BUILD_INFO" | cut -d'|' -f1)
         BUILD_DOCKERFILE=$(echo "$SERVICE_BUILD_INFO" | cut -d'|' -f2)
         BUILD_TARGET=$(echo "$SERVICE_BUILD_INFO" | cut -d'|' -f3)
 
-        # Resolve context path relative to compose file location
         if [[ "$BUILD_CONTEXT" != /* ]]; then
             BUILD_CONTEXT="$DEVOPS_PATH/$BUILD_CONTEXT"
         fi
 
-        BUILDX_CMD="docker buildx build --platform $BUILD_PLATFORMS"
+        BUILDX_CMD="docker buildx build --platform $IMG_PLATFORMS"
         BUILDX_CMD+=" -f $BUILD_CONTEXT/$BUILD_DOCKERFILE"
         [ -n "$BUILD_TARGET" ] && BUILDX_CMD+=" --target $BUILD_TARGET"
         BUILDX_CMD+=" -t ${BASE_IMAGE}:latest"
@@ -662,7 +648,7 @@ if [ -n "$BUILD_PLATFORMS" ]; then
         BUILDX_CMD+=" $BUILD_CONTEXT"
 
         log_info "Building multi-arch: $BASE_IMAGE"
-        log_info "  Platforms: $BUILD_PLATFORMS"
+        log_info "  Platforms: $IMG_PLATFORMS"
         log_info "  Context: $BUILD_CONTEXT"
         log_info "  Dockerfile: $BUILD_DOCKERFILE"
         [ -n "$BUILD_TARGET" ] && log_info "  Target: $BUILD_TARGET"
@@ -672,52 +658,50 @@ if [ -n "$BUILD_PLATFORMS" ]; then
             BUILD_FAILED=true
             break
         fi
-        log_success "Built and pushed: $BASE_IMAGE (multi-arch)"
-    done
-
-    if [ "$BUILD_FAILED" = true ]; then
-        if [ -n "$ORIGINAL_BRANCH" ]; then
-            git checkout "$ORIGINAL_BRANCH" 2>/dev/null || true
-        fi
-        if [ "$STASHED" = true ]; then
-            git stash pop 2>/dev/null || true
-        fi
-        exit 1
+        log_success "Built and pushed: $BASE_IMAGE (multi-arch: $IMG_PLATFORMS)"
+    else
+        # ── Single-arch: collect for batch build via docker compose ──
+        SINGLEARCH_IMAGES="$SINGLEARCH_IMAGES $img"
     fi
-else
-    # ── Single-arch build using docker compose ──
+done
+
+# Build remaining single-arch images in one batch via docker compose
+if [ "$BUILD_FAILED" = false ] && [ -n "$SINGLEARCH_IMAGES" ]; then
+    log_info "Building single-arch images via docker compose..."
     if ! docker compose -f "$COMPOSE_PATH" build $BUILD_ARGS; then
-        log_error "Docker build failed!"
-
-        if [ -n "$ORIGINAL_BRANCH" ]; then
-            git checkout "$ORIGINAL_BRANCH" 2>/dev/null || true
-        fi
-        if [ "$STASHED" = true ]; then
-            git stash pop 2>/dev/null || true
-        fi
-
-        exit 1
+        log_error "Docker compose build failed!"
+        BUILD_FAILED=true
     fi
+fi
+
+if [ "$BUILD_FAILED" = true ]; then
+    if [ -n "$ORIGINAL_BRANCH" ]; then
+        git checkout "$ORIGINAL_BRANCH" 2>/dev/null || true
+    fi
+    if [ "$STASHED" = true ]; then
+        git stash pop 2>/dev/null || true
+    fi
+    exit 1
 fi
 
 log_success "All images built successfully!"
 
 # ============================================================================
-# Step 5: Resolve environment variables in image names and tag images
+# Step 5: Tag and push images
 # ============================================================================
 log_info "Tagging images with version: $FULL_VERSION"
 
-if [ -n "$BUILD_PLATFORMS" ]; then
-    # Multi-arch: images are already pushed with :latest tag by buildx.
-    # Use 'docker buildx imagetools create' to add version tags to the manifest.
-    for img in $IMAGES; do
-        RESOLVED_IMG=$(echo "$img" | envsubst 2>/dev/null || echo "$img")
-        if [[ "$RESOLVED_IMG" =~ \$\{ ]]; then
-            RESOLVED_IMG=$(echo "$RESOLVED_IMG" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g')
-        fi
-        BASE_IMAGE="${RESOLVED_IMG%:*}"
-        SOURCE_TAG="${RESOLVED_IMG##*:}"
+for img in $IMAGES; do
+    RESOLVED_IMG=$(echo "$img" | envsubst 2>/dev/null || echo "$img")
+    if [[ "$RESOLVED_IMG" =~ \$\{ ]]; then
+        RESOLVED_IMG=$(echo "$RESOLVED_IMG" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g')
+    fi
+    BASE_IMAGE="${RESOLVED_IMG%:*}"
+    SOURCE_TAG="${RESOLVED_IMG##*:}"
+    IMG_PLATFORMS="${IMAGE_PLATFORMS[$img]:-$BUILD_PLATFORMS}"
 
+    if [ -n "$IMG_PLATFORMS" ]; then
+        # Multi-arch: images already pushed by buildx, add version tags via imagetools
         log_info "Creating multi-arch tags for $BASE_IMAGE"
         docker buildx imagetools create -t "${BASE_IMAGE}:${FULL_VERSION}" "${BASE_IMAGE}:${SOURCE_TAG}" \
             && log_success "Tagged: ${BASE_IMAGE}:${FULL_VERSION}" \
@@ -728,18 +712,8 @@ if [ -n "$BUILD_PLATFORMS" ]; then
         docker buildx imagetools create -t "${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}" "${BASE_IMAGE}:${SOURCE_TAG}" \
             && log_success "Tagged: ${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}" \
             || log_error "Failed to tag ${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}"
-    done
-
-    log_success "All multi-arch images tagged and pushed!"
-else
-    # Single-arch: tag locally then push
-    for img in $IMAGES; do
-        RESOLVED_IMG=$(echo "$img" | envsubst 2>/dev/null || echo "$img")
-        if [[ "$RESOLVED_IMG" =~ \$\{ ]]; then
-            RESOLVED_IMG=$(echo "$RESOLVED_IMG" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g')
-        fi
-        BASE_IMAGE="${RESOLVED_IMG%:*}"
-
+    else
+        # Single-arch: tag locally then push
         BUILT_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^${BASE_IMAGE}:" | head -1)
         if [ -z "$BUILT_IMAGE" ]; then
             BUILT_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^${BASE_IMAGE}" | head -1)
@@ -749,34 +723,22 @@ else
             continue
         fi
 
-        log_info "Tagging $BUILT_IMAGE as ${BASE_IMAGE}:${FULL_VERSION}"
+        log_info "Tagging $BUILT_IMAGE"
         docker tag "$BUILT_IMAGE" "${BASE_IMAGE}:${FULL_VERSION}"
-        log_success "Tagged: ${BASE_IMAGE}:${FULL_VERSION}"
         docker tag "$BUILT_IMAGE" "${BASE_IMAGE}:${VERSION}"
-        log_success "Tagged: ${BASE_IMAGE}:${VERSION}"
         docker tag "$BUILT_IMAGE" "${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}"
-        log_success "Tagged: ${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}"
-    done
-
-    # ── Push (single-arch only — multi-arch images are pushed during build) ──
-    log_info "Pushing images to $REGISTRY..."
-    for img in $IMAGES; do
-        RESOLVED_IMG=$(echo "$img" | envsubst 2>/dev/null || echo "$img")
-        if [[ "$RESOLVED_IMG" =~ \$\{ ]]; then
-            RESOLVED_IMG=$(echo "$RESOLVED_IMG" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g')
-        fi
-        BASE_IMAGE="${RESOLVED_IMG%:*}"
-        RESOLVED_TAG="${RESOLVED_IMG##*:}"
 
         docker push "${BASE_IMAGE}:${FULL_VERSION}" || log_error "Failed to push ${BASE_IMAGE}:${FULL_VERSION}"
         docker push "${BASE_IMAGE}:${VERSION}" || log_error "Failed to push ${BASE_IMAGE}:${VERSION}"
         docker push "${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}" || log_error "Failed to push ${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}"
-        if [ "$RESOLVED_TAG" != "$FULL_VERSION" ] && [ "$RESOLVED_TAG" != "$VERSION" ] && [ "$RESOLVED_TAG" != "$CURRENT_COMMIT_SHORT" ]; then
-            docker push "${BASE_IMAGE}:${RESOLVED_TAG}" || log_warning "Could not push ${BASE_IMAGE}:${RESOLVED_TAG}"
+        if [ "$SOURCE_TAG" != "$FULL_VERSION" ] && [ "$SOURCE_TAG" != "$VERSION" ] && [ "$SOURCE_TAG" != "$CURRENT_COMMIT_SHORT" ]; then
+            docker push "${BASE_IMAGE}:${SOURCE_TAG}" || log_warning "Could not push ${BASE_IMAGE}:${SOURCE_TAG}"
         fi
-    done
-    log_success "All images pushed successfully!"
-fi
+        log_success "Tagged and pushed: $BASE_IMAGE"
+    fi
+done
+
+log_success "All images tagged and pushed!"
 
 # ============================================================================
 # Step 7: Tag git repository with version (skip if full version was provided)

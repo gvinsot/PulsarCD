@@ -1,7 +1,5 @@
 version: '3.9'
 
-x-build-platforms: linux/amd64,linux/arm64
-
 # ============================================================================
 # PulsarCD - Docker Swarm Deployment (Agent-Based Architecture)
 # Deploy with: docker stack deploy -c docker-compose.swarm.yml pulsarcd
@@ -185,6 +183,7 @@ services:
   # ==========================================================================
   agent:
     image: ${DOCKER_REGISTRY_URL}/pulsarcd-agent:latest
+    x-platforms: linux/amd64,linux/arm64
     build:
       context: ..
       dockerfile: Dockerfile.agent

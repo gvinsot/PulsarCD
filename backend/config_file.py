@@ -17,7 +17,7 @@ logger = structlog.get_logger()
 
 class LLMConfig(BaseModel):
     """LLM provider settings."""
-    url: str = "http://vllm:8000"
+    url: str = "http://vllm-dev-service:8000"
     model: str = "txn545/Qwen3.5-122B-A10B-NVFP4"
     api_key: str = ""
     context_tokens: int = 256000
@@ -26,8 +26,8 @@ class LLMConfig(BaseModel):
 
 class MCPServerConfig(BaseModel):
     """MCP server endpoint configuration."""
-    name: str = "pulsarcd"
-    url: str = "http://localhost:8000/ai/mcp"
+    name: str = "TicketManager"
+    url: str = "http://team-api:3001/api/swarm/mcp"
     api_key: str = ""
 
 
@@ -36,43 +36,48 @@ class ErrorHandlingConfig(BaseModel):
     enabled: bool = True
     instructions: str = (
         "You are a DevOps agent for PulsarCD. You MUST use the available MCP "
-        "tools to investigate errors. NEVER respond with text-only analysis — "
-        "always call at least one tool.\n"
+        "tools to investigate errors.\n"
         "Investigation tools (PulsarCD):\n"
         "- search_logs: search for errors in recent logs\n"
         "- list_containers: check container status\n"
         "- list_computers: check node health\n"
         "- get_action_status: check the status of a previous action\n\n"
         "IMPORTANT: NEVER call build_stack or deploy_stack directly. "
-        "If corrective action is needed, create a task in PulsarTeam "
-        "via the create_task tool with a clear diagnosis and steps to follow."
     )
     on_build_failure: str = (
         "A Docker build has failed. Steps:\n"
         "1. Call search_logs with the project name to find the build logs\n"
         "2. Identify the root cause (code error, Dockerfile, dependency, infra)\n"
-        "3. Create a PulsarTeam task with the diagnosis and corrective actions"
+        "3. Create a PulsarTeam task with the diagnosis and corrective actions\n"
+        "If corrective action is needed, create a task in PulsarTeam "
+        "via the create_task tool with a clear diagnosis"
     )
     on_test_failure: str = (
         "Tests have failed. Steps:\n"
         "1. Call search_logs to find the specific test errors\n"
         "2. Identify which tests failed and why\n"
         "3. Determine if it is a regression, a flaky test, or an environment issue\n"
-        "4. Create a PulsarTeam task with the diagnosis and affected tests"
+        "4. Create a PulsarTeam task with the diagnosis and affected tests\n"
+        "If corrective action is needed, create a task in PulsarTeam\n"
+        "via the create_task tool with a clear diagnosis"
     )
     on_deploy_failure: str = (
         "A deployment has failed. Steps:\n"
         "1. Call list_containers to check the service container status\n"
         "2. Call search_logs to find recent service errors\n"
         "3. Verify the Docker image exists and is accessible\n"
-        "4. Create a PulsarTeam task with the diagnosis and recommended actions"
+        "4. Create a PulsarTeam task with the diagnosis and recommended actions\n"
+        "If corrective action is needed, create a task in PulsarTeam\n"
+        "via the create_task tool with a clear diagnosis"
     )
     on_recurring_error: str = (
         "A recurring error has been detected. Steps:\n"
         "1. Call search_logs with the error message to determine the scope\n"
         "2. Call list_containers to check the affected services\n"
         "3. Determine if the issue is systemic or isolated to one service\n"
-        "4. Create a PulsarTeam task with the root cause and severity"
+        "4. Create a PulsarTeam task with the root cause and severity\n"
+        "If corrective action is needed, create a task in PulsarTeam\n"
+        "via the create_task tool with a clear diagnosis"
     )
 
 
