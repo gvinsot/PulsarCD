@@ -421,6 +421,45 @@ async def admin_update_config(request: Request):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.post("/api/admin/mcp-test")
+async def admin_mcp_test(request: Request):
+    """Test connectivity to an MCP server by calling tools/list."""
+    body = await request.json()
+    url = body.get("url", "").strip().rstrip("/")
+    api_key = body.get("api_key", "").strip()
+
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    payload = {"jsonrpc": "2.0", "method": "tools/list", "id": 1}
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url, json=payload, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                data = await resp.json()
+                if "error" in data:
+                    error = data["error"]
+                    msg = error.get("message", str(error)) if isinstance(error, dict) else str(error)
+                    return {"ok": False, "error": msg}
+                mcp_tools = data.get("result", {}).get("tools", [])
+                tool_names = [t.get("name", "?") for t in mcp_tools]
+                return {"ok": True, "tools": tool_names, "count": len(tool_names)}
+    except aiohttp.ClientError as e:
+        return {"ok": False, "error": f"Connection failed: {e}"}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
 @app.post("/api/admin/llm-test")
 async def admin_llm_test(request: Request):
     """Test LLM agent with a user message (admin only). Uses current config."""
@@ -1337,7 +1376,7 @@ async def analyze_log_message(request: Dict[str, Any]) -> Dict[str, Any]:
 
 @app.post("/api/tasks/create")
 async def create_agent_task(request: Dict[str, Any]) -> Dict[str, Any]:
-    """Create a task for the swarm agent from the UI."""
+    """Create a task in PulsarTeam via its MCP server."""
     task = request.get("task", "").strip()
     project = request.get("project", "").strip()
 
@@ -1346,30 +1385,66 @@ async def create_agent_task(request: Dict[str, Any]) -> Dict[str, Any]:
     if not project:
         raise HTTPException(status_code=400, detail="project is required")
 
-    if not settings or not settings.swarm.secret_key:
-        raise HTTPException(status_code=500, detail="Swarm secret key not configured")
+    # Find the PulsarTeam MCP server in config
+    pulsarteam_server = None
+    mcp_servers = llm_agent._mcp_servers if llm_agent else []
+    for server in mcp_servers:
+        if server.name == "pulsarteam":
+            pulsarteam_server = server
+            break
 
-    url = f"{SWARM_API_BASE}/agents/{SWARM_AGENT_NAME}/tasks"
-    headers = {"Authorization": f"Bearer {settings.swarm.secret_key}"}
-    payload = {"task": task, "project": project}
+    if not pulsarteam_server:
+        raise HTTPException(status_code=500,
+                            detail="PulsarTeam MCP server not configured (add a server named 'pulsarteam' in Settings)")
+
+    url = pulsarteam_server.url.rstrip("/")
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    if pulsarteam_server.api_key:
+        headers["Authorization"] = f"Bearer {pulsarteam_server.api_key}"
+
+    # Call MCP tools/call with create_task
+    payload = {
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+            "name": "create_task",
+            "arguments": {"task": task, "project": project},
+        },
+        "id": 1,
+    }
 
     try:
-        async with aiohttp.ClientSession(headers=headers) as session:
+        async with aiohttp.ClientSession() as session:
             async with session.post(
-                url, json=payload, timeout=aiohttp.ClientTimeout(total=10),
+                url, json=payload, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
-                body = await resp.text()
-                if resp.status in (200, 201):
-                    logger.info("Manual task created", project=project, status=resp.status)
-                    return {"ok": True, "status": resp.status, "response": body[:500]}
-                else:
-                    logger.error("Failed to create manual task",
-                                 status=resp.status, response=body[:500])
-                    raise HTTPException(status_code=resp.status,
-                                        detail=f"Swarm API error: {body[:200]}")
+                data = await resp.json()
+
+                if "error" in data:
+                    error = data["error"]
+                    error_msg = error.get("message", str(error)) if isinstance(error, dict) else str(error)
+                    logger.error("PulsarTeam MCP error", project=project, error=error_msg)
+                    raise HTTPException(status_code=502, detail=f"PulsarTeam error: {error_msg}")
+
+                result = data.get("result", {})
+                content_parts = result.get("content", [])
+                text_parts = [
+                    p.get("text", "") if isinstance(p, dict) else str(p)
+                    for p in content_parts
+                ]
+                response_text = "\n".join(text_parts)
+
+                logger.info("Task created in PulsarTeam", project=project,
+                            response_preview=response_text[:200])
+                return {"ok": True, "response": response_text[:500]}
+
     except aiohttp.ClientError as e:
-        logger.error("Swarm API connection error", error=str(e))
-        raise HTTPException(status_code=502, detail=f"Cannot reach swarm API: {e}")
+        logger.error("PulsarTeam MCP connection error", error=str(e), url=url)
+        raise HTTPException(status_code=502, detail=f"Cannot reach PulsarTeam: {e}")
 
 
 # ============== Hosts ==============

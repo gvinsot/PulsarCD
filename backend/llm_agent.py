@@ -325,6 +325,7 @@ class LLMAgent:
 
         tools = []
         self._tool_server_map = {}
+        all_servers_ok = True
 
         for server in self._mcp_servers:
             server_url = server.url.rstrip("/")
@@ -368,11 +369,14 @@ class LLMAgent:
                                     tools=[t["name"] for t in mcp_tools])
 
             except Exception as e:
+                all_servers_ok = False
                 logger.warning("Failed to discover MCP tools",
                                server=server.name, url=server_url,
                                error_type=type(e).__name__, error=str(e))
 
-        self._tools_cache = tools
+        # Only cache if all servers responded — retry failed servers next time
+        if all_servers_ok:
+            self._tools_cache = tools
         return tools
 
     async def _call_tool(self, name: str, arguments: dict) -> str:

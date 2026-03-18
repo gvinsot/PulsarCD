@@ -5251,6 +5251,19 @@ a.btn {
     background: rgba(239, 68, 68, 0.1);
 }
 
+.mcp-test-result {
+    margin-left: 10px;
+    font-size: 12px;
+}
+
+.mcp-test-ok {
+    color: var(--status-success);
+}
+
+.mcp-test-fail {
+    color: var(--status-error);
+}
+
 /* Users list */
 .user-row {
     display: flex;

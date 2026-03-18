@@ -455,8 +455,56 @@ function renderMCPServers(servers) {
                 <label>API Key</label>
                 <input type="password" class="mcp-apikey" value="${escapeHtml(s.api_key || '')}" />
             </div>
+            <div class="settings-field">
+                <button class="btn btn-sm btn-secondary" onclick="testMCPServer(${i})" id="mcp-test-btn-${i}">Test Connection</button>
+                <span class="mcp-test-result" id="mcp-test-result-${i}"></span>
+            </div>
         </div>
     `).join('');
+}
+
+async function testMCPServer(index) {
+    const cards = document.querySelectorAll('.mcp-server-card');
+    const card = cards[index];
+    if (!card) return;
+
+    const url = card.querySelector('.mcp-url').value.trim();
+    const apiKey = card.querySelector('.mcp-apikey').value.trim();
+    const btn = document.getElementById(`mcp-test-btn-${index}`);
+    const resultEl = document.getElementById(`mcp-test-result-${index}`);
+
+    if (!url) {
+        resultEl.textContent = 'URL is required';
+        resultEl.className = 'mcp-test-result mcp-test-fail';
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Testing...';
+    resultEl.textContent = '';
+
+    try {
+        const response = await fetch(`${API_BASE}/admin/mcp-test`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url, api_key: apiKey }),
+        });
+        const data = await response.json();
+
+        if (data.ok) {
+            resultEl.textContent = `OK — ${data.count} tool(s): ${data.tools.join(', ')}`;
+            resultEl.className = 'mcp-test-result mcp-test-ok';
+        } else {
+            resultEl.textContent = `Failed: ${data.error}`;
+            resultEl.className = 'mcp-test-result mcp-test-fail';
+        }
+    } catch (e) {
+        resultEl.textContent = `Error: ${e.message}`;
+        resultEl.className = 'mcp-test-result mcp-test-fail';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Test Connection';
+    }
 }
 
 function escapeHtml(str) {
@@ -1140,8 +1188,16 @@ function openCreateTaskModal(source, index) {
     const host = log.host || '';
     const timestamp = log.timestamp || '';
 
-    // Derive project name from container name (strip suffixes like .1.xxx)
-    const project = containerName.replace(/\.\d+\..+$/, '').replace(/_\d+$/, '') || '';
+    // Derive project name: prefer compose_project from log/container,
+    // then extract stack name from Swarm container name (stack_service.slot.taskid)
+    let project = log.compose_project || '';
+    if (!project && currentContainer) {
+        project = currentContainer.data.compose_project || '';
+    }
+    if (!project && containerName) {
+        const m = containerName.match(/^(.+?)_[^.]+\.\d+\.\w+$/);
+        project = m ? m[1] : containerName.replace(/\.\d+\..+$/, '');
+    }
 
     const taskDesc = [
         `ERROR LOG detected in container '${containerName}'`,
