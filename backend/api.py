@@ -667,6 +667,25 @@ async def get_opensearch_status():
     return result
 
 
+@app.post("/api/admin/opensearch-recreate-index")
+async def recreate_opensearch_index(
+    index: str = Query(..., description="Index name to recreate"),
+    current_user: dict = Depends(get_current_user),
+):
+    """Force delete and recreate an OpenSearch index with correct mapping.
+    WARNING: This deletes all data in the index. Agents will repopulate it.
+    """
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+    try:
+        result = await opensearch.recreate_index(index)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============== Containers ==============
 
 @app.get("/api/containers", response_model=List[ContainerInfo])

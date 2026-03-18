@@ -75,38 +75,72 @@ class OpenSearchClient:
         changing field types in-place.
         """
         try:
-            resp = await self._client.indices.get_mapping(index=index_name)
-            # Response format: {index_name: {"mappings": {"properties": {...}}}}
+            raw = await self._client.indices.get_mapping(index=index_name)
+            # opensearch-py 3.x wraps response in ApiResponse object
+            resp_dict = getattr(raw, "body", raw)
+            if not isinstance(resp_dict, dict):
+                try:
+                    resp_dict = dict(resp_dict)
+                except Exception:
+                    logger.error("Cannot parse get_mapping response",
+                                 index=index_name, resp_type=type(raw).__name__)
+                    return
+
             actual_props = {}
-            if index_name in resp:
-                actual_props = resp[index_name].get("mappings", {}).get("properties", {})
-            elif hasattr(resp, "body") and index_name in resp.body:
-                actual_props = resp.body[index_name].get("mappings", {}).get("properties", {})
+            if index_name in resp_dict:
+                actual_props = resp_dict[index_name].get(
+                    "mappings", {}).get("properties", {})
 
-            expected_props = expected_mapping.get("mappings", {}).get("properties", {})
+            expected_props = expected_mapping.get(
+                "mappings", {}).get("properties", {})
 
-            # Check each expected field type
+            logger.warning("Mapping check",
+                           index=index_name,
+                           actual_count=len(actual_props),
+                           expected_count=len(expected_props))
+
             mismatches = []
             for field, expected_def in expected_props.items():
                 expected_type = expected_def.get("type")
                 actual_def = actual_props.get(field, {})
                 actual_type = actual_def.get("type")
                 if actual_type and expected_type and actual_type != expected_type:
-                    mismatches.append(f"{field}: {actual_type} -> {expected_type}")
+                    mismatches.append(
+                        f"{field}: {actual_type} -> {expected_type}")
 
             if mismatches:
-                logger.warning("Index has wrong field types, recreating...",
+                logger.warning("Wrong field types found, recreating index",
                                index=index_name, mismatches=mismatches)
                 await self._client.indices.delete(index=index_name)
-                logger.warning("Deleted index with bad mapping", index=index_name)
-                await self._client.indices.create(index=index_name, body=expected_mapping)
+                logger.warning("Deleted index with bad mapping",
+                               index=index_name)
+                await self._client.indices.create(
+                    index=index_name, body=expected_mapping)
                 logger.warning("Recreated index with correct mapping",
                                index=index_name)
             else:
-                logger.info("Index mapping verified OK", index=index_name)
+                logger.info("Index mapping OK", index=index_name)
         except Exception as e:
             logger.error("Mapping verification failed", index=index_name,
-                         error=str(e))
+                         error=str(e), error_type=type(e).__name__)
+
+    async def recreate_index(self, index_name: str):
+        """Force delete and recreate an index with correct mapping."""
+        mapping_methods = {
+            self.logs_index: self._create_logs_index,
+            self.metrics_index: self._create_metrics_index,
+            self.host_metrics_index: self._create_host_metrics_index,
+        }
+        if index_name not in mapping_methods:
+            raise ValueError(f"Unknown index: {index_name}")
+        try:
+            await self._client.indices.delete(index=index_name)
+            logger.warning("Deleted index for recreation", index=index_name)
+        except Exception as e:
+            logger.warning("Index delete failed", index=index_name,
+                           error=str(e))
+        await mapping_methods[index_name]()
+        return {"status": "recreated", "index": index_name}
 
     async def initialize(self):
         """Create indices and mappings."""

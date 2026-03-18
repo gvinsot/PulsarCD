@@ -67,13 +67,24 @@ class OpenSearchWriter:
         """
         try:
             resp = await self._client.indices.get_mapping(index=index_name)
+
+            # opensearch-py 3.x returns ApiResponse; convert to dict
+            resp_dict = resp
+            if hasattr(resp, "body"):
+                resp_dict = resp.body
+            if not isinstance(resp_dict, dict):
+                resp_dict = dict(resp_dict)
+
             actual_props = {}
-            if index_name in resp:
-                actual_props = resp[index_name].get("mappings", {}).get("properties", {})
-            elif hasattr(resp, "body") and index_name in resp.body:
-                actual_props = resp.body[index_name].get("mappings", {}).get("properties", {})
+            if index_name in resp_dict:
+                actual_props = resp_dict[index_name].get("mappings", {}).get("properties", {})
 
             expected_props = expected_mapping.get("mappings", {}).get("properties", {})
+
+            logger.warning("Mapping verification",
+                           index=index_name,
+                           actual_fields=list(actual_props.keys()),
+                           expected_fields=list(expected_props.keys()))
 
             mismatches = []
             for field, expected_def in expected_props.items():
@@ -95,7 +106,7 @@ class OpenSearchWriter:
                 logger.info("Index mapping verified OK", index=index_name)
         except Exception as e:
             logger.error("Mapping verification failed", index=index_name,
-                         error=str(e))
+                         error=str(e), error_type=type(e).__name__)
 
     async def initialize(self):
         """Ensure indices exist (create if needed)."""
