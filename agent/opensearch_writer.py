@@ -365,8 +365,10 @@ class OpenSearchWriter:
                                sample_keys=list(sample.keys()), sample_host=sample.get("host"),
                                sample_container=sample.get("container_name"))
             logger.debug("Indexed logs", count=success)
+            return success
         except Exception as e:
             logger.error("Failed to index logs", error=str(e))
+            return 0
 
     async def index_container_stats(self, stats: Dict[str, Any]):
         """Index container statistics."""

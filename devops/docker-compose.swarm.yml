@@ -224,6 +224,9 @@ services:
 
       # Log level (DEBUG, INFO, WARNING, ERROR)
       - AGENT_LOG_LEVEL=${AGENT_LOG_LEVEL:-INFO}
+
+      # NVIDIA GPU: tells the NVIDIA Container Toolkit to inject nvidia-smi and libraries
+      - NVIDIA_VISIBLE_DEVICES=all
     networks:
       - internal
     depends_on:
