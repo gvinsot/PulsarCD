@@ -378,7 +378,9 @@ class DockerCollector:
                 if entry:
                     entries.append(entry)
 
-            except Exception:
+            except Exception as e:
+                logger.debug("Failed to parse log line", error=str(e),
+                             container=container_name, exc_info=True)
                 continue
 
         # Fallback: if no entries parsed, try plain text parsing
@@ -393,8 +395,9 @@ class DockerCollector:
                         )
                         if entry:
                             entries.append(entry)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to parse log lines (plaintext fallback)",
+                             error=str(e), container=container_name, exc_info=True)
 
         return entries
 

@@ -489,9 +489,11 @@ class DockerAPIClient:
                 if entry:
                     entries.append(entry)
                     
-            except Exception:
+            except Exception as e:
+                logger.debug("Failed to parse log line", error=str(e),
+                             container=container_name, exc_info=True)
                 continue
-        
+
         # Fallback: if no entries parsed, try plain text parsing
         if not entries and raw_data:
             try:
@@ -504,11 +506,12 @@ class DockerAPIClient:
                         )
                         if entry:
                             entries.append(entry)
-            except Exception:
-                pass
-        
+            except Exception as e:
+                logger.debug("Failed to parse log lines (plaintext fallback)",
+                             error=str(e), container=container_name, exc_info=True)
+
         return entries
-    
+
     def _parse_log_line(
         self,
         line: str,
@@ -610,8 +613,8 @@ class DockerAPIClient:
                     if _auths:
                         _auth_payload = json.dumps({"auths": _auths}).encode()
                         extra_headers["X-Registry-Auth"] = base64.b64encode(_auth_payload).decode()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to build registry auth header", error=str(e))
 
             # Update the service
             request_kwargs = {"json": spec}
@@ -891,9 +894,11 @@ class DockerAPIClient:
                 }
                 entries.append(entry)
                 
-            except Exception:
+            except Exception as e:
+                logger.debug("Failed to parse service log line", error=str(e),
+                             service=service_name, exc_info=True)
                 continue
-        
+
         # Fallback: if no entries parsed with multiplexed format, try plain text
         if not entries and raw_data:
             try:
@@ -902,7 +907,7 @@ class DockerAPIClient:
                     line = line.strip()
                     if not line:
                         continue
-                    
+
                     timestamp = None
                     message = line
                     if len(line) > 30 and (line[4] == '-' or line[:4].isdigit()):
@@ -913,16 +918,17 @@ class DockerAPIClient:
                                 message = line[space_idx + 1:]
                             except (ValueError, IndexError):
                                 pass
-                    
+
                     entries.append({
                         "timestamp": timestamp or datetime.utcnow().isoformat() + "Z",
                         "message": message,
                         "stream": "stdout",
                         "service": service_name,
                     })
-            except Exception:
-                pass
-        
+            except Exception as e:
+                logger.debug("Failed to parse service log lines (plaintext fallback)",
+                             error=str(e), service=service_name, exc_info=True)
+
         return entries
 
     async def get_service_tasks(self, service_name: str) -> List[Dict[str, Any]]:

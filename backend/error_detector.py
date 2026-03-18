@@ -628,8 +628,8 @@ class RecurringErrorDetector:
                     existing_fp = parts[1] if len(parts) >= 3 else fp
                     groups.setdefault(existing_fp, []).append(err)
                     continue
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("zvec similarity query failed", error=str(e))
 
             # New pattern — insert into zvec (fp embedded in doc_id for cross-scan lookup)
             doc_id = f"err_{fp}_{int(time.time() * 1000)}"
@@ -637,8 +637,8 @@ class RecurringErrorDetector:
                 self._zvec_collection.insert([
                     zvec.Doc(id=doc_id, vectors={"embedding": vec})
                 ])
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("zvec embedding insert failed", error=str(e))
 
             groups.setdefault(fp, []).append(err)
 

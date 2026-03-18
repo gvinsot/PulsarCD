@@ -388,8 +388,8 @@ class AIService:
             if self._available:
                 try:
                     return await self._ai_analyze_log(message, level, container_name, hint_severity="critical")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("AI analysis failed for critical log", error=str(e))
             return {
                 "severity": "critical",
                 "assessment": "Critical issue detected - requires immediate attention."
@@ -506,8 +506,9 @@ Respond only with valid JSON, no markdown or extra text."""
                     "severity": severity,
                     "assessment": result.get("assessment", "Analysis complete.")[:150]
                 }
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to parse AI log analysis response",
+                               error=str(e), response_preview=response_text[:200])
 
         # Fallback
         return {
