@@ -1,6 +1,7 @@
 """OpenSearch writer for agent - writes logs and metrics directly to OpenSearch."""
 
 import hashlib
+import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 

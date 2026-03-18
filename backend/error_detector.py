@@ -322,15 +322,24 @@ class RecurringErrorDetector:
             if fp in self._patterns:
                 for occ in occurrences:
                     svc = self._extract_service_name(occ)
+                    cp = occ.get("compose_project")
+                    logger.debug("Error occurrence (existing pattern)",
+                                 fingerprint=fp[:12], service=svc,
+                                 compose_project=cp,
+                                 container_name=occ.get("container_name"))
                     self._patterns[fp].add_occurrence(
-                        svc, occ["message"], occ.get("compose_project"),
-                        occ.get("timestamp"))
+                        svc, occ["message"], cp, occ.get("timestamp"))
             else:
                 first = occurrences[0]
                 svc = self._extract_service_name(first)
+                cp = first.get("compose_project")
+                logger.info("New error pattern detected",
+                            fingerprint=fp[:12], service=svc,
+                            compose_project=cp,
+                            container_name=first.get("container_name"),
+                            message_preview=first["message"][:120])
                 self._patterns[fp] = ErrorPattern(
-                    fp, first["message"], svc, first.get("compose_project"),
-                    first.get("timestamp"))
+                    fp, first["message"], svc, cp, first.get("timestamp"))
                 for occ in occurrences[1:]:
                     s = self._extract_service_name(occ)
                     self._patterns[fp].add_occurrence(
@@ -491,11 +500,17 @@ class RecurringErrorDetector:
             filtered = [h for h in hits if not self._is_self_log(h.get("message", ""))]
             self_filtered = len(hits) - len(filtered)
             if hits:
+                # Log compose_project distribution for debugging resolution
+                cp_counts: Dict[str, int] = {}
+                for h in filtered:
+                    cp = h.get("compose_project", "(none)")
+                    cp_counts[cp] = cp_counts.get(cp, 0) + 1
                 logger.info("Error detector fetched errors from OpenSearch",
                             total_in_index=total_count,
                             returned=len(hits),
                             self_filtered=self_filtered,
                             kept=len(filtered),
+                            compose_project_distribution=cp_counts,
                             since=since.isoformat())
             return filtered
         except Exception as e:
@@ -611,8 +626,11 @@ class RecurringErrorDetector:
         canonical repo name.
         """
         if not compose_projects:
+            logger.debug("_resolve_stacks: no compose_projects to resolve")
             return []
         if not self._pipeline_state:
+            logger.warning("_resolve_stacks: no pipeline_state available, returning raw compose_projects",
+                           compose_projects=sorted(compose_projects))
             return sorted(compose_projects)
         # Build a lookup: stack_name → repo_name
         stack_to_repo = {}
@@ -620,9 +638,22 @@ class RecurringErrorDetector:
             sn = getattr(entry, 'stack_name', None)
             if sn:
                 stack_to_repo[sn.lower()] = repo_name
+            else:
+                logger.debug("_resolve_stacks: entry has no stack_name",
+                             repo_name=repo_name, entry_type=type(entry).__name__)
+        logger.info("_resolve_stacks: lookup table built",
+                    stack_to_repo=stack_to_repo,
+                    compose_projects=sorted(compose_projects))
         resolved = []
         for cp in sorted(compose_projects):
             repo = stack_to_repo.get(cp.lower())
+            if repo:
+                logger.info("_resolve_stacks: matched",
+                            compose_project=cp, resolved_repo=repo)
+            else:
+                logger.warning("_resolve_stacks: no match found",
+                               compose_project=cp,
+                               available_stacks=list(stack_to_repo.keys()))
             resolved.append(repo if repo else cp)
         return resolved
 
@@ -630,7 +661,16 @@ class RecurringErrorDetector:
         """Record a recurring error in history and delegate to LLM agent."""
         # Always record in history so the dashboard panel is populated
         pattern.notified = True
+        logger.info("_notify_recurring_error: resolving stacks",
+                    fingerprint=pattern.fingerprint[:12],
+                    compose_projects=sorted(pattern.compose_projects),
+                    services=sorted(pattern.services),
+                    count=pattern.count)
         stacks = self._resolve_stacks(pattern.compose_projects)
+        logger.info("_notify_recurring_error: resolved stacks",
+                    fingerprint=pattern.fingerprint[:12],
+                    input_projects=sorted(pattern.compose_projects),
+                    resolved_stacks=stacks)
         entry = {
             "fingerprint": pattern.fingerprint,
             "sample_message": pattern.sample_message,
