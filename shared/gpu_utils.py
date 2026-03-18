@@ -76,6 +76,10 @@ def parse_nvidia_smi_csv(stdout: str) -> Tuple[Optional[float], Optional[float],
             continue
         parts = line.split(", ")
         if len(parts) >= 3:
+            # Skip GPUs that report [N/A] (e.g. some Tesla/datacenter cards)
+            if any("[N/A]" in p for p in parts[:3]):
+                logger.debug("Skipping nvidia-smi line with N/A values", line=line[:100])
+                continue
             try:
                 gpu_utils.append(float(parts[0]))
                 mem_used_total += float(parts[1])
