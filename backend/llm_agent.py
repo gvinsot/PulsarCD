@@ -329,7 +329,10 @@ class LLMAgent:
         for server in self._mcp_servers:
             server_url = server.url.rstrip("/")
             api_key = server.api_key or self._mcp_api_key
-            headers = {"Content-Type": "application/json"}
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            }
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
 
@@ -379,7 +382,10 @@ class LLMAgent:
             return f"Error: unknown tool '{name}'"
 
         server_url, api_key = server_info
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
 

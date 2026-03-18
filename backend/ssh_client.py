@@ -207,7 +207,8 @@ class SSHClient:
                         status=status,
                         created=created,
                         host=self.config.name,
-                        compose_project=labels.get("com.docker.compose.project"),
+                        compose_project=(labels.get("com.docker.stack.namespace") or
+                                         labels.get("com.docker.compose.project")),
                         compose_service=labels.get("com.docker.compose.service"),
                         ports=ports,
                         labels=labels,

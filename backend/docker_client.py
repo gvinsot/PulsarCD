@@ -182,9 +182,10 @@ class DockerAPIClient:
                         ports[private] = public
 
                 # Get compose/stack project and service
-                # Try Compose labels first, then Swarm stack labels
-                compose_project = (labels.get("com.docker.compose.project") or
-                                   labels.get("com.docker.stack.namespace"))
+                # Prefer Swarm stack namespace (actual stack name) over
+                # compose project label (directory name, often wrong)
+                compose_project = (labels.get("com.docker.stack.namespace") or
+                                   labels.get("com.docker.compose.project"))
                 compose_service = labels.get("com.docker.compose.service")
                 if not compose_service:
                     swarm_svc = labels.get("com.docker.swarm.service.name")
@@ -1312,8 +1313,9 @@ class DockerAPIClient:
                         name = data.get("Name", "unknown").lstrip("/")
 
                         # Get compose/stack project and service
-                        compose_project = (labels.get("com.docker.compose.project") or
-                                           labels.get("com.docker.stack.namespace"))
+                        # Prefer Swarm stack namespace over compose project label
+                        compose_project = (labels.get("com.docker.stack.namespace") or
+                                           labels.get("com.docker.compose.project"))
                         compose_service = labels.get("com.docker.compose.service")
                         if not compose_service:
                             swarm_svc = labels.get("com.docker.swarm.service.name")

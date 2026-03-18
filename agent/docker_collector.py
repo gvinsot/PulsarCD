@@ -121,8 +121,8 @@ class DockerCollector:
                     if public:
                         ports[private] = public
 
-                compose_project = (labels.get("com.docker.compose.project") or
-                                   labels.get("com.docker.stack.namespace"))
+                compose_project = (labels.get("com.docker.stack.namespace") or
+                                   labels.get("com.docker.compose.project"))
                 # com.docker.compose.service = plain service name (e.g. "nginx")
                 # com.docker.swarm.service.name = "stack_service" (e.g. "pulsarcd_nginx")
                 #   → strip the stack prefix so compose_service is always the plain name
