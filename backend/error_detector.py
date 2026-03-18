@@ -182,7 +182,7 @@ class RecurringErrorDetector:
         self._zvec_db_path = zvec_db_path
         self._burst_window_seconds = burst_window_seconds
         # Compose projects to exclude from error detection (e.g. PulsarCD's own stack)
-        self._exclude_projects = exclude_compose_projects or ["pulsarcd"]
+        self._exclude_projects = exclude_compose_projects or ["pulsarcd", "devops"]
 
         # State
         self._patterns: Dict[str, ErrorPattern] = {}
@@ -663,14 +663,15 @@ class RecurringErrorDetector:
                            compose_projects=sorted(compose_projects))
             return sorted(compose_projects)
         # Build a lookup: stack_name → repo_name
+        # When stack_name is not set, fall back to repo_name.lower()
+        # (stacks are named after their GitHub repo in lowercase)
         stack_to_repo = {}
         for repo_name, entry in self._pipeline_state.items():
             sn = getattr(entry, 'stack_name', None)
             if sn:
                 stack_to_repo[sn.lower()] = repo_name
             else:
-                logger.debug("_resolve_stacks: entry has no stack_name",
-                             repo_name=repo_name, entry_type=type(entry).__name__)
+                stack_to_repo[repo_name.lower()] = repo_name
         logger.info("_resolve_stacks: lookup table built",
                     stack_to_repo=stack_to_repo,
                     compose_projects=sorted(compose_projects))
