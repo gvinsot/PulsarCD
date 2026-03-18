@@ -513,7 +513,11 @@ if [ -z "$BUILD_PLATFORMS" ]; then
             # Extract dockerfile path for this image (same awk as Step 4)
             SERVICE_INFO=$(awk -v target_img="$img" '
             /^[[:space:]]{2}[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ {
-                service = $0; gsub(/^[[:space:]]+/, "", service); gsub(/:.*/, "", service)
+                # Check previous service before resetting
+                if (current_image == target_img && context != "") {
+                    printf "%s|%s", context, dockerfile
+                    exit
+                }
                 current_image = ""; context = "."; dockerfile = "Dockerfile"
             }
             /^[[:space:]]{4}image:[[:space:]]*/ {
@@ -528,12 +532,6 @@ if [ -z "$BUILD_PLATFORMS" ]; then
             /^[[:space:]]{6}dockerfile:[[:space:]]*/ {
                 df = $0; gsub(/^[[:space:]]+dockerfile:[[:space:]]*/, "", df); gsub(/[[:space:]]*$/, "", df)
                 dockerfile = df
-            }
-            /^[[:space:]]{2}[a-zA-Z]/ {
-                if (current_image == target_img && context != "") {
-                    printf "%s|%s", context, dockerfile
-                    exit
-                }
             }
             END {
                 if (current_image == target_img && context != "") {
@@ -615,7 +613,11 @@ if [ -n "$BUILD_PLATFORMS" ]; then
         # Find the service name and its build context/dockerfile from compose
         SERVICE_BUILD_INFO=$(awk -v target_img="$img" '
         /^[[:space:]]{2}[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ {
-            service = $0; gsub(/^[[:space:]]+/, "", service); gsub(/:.*/, "", service)
+            # Check previous service before resetting
+            if (current_image == target_img && context != "") {
+                printf "%s|%s|%s", context, dockerfile, target
+                exit
+            }
             current_image = ""; context = "."; dockerfile = "Dockerfile"; target = ""
         }
         /^[[:space:]]{4}image:[[:space:]]*/ {
@@ -634,12 +636,6 @@ if [ -n "$BUILD_PLATFORMS" ]; then
         /^[[:space:]]{6}target:[[:space:]]*/ {
             tgt = $0; gsub(/^[[:space:]]+target:[[:space:]]*/, "", tgt); gsub(/[[:space:]]*$/, "", tgt)
             target = tgt
-        }
-        /^[[:space:]]{2}[a-zA-Z]/ {
-            if (current_image == target_img && context != "") {
-                printf "%s|%s|%s", context, dockerfile, target
-                exit
-            }
         }
         END {
             if (current_image == target_img && context != "") {
