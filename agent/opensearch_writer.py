@@ -38,16 +38,42 @@ class OpenSearchWriter:
         self._log_index_total_docs = 0
         self._verified = False
 
+    async def _ensure_index(self, index_name: str, mapping: dict):
+        """Create an index if it doesn't exist, handling opensearch-py 2.x/3.x differences.
+
+        Uses direct creation with error handling instead of exists() check,
+        because opensearch-py 3.x changed the return type of indices.exists()
+        from bool to HeadApiResponse which can break boolean checks.
+        """
+        try:
+            await self._client.indices.create(index=index_name, body=mapping)
+            logger.warning("Created index", index=index_name)
+        except Exception as e:
+            error_str = str(e).lower()
+            if "resource_already_exists" in error_str or "already exists" in error_str:
+                logger.info("Index already exists", index=index_name)
+            else:
+                logger.error("Failed to create index", index=index_name,
+                             error=str(e), error_type=type(e).__name__)
+                raise
+
     async def initialize(self):
         """Ensure indices exist (create if needed)."""
-        await self._ensure_logs_index()
-        await self._ensure_metrics_index()
-        await self._ensure_host_metrics_index()
-        logger.debug("OpenSearch writer initialized")
+        # Log cluster info for diagnostics
+        try:
+            info = await self._client.info()
+            server_ver = info.get("version", {}).get("number", "?")
+            import opensearchpy as _ospy
+            client_ver = getattr(_ospy, "__versionstr__", "?")
+            logger.warning("Agent OpenSearch connection OK",
+                           server_version=server_ver,
+                           client_version=client_ver,
+                           hosts=self.config.hosts)
+        except Exception as e:
+            logger.error("Agent cannot reach OpenSearch!", error=str(e))
+            raise
 
-    async def _ensure_logs_index(self):
-        """Create logs index if it doesn't exist."""
-        mapping = {
+        await self._ensure_index(self.logs_index, {
             "mappings": {
                 "properties": {
                     "timestamp": {"type": "date"},
@@ -68,15 +94,9 @@ class OpenSearchWriter:
                 "number_of_replicas": 0,
                 "index.refresh_interval": "5s",
             }
-        }
+        })
 
-        if not await self._client.indices.exists(index=self.logs_index):
-            await self._client.indices.create(index=self.logs_index, body=mapping)
-            logger.info("Created logs index", index=self.logs_index)
-
-    async def _ensure_metrics_index(self):
-        """Create container metrics index if it doesn't exist."""
-        mapping = {
+        await self._ensure_index(self.metrics_index, {
             "mappings": {
                 "properties": {
                     "timestamp": {"type": "date"},
@@ -99,15 +119,9 @@ class OpenSearchWriter:
                 "number_of_shards": 1,
                 "number_of_replicas": 0,
             }
-        }
+        })
 
-        if not await self._client.indices.exists(index=self.metrics_index):
-            await self._client.indices.create(index=self.metrics_index, body=mapping)
-            logger.info("Created metrics index", index=self.metrics_index)
-
-    async def _ensure_host_metrics_index(self):
-        """Create host metrics index if it doesn't exist."""
-        mapping = {
+        await self._ensure_index(self.host_metrics_index, {
             "mappings": {
                 "properties": {
                     "timestamp": {"type": "date"},
@@ -128,11 +142,18 @@ class OpenSearchWriter:
                 "number_of_shards": 1,
                 "number_of_replicas": 0,
             }
-        }
+        })
 
-        if not await self._client.indices.exists(index=self.host_metrics_index):
-            await self._client.indices.create(index=self.host_metrics_index, body=mapping)
-            logger.info("Created host metrics index", index=self.host_metrics_index)
+        # Verify indices exist
+        for idx in [self.logs_index, self.metrics_index, self.host_metrics_index]:
+            try:
+                count_resp = await self._client.count(index=idx)
+                logger.warning("Index verified", index=idx,
+                               doc_count=count_resp.get("count", 0))
+            except Exception as e:
+                logger.error("Index verification FAILED!", index=idx, error=str(e))
+
+        logger.warning("OpenSearch writer initialized")
 
     async def close(self):
         """Close the client."""
