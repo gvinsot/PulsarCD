@@ -511,7 +511,7 @@ if [ -z "$BUILD_PLATFORMS" ]; then
 
         for img in $IMAGES; do
             # Extract dockerfile path for this image (same awk as Step 4)
-            SERVICE_INFO=$(awk -v target_img="$img" '
+            SERVICE_INFO=$(envsubst < "$COMPOSE_PATH" | awk -v target_img="$img" '
             /^[[:space:]]{2}[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ {
                 # Check previous service before resetting
                 if (current_image == target_img && context != "") {
@@ -538,7 +538,7 @@ if [ -z "$BUILD_PLATFORMS" ]; then
                     printf "%s|%s", context, dockerfile
                 }
             }
-            ' "$COMPOSE_PATH")
+            ')
 
             if [ -n "$SERVICE_INFO" ]; then
                 CTX=$(echo "$SERVICE_INFO" | cut -d'|' -f1)
@@ -611,7 +611,7 @@ if [ -n "$BUILD_PLATFORMS" ]; then
         BASE_IMAGE="${RESOLVED_IMG%:*}"
 
         # Find the service name and its build context/dockerfile from compose
-        SERVICE_BUILD_INFO=$(awk -v target_img="$img" '
+        SERVICE_BUILD_INFO=$(envsubst < "$COMPOSE_PATH" | awk -v target_img="$img" '
         /^[[:space:]]{2}[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ {
             # Check previous service before resetting
             if (current_image == target_img && context != "") {
@@ -642,7 +642,7 @@ if [ -n "$BUILD_PLATFORMS" ]; then
                 printf "%s|%s|%s", context, dockerfile, target
             }
         }
-        ' "$COMPOSE_PATH")
+        ')
 
         BUILD_CONTEXT=$(echo "$SERVICE_BUILD_INFO" | cut -d'|' -f1)
         BUILD_DOCKERFILE=$(echo "$SERVICE_BUILD_INFO" | cut -d'|' -f2)
