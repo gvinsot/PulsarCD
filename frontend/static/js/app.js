@@ -332,7 +332,7 @@ async function saveSettingsFromAgent() {
 
     try {
         const resp = await fetch(`${API_BASE}/admin/config`, {
-            method: 'POST',
+            method: 'PUT',
             headers: { ...authHeaders(), 'Content-Type': 'application/json' },
             body: JSON.stringify(config),
         });
