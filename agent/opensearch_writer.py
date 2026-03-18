@@ -41,9 +41,9 @@ class OpenSearchWriter:
     async def _ensure_index(self, index_name: str, mapping: dict):
         """Create an index if it doesn't exist, handling opensearch-py 2.x/3.x differences.
 
-        Uses direct creation with error handling instead of exists() check,
-        because opensearch-py 3.x changed the return type of indices.exists()
-        from bool to HeadApiResponse which can break boolean checks.
+        Also verifies the mapping of existing indices — if key fields have
+        wrong types (e.g. 'text' instead of 'keyword' from auto-mapping),
+        the index is deleted and recreated with the correct mapping.
         """
         try:
             await self._client.indices.create(index=index_name, body=mapping)
@@ -51,11 +51,51 @@ class OpenSearchWriter:
         except Exception as e:
             error_str = str(e).lower()
             if "resource_already_exists" in error_str or "already exists" in error_str:
-                logger.info("Index already exists", index=index_name)
+                logger.info("Index already exists, verifying mapping...",
+                            index=index_name)
+                await self._verify_mapping(index_name, mapping)
             else:
                 logger.error("Failed to create index", index=index_name,
                              error=str(e), error_type=type(e).__name__)
                 raise
+
+    async def _verify_mapping(self, index_name: str, expected_mapping: dict):
+        """Check if existing index has the correct field types.
+
+        If key fields have wrong types (e.g. auto-mapped 'text' instead of
+        'keyword'), delete and recreate the index.
+        """
+        try:
+            resp = await self._client.indices.get_mapping(index=index_name)
+            actual_props = {}
+            if index_name in resp:
+                actual_props = resp[index_name].get("mappings", {}).get("properties", {})
+            elif hasattr(resp, "body") and index_name in resp.body:
+                actual_props = resp.body[index_name].get("mappings", {}).get("properties", {})
+
+            expected_props = expected_mapping.get("mappings", {}).get("properties", {})
+
+            mismatches = []
+            for field, expected_def in expected_props.items():
+                expected_type = expected_def.get("type")
+                actual_def = actual_props.get(field, {})
+                actual_type = actual_def.get("type")
+                if actual_type and expected_type and actual_type != expected_type:
+                    mismatches.append(f"{field}: {actual_type} -> {expected_type}")
+
+            if mismatches:
+                logger.warning("Index has wrong field types, recreating...",
+                               index=index_name, mismatches=mismatches)
+                await self._client.indices.delete(index=index_name)
+                logger.warning("Deleted index with bad mapping", index=index_name)
+                await self._client.indices.create(index=index_name, body=expected_mapping)
+                logger.warning("Recreated index with correct mapping",
+                               index=index_name)
+            else:
+                logger.info("Index mapping verified OK", index=index_name)
+        except Exception as e:
+            logger.error("Mapping verification failed", index=index_name,
+                         error=str(e))
 
     async def initialize(self):
         """Ensure indices exist (create if needed)."""
