@@ -15,6 +15,22 @@ import structlog
 logger = structlog.get_logger()
 
 
+# ============== ANSI Escape Code Stripping ==============
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+
+
+def strip_ansi(text: str) -> str:
+    """Strip ANSI escape codes from text.
+
+    Many containers (structlog ConsoleRenderer, coloredlogs, etc.) output ANSI
+    colour/style codes.  These break regex-based detection of log levels and
+    other patterns because escape sequences sit directly adjacent to the level
+    word, eliminating word boundaries.
+    """
+    return _ANSI_RE.sub('', text)
+
+
 # ============== Size Parsing ==============
 
 def parse_size_mb(size_str: str) -> float:

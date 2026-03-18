@@ -153,6 +153,7 @@ class RecurringErrorDetector:
         re.compile(r'LLM gate (evaluation|decision)', re.IGNORECASE),
         re.compile(r'Pipeline state', re.IGNORECASE),
         re.compile(r'Context compaction', re.IGNORECASE),
+        re.compile(r'Failed to poll actions', re.IGNORECASE),
     ]
 
     def __init__(
@@ -182,7 +183,7 @@ class RecurringErrorDetector:
         self._zvec_db_path = zvec_db_path
         self._burst_window_seconds = burst_window_seconds
         # Compose projects to exclude from error detection (e.g. PulsarCD's own stack)
-        self._exclude_projects = exclude_compose_projects or ["pulsarcd", "devops"]
+        self._exclude_projects = exclude_compose_projects or ["pulsarcd"]
 
         # State
         self._patterns: Dict[str, ErrorPattern] = {}
