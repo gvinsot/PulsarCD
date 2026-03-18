@@ -35,25 +35,44 @@ class ErrorHandlingConfig(BaseModel):
     """LLM error handling instructions."""
     enabled: bool = True
     instructions: str = (
-        "Tu es un agent DevOps pour PulsarCD. Quand des erreurs surviennent, "
-        "utilise les outils disponibles pour investiguer et determiner l'action "
-        "appropriee. Sois conservateur - investigue avant d'agir."
+        "You are a DevOps agent for PulsarCD. You MUST use the available MCP "
+        "tools to investigate errors. NEVER respond with text-only analysis — "
+        "always call at least one tool.\n"
+        "Investigation tools (PulsarCD):\n"
+        "- search_logs: search for errors in recent logs\n"
+        "- list_containers: check container status\n"
+        "- list_computers: check node health\n"
+        "- get_action_status: check the status of a previous action\n\n"
+        "IMPORTANT: NEVER call build_stack or deploy_stack directly. "
+        "If corrective action is needed, create a task in PulsarTeam "
+        "via the create_task tool with a clear diagnosis and steps to follow."
     )
     on_build_failure: str = (
-        "Un build Docker a echoue. Cherche dans les logs de build, regarde les "
-        "commits recents, determine si c'est un probleme de code ou d'infra."
+        "A Docker build has failed. Steps:\n"
+        "1. Call search_logs with the project name to find the build logs\n"
+        "2. Identify the root cause (code error, Dockerfile, dependency, infra)\n"
+        "3. Create a PulsarTeam task with the diagnosis and corrective actions"
     )
     on_test_failure: str = (
-        "Les tests ont echoue. Cherche les erreurs specifiques dans la sortie, "
-        "verifie si les memes tests passaient recemment."
+        "Tests have failed. Steps:\n"
+        "1. Call search_logs to find the specific test errors\n"
+        "2. Identify which tests failed and why\n"
+        "3. Determine if it is a regression, a flaky test, or an environment issue\n"
+        "4. Create a PulsarTeam task with the diagnosis and affected tests"
     )
     on_deploy_failure: str = (
-        "Un deploiement a echoue. Verifie les logs du service, que l'image "
-        "existe, et que les autres services sur le meme host sont sains."
+        "A deployment has failed. Steps:\n"
+        "1. Call list_containers to check the service container status\n"
+        "2. Call search_logs to find recent service errors\n"
+        "3. Verify the Docker image exists and is accessible\n"
+        "4. Create a PulsarTeam task with the diagnosis and recommended actions"
     )
     on_recurring_error: str = (
-        "Une erreur recurrente a ete detectee. Investigue avec la recherche "
-        "de logs pour comprendre la portee et la cause racine."
+        "A recurring error has been detected. Steps:\n"
+        "1. Call search_logs with the error message to determine the scope\n"
+        "2. Call list_containers to check the affected services\n"
+        "3. Determine if the issue is systemic or isolated to one service\n"
+        "4. Create a PulsarTeam task with the root cause and severity"
     )
 
 
@@ -62,30 +81,32 @@ class PipelineGatesConfig(BaseModel):
     build_to_test: bool = False
     test_to_deploy: bool = False
     instructions: str = (
-        "Tu es un agent DevOps qui valide les transitions de pipeline CI/CD. "
-        "Analyse les logs de l'etape precedente et la version pour determiner "
-        "si il est sur de passer a l'etape suivante. "
-        "Tu peux utiliser les outils MCP (notamment git) pour verifier les "
-        "changements de code qui vont etre deployes. "
-        "Reponds UNIQUEMENT par un JSON: {\"approve\": true/false, \"reason\": \"...\"}"
+        "You are a DevOps agent that validates CI/CD pipeline transitions. "
+        "Analyze the logs from the previous stage and the version to determine "
+        "whether it is safe to proceed to the next stage. "
+        "You can use MCP tools (including git) to review the code changes "
+        "that are about to be deployed. "
+        "Respond ONLY with JSON: {\"approve\": true/false, \"reason\": \"...\"}"
     )
     on_build_to_test: str = (
-        "Le build a reussi. Verifie les logs de build pour detecter des warnings "
-        "critiques, verifie les changements de code recents via git, et determine "
-        "si les tests peuvent etre lances en toute securite."
+        "The build succeeded. Check the build logs for critical warnings, "
+        "review recent code changes via git, and determine whether tests "
+        "can be launched safely."
     )
     on_test_to_deploy: str = (
-        "Les tests ont reussi. Verifie les resultats de tests, les changements "
-        "de code via git, et determine si le deploiement peut se faire en toute "
-        "securite. Sois particulierement vigilant sur les migrations de base de "
-        "donnees et les changements d'API."
+        "Tests have passed. Review the test results, code changes via git, "
+        "and determine whether the deployment can proceed safely. "
+        "Be especially vigilant about database migrations and API changes."
     )
 
 
 class PulsarConfig(BaseModel):
     """Top-level configuration loaded from config.yml."""
     llm: LLMConfig = LLMConfig()
-    mcp_servers: List[MCPServerConfig] = [MCPServerConfig()]
+    mcp_servers: List[MCPServerConfig] = [
+        MCPServerConfig(),
+        MCPServerConfig(name="pulsarteam", url="http://team-api:3001/api/swarm/mcp"),
+    ]
     error_handling: ErrorHandlingConfig = ErrorHandlingConfig()
     pipeline_gates: PipelineGatesConfig = PipelineGatesConfig()
 

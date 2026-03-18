@@ -519,8 +519,12 @@ class LLMAgent:
             tool_calls = assistant_msg.get("tool_calls")
             if finish_reason != "tool_calls" and not tool_calls:
                 final_content = assistant_msg.get("content", "")
+                if iteration == 0 and openai_tools:
+                    logger.warning("LLM agent responded without calling any tools",
+                                   response_preview=final_content[:200])
                 logger.info("LLM agent completed",
                             iterations=iteration + 1,
+                            tool_calls_made=iteration > 0,
                             response_len=len(final_content),
                             context_tokens=_estimate_messages_tokens(messages))
                 return final_content
@@ -576,10 +580,12 @@ class LLMAgent:
 
         system_prompt = (
             f"{self._error_handling.instructions}\n\n"
+            f"--- Specific instructions for this error ---\n"
             f"{specific_instructions}\n\n"
-            f"You have access to MCP tools to investigate and take action. "
-            f"Use them as needed to diagnose and fix the issue.\n"
-            f"Respond with your analysis and any actions taken."
+            f"IMPORTANT: You MUST call at least one MCP tool to investigate "
+            f"before responding. A response without any tool call is insufficient.\n"
+            f"Respond with: 1) Tools called and their results "
+            f"2) Diagnosis 3) Actions taken or recommended."
         )
 
         compact_output = _build_error_output(error_output)
@@ -654,11 +660,12 @@ class LLMAgent:
 
         system_prompt = (
             f"{self._error_handling.instructions}\n\n"
+            f"--- Specific instructions for this error ---\n"
             f"{self._error_handling.on_recurring_error}\n\n"
-            f"You have access to MCP tools to investigate and take action. "
-            f"Use them to search logs, check container status, and understand "
-            f"the scope of the issue.\n"
-            f"Respond with your analysis and recommended action."
+            f"IMPORTANT: You MUST call at least one MCP tool to investigate "
+            f"before responding. A response without any tool call is insufficient.\n"
+            f"Respond with: 1) Tools called and their results "
+            f"2) Diagnosis 3) Actions taken or recommended."
         )
 
         duration = pattern.last_seen - pattern.first_seen
