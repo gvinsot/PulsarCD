@@ -3668,7 +3668,9 @@ function renderStacksList() {
         } else if (pipeline && pipeline.stage === 'done') {
             versionStep = 'success';
             buildStep = skipBuild ? 'skipped' : (effectiveHadBuild ? 'success' : 'idle');
-            testStep = effectiveHadTest ? 'success' : 'idle';
+            // Use actual per-stage status: if test failed but deploy was forced, show warning
+            const testStageStatus = pipeline.stages && pipeline.stages.test ? pipeline.stages.test.status : null;
+            testStep = testStageStatus === 'failed' ? 'warning' : (effectiveHadTest ? 'success' : 'idle');
             deployStep = 'success';
         } else if (pipeline && pipeline.status === 'success') {
             const cs = stageOrder[pipeline.stage] || 0;
@@ -3856,7 +3858,8 @@ function renderStacksList() {
         const idleSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"/></svg>`;
         const pendingSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
         const gateSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12"><circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/></svg>`;
-        const stepIcon = (state) => state === 'success' ? checkSvg : state === 'failed' ? xSvg : state === 'gate_rejected' ? gateSvg : state === 'running' ? spinnerSvg : state === 'pending' ? pendingSvg : idleSvg;
+        const warningSvg = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="12" height="12"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
+        const stepIcon = (state) => state === 'success' ? checkSvg : state === 'failed' ? xSvg : state === 'warning' ? warningSvg : state === 'gate_rejected' ? gateSvg : state === 'running' ? spinnerSvg : state === 'pending' ? pendingSvg : idleSvg;
 
         // Gate arrow coloring: green if gate approved (next step running/success), red if rejected
         function _gateArrowClass(pipeline, fromStage, fromStep, toStep) {

@@ -162,13 +162,17 @@ class PipelineEntry:
 
     def to_legacy_dict(self) -> dict:
         """Return a dict compatible with the old _pipeline_state format."""
-        # Find version from current stage or most recent
+        # Find version: use the current stage's desired_version first,
+        # then fall back to the most recent stage with a desired_version.
         version = None
-        for stage_name in reversed(self.STAGES):
-            s = self.stages[stage_name]
-            if s.desired_version:
-                version = s.desired_version
-                break
+        if self.current_stage and self.current_stage in self.stages:
+            version = self.stages[self.current_stage].desired_version
+        if not version:
+            for stage_name in reversed(self.STAGES):
+                s = self.stages[stage_name]
+                if s.desired_version:
+                    version = s.desired_version
+                    break
 
         return {
             "stage": self.current_stage or "idle",
@@ -183,7 +187,7 @@ class PipelineEntry:
             "stack_name": self.stack_name,
             "gates": [g.to_dict() for g in self.gates],
             "last_deployed_at": self.last_deployed_at,
-            # New enriched per-stage data
+            # Enriched per-stage data
             "stages": {name: s.to_dict() for name, s in self.stages.items()},
         }
 
@@ -333,6 +337,11 @@ class PipelineStateManager:
             entry.stages[stage].updated_at = now
             if status == "success":
                 entry.stages[stage].current_version = version
+            # When a stage starts running, set desired_version on all stages
+            # so the version badge always reflects the current pipeline run
+            if status == "running":
+                for s in PipelineEntry.STAGES:
+                    entry.stages[s].desired_version = version
         elif stage == "done":
             entry.stages["deploy"].current_version = version
             entry.stages["deploy"].status = "success"

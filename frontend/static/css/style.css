@@ -3401,6 +3401,7 @@ a.btn {
 .pipeline-step.step-running { background: rgba(14, 165, 233, 0.15); color: var(--accent-secondary); }
 .pipeline-step.step-success { background: rgba(34, 197, 94, 0.15); color: var(--status-success); }
 .pipeline-step.step-failed { background: rgba(239, 68, 68, 0.15); color: var(--status-error); }
+.pipeline-step.step-warning { background: rgba(251, 146, 60, 0.15); color: #fb923c; }
 .pipeline-step.step-gate_rejected { background: rgba(251, 191, 36, 0.15); color: var(--status-warning); }
 .pipeline-step.step-pending {
     background: rgba(14, 165, 233, 0.08);
