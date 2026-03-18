@@ -112,6 +112,14 @@ class Agent:
                     logger.error("Failed to connect to OpenSearch after retries", error=str(e))
                     raise
 
+        # Run self-test to verify the full write/read pipeline
+        test_ok = await self.opensearch.self_test()
+        if not test_ok:
+            logger.critical(
+                "OpenSearch self-test FAILED — logs will NOT be indexed! "
+                "Check OpenSearch connectivity, index mappings, and disk space."
+            )
+
         self._running = True
 
         # Start background tasks
@@ -159,7 +167,9 @@ class Agent:
 
     async def _log_collection_loop(self):
         """Periodically collect logs from all containers."""
-        logger.info("Log collection loop started", interval=self.config.log_interval)
+        logger.warning("Log collection loop started",
+                       interval=self.config.log_interval,
+                       tail=self.config.log_lines_per_fetch)
         cycle = 0
 
         while self._running:
@@ -169,12 +179,28 @@ class Agent:
                     tail=self.config.log_lines_per_fetch
                 )
 
+                indexed = 0
                 if logs:
-                    await self.opensearch.index_logs(logs)
-                    logger.debug("Collected logs", count=len(logs))
+                    indexed = await self.opensearch.index_logs(logs)
+
+                # Always log at WARNING — silent failures are the worst kind
+                logger.warning(
+                    "Log cycle",
+                    cycle=cycle,
+                    collected=len(logs),
+                    indexed=indexed,
+                )
+
+                # Periodic doc count check (every 10 cycles ≈ 5min)
+                if cycle % 10 == 0:
+                    doc_count = await self.opensearch.count_docs()
+                    logger.warning("Periodic doc count",
+                                   index=self.opensearch.logs_index,
+                                   doc_count=doc_count, cycle=cycle)
 
             except Exception as e:
-                logger.error("Log collection error", error=str(e), cycle=cycle)
+                logger.error("Log collection error", error=str(e),
+                             error_type=type(e).__name__, cycle=cycle)
 
             await asyncio.sleep(self.config.log_interval)
 

@@ -1,11 +1,12 @@
 """OpenSearch writer for agent - writes logs and metrics directly to OpenSearch."""
 
 import hashlib
+import json
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import structlog
-from opensearchpy import AsyncOpenSearch, helpers
+from opensearchpy import AsyncOpenSearch
 
 from .config import OpenSearchConfig
 
@@ -33,6 +34,9 @@ class OpenSearchWriter:
             ssl_show_warn=False,
         )
         self._write_count = 0
+        self._log_index_calls = 0
+        self._log_index_total_docs = 0
+        self._verified = False
 
     async def initialize(self):
         """Ensure indices exist (create if needed)."""
@@ -134,6 +138,105 @@ class OpenSearchWriter:
         """Close the client."""
         await self._client.close()
 
+    async def self_test(self) -> bool:
+        """Write a test document, read it back, and delete it.
+
+        Returns True if the full write-read-delete cycle succeeds.
+        This proves the OpenSearch connection and index mapping work end-to-end.
+        """
+        test_id = "__selftest__"
+        test_doc = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "host": "__selftest__",
+            "container_id": "__selftest__",
+            "container_name": "__selftest__",
+            "compose_project": "__selftest__",
+            "compose_service": "__selftest__",
+            "stream": "stdout",
+            "message": "PulsarCD agent self-test",
+            "level": "INFO",
+            "http_status": None,
+            "parsed_fields": {},
+        }
+
+        try:
+            # 1. Single-doc write
+            resp = await self._client.index(
+                index=self.logs_index, id=test_id, body=test_doc, refresh="true"
+            )
+            write_result = resp.get("result")
+            logger.info("Self-test: single write OK", result=write_result, index=self.logs_index)
+
+            # 2. Bulk write test (verifies the bulk API works)
+            bulk_test_id = "__selftest_bulk__"
+            bulk_doc = test_doc.copy()
+            bulk_doc["message"] = "PulsarCD agent bulk self-test"
+            ndjson = (
+                json.dumps({"index": {"_index": self.logs_index, "_id": bulk_test_id}}) + "\n"
+                + json.dumps(bulk_doc) + "\n"
+            )
+            bulk_resp = await self._client.bulk(body=ndjson, refresh="true")
+            bulk_errors = bulk_resp.get("errors", True)
+            bulk_items = bulk_resp.get("items", [])
+            bulk_status = bulk_items[0].get("index", {}).get("status") if bulk_items else "no_items"
+            logger.warning("Self-test: bulk write", errors=bulk_errors, status=bulk_status)
+            if bulk_errors:
+                logger.critical("Self-test: BULK API DOES NOT WORK!",
+                                response=json.dumps(bulk_resp)[:500])
+
+            # 3. Read back
+            get_resp = await self._client.get(index=self.logs_index, id=test_id)
+            found = get_resp.get("found", False)
+            logger.info("Self-test: read OK", found=found)
+
+            # 4. Search test (verifies search works too)
+            search_resp = await self._client.search(
+                index=self.logs_index,
+                body={"query": {"term": {"host": "__selftest__"}}, "size": 1},
+            )
+            search_hits = search_resp.get("hits", {}).get("total", {})
+            search_count = search_hits.get("value", 0) if isinstance(search_hits, dict) else search_hits
+            logger.warning("Self-test: search OK", hits=search_count)
+
+            # 5. Delete test docs
+            await self._client.delete(index=self.logs_index, id=test_id, refresh="true")
+            try:
+                await self._client.delete(index=self.logs_index, id=bulk_test_id, refresh="true")
+            except Exception:
+                pass
+            logger.info("Self-test: delete OK")
+
+            # 6. Count existing docs in all indices
+            for idx_name in [self.logs_index, self.metrics_index, self.host_metrics_index]:
+                try:
+                    count_resp = await self._client.count(index=idx_name)
+                    doc_count = count_resp.get("count", "?")
+                    logger.warning("Self-test: index doc count",
+                                   index=idx_name, doc_count=doc_count)
+                except Exception as e:
+                    logger.warning("Self-test: index not found or empty",
+                                   index=idx_name, error=str(e)[:200])
+
+            return True
+
+        except Exception as e:
+            logger.critical(
+                "SELF-TEST FAILED — OpenSearch pipeline is broken!",
+                error=str(e),
+                error_type=type(e).__name__,
+                index=self.logs_index,
+                hosts=self.config.hosts,
+            )
+            return False
+
+    async def count_docs(self, index: Optional[str] = None) -> int:
+        """Count documents in an index. Defaults to logs index."""
+        try:
+            resp = await self._client.count(index=index or self.logs_index)
+            return resp.get("count", 0)
+        except Exception:
+            return -1
+
     def _generate_log_id(self, entry: Dict[str, Any]) -> str:
         """Generate unique ID for log entry."""
         timestamp = entry.get("timestamp", "")
@@ -142,12 +245,22 @@ class OpenSearchWriter:
         unique_str = f"{entry.get('host')}:{entry.get('container_id')}:{timestamp}:{entry.get('message', '')[:100]}"
         return hashlib.md5(unique_str.encode()).hexdigest()
 
-    async def index_logs(self, entries: List[Dict[str, Any]]):
-        """Bulk index log entries."""
-        if not entries:
-            return
+    async def index_logs(self, entries: List[Dict[str, Any]]) -> int:
+        """Bulk index log entries using the direct bulk API.
 
-        actions = []
+        Uses the OpenSearch bulk NDJSON API directly instead of the
+        helpers.async_bulk abstraction, which can silently drop data
+        in certain failure modes.
+
+        Returns number of successfully indexed docs.
+        """
+        if not entries:
+            return 0
+
+        self._log_index_calls += 1
+
+        # Build NDJSON body for bulk API
+        ndjson_lines = []
         for entry in entries:
             doc_id = self._generate_log_id(entry)
             doc = entry.copy()
@@ -156,32 +269,106 @@ class OpenSearchWriter:
             if isinstance(doc.get("timestamp"), datetime):
                 doc["timestamp"] = doc["timestamp"].isoformat()
 
-            actions.append({
-                "_index": self.logs_index,
-                "_id": doc_id,
-                "_source": doc,
-            })
+            # Action line
+            ndjson_lines.append(
+                json.dumps({"index": {"_index": self.logs_index, "_id": doc_id}})
+            )
+            # Document line
+            ndjson_lines.append(json.dumps(doc, default=str))
+
+        body = "\n".join(ndjson_lines) + "\n"
 
         try:
-            success, failed = await helpers.async_bulk(
-                self._client, actions, raise_on_error=False
+            resp = await self._client.bulk(body=body)
+
+            # Parse response
+            has_errors = resp.get("errors", False)
+            items = resp.get("items", [])
+            success = sum(
+                1 for item in items
+                if item.get("index", {}).get("status") in (200, 201)
             )
-            if failed:
-                # Log first failure detail to help diagnose mapping/schema issues
-                first_err = failed[0] if failed else {}
-                logger.warning("Some logs failed to index",
-                               failed=len(failed), total=len(actions),
-                               first_error=str(first_err)[:300])
-            self._write_count += 1
-            if self._write_count % 50 == 0:
-                sample = actions[0]["_source"] if actions else {}
-                logger.warning("[periodic] Indexed logs", write_num=self._write_count,
-                               count=success, failed=len(failed) if failed else 0,
-                               sample_keys=list(sample.keys()), sample_host=sample.get("host"),
-                               sample_container=sample.get("container_name"))
-            logger.debug("Indexed logs", count=success)
+            failed = len(items) - success
+
+            self._log_index_total_docs += success
+
+            if has_errors:
+                # Log first error detail
+                for item in items:
+                    item_resp = item.get("index", {})
+                    if item_resp.get("status") not in (200, 201):
+                        logger.warning("Bulk index item error",
+                                       status=item_resp.get("status"),
+                                       error=str(item_resp.get("error", ""))[:300],
+                                       index=self.logs_index)
+                        break
+
+            # Always log at WARNING for first 5 calls, then every 20th call
+            if self._log_index_calls <= 5 or self._log_index_calls % 20 == 0:
+                sample = entries[0] if entries else {}
+                logger.warning(
+                    "index_logs result",
+                    call_num=self._log_index_calls,
+                    success=success,
+                    failed=failed,
+                    has_errors=has_errors,
+                    batch_size=len(entries),
+                    index=self.logs_index,
+                    sample_host=sample.get("host"),
+                    sample_container=sample.get("container_name"),
+                    sample_project=sample.get("compose_project"),
+                    sample_level=sample.get("level"),
+                )
+
+            # Verify docs actually exist after first successful call
+            if not self._verified and success > 0:
+                try:
+                    # Wait briefly for refresh
+                    count_resp = await self._client.count(index=self.logs_index)
+                    doc_count = count_resp.get("count", "?")
+                    logger.warning(
+                        "Post-indexing verification",
+                        index=self.logs_index,
+                        doc_count=doc_count,
+                        just_indexed=success,
+                    )
+                    self._verified = True
+                except Exception as ve:
+                    logger.warning("Post-indexing verification failed", error=str(ve))
+
+            return success
+
         except Exception as e:
-            logger.error("Failed to index logs", error=str(e), batch_size=len(actions))
+            logger.error("Bulk index failed — trying individual fallback",
+                         error=str(e), error_type=type(e).__name__,
+                         batch_size=len(entries), index=self.logs_index)
+
+            # Fallback: index individually (slower but more reliable)
+            fallback_success = 0
+            for entry in entries[:50]:  # Limit fallback to 50 docs
+                try:
+                    doc = entry.copy()
+                    if isinstance(doc.get("timestamp"), datetime):
+                        doc["timestamp"] = doc["timestamp"].isoformat()
+                    doc_id = self._generate_log_id(entry)
+                    await self._client.index(
+                        index=self.logs_index, id=doc_id, body=doc
+                    )
+                    fallback_success += 1
+                except Exception as fe:
+                    logger.error("Individual index fallback also failed",
+                                 error=str(fe)[:200])
+                    break
+
+            if fallback_success > 0:
+                logger.warning("Individual fallback succeeded",
+                               indexed=fallback_success, total=len(entries))
+            else:
+                logger.critical("ALL indexing methods failed!",
+                                index=self.logs_index,
+                                hosts=self.config.hosts)
+
+            return fallback_success
 
     async def index_container_stats(self, stats: Dict[str, Any]):
         """Index container statistics."""

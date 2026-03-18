@@ -599,7 +599,7 @@ async def get_error_detector_status():
 
 @app.get("/api/admin/opensearch-status")
 async def get_opensearch_status():
-    """Diagnostic endpoint: check OpenSearch index health and document counts."""
+    """Diagnostic endpoint: check OpenSearch index health, doc counts, mappings, and samples."""
     result = {}
     for index_name in [opensearch.logs_index, opensearch.metrics_index, opensearch.host_metrics_index]:
         try:
@@ -607,22 +607,49 @@ async def get_opensearch_status():
             if exists:
                 count_resp = await opensearch._client.count(index=index_name)
                 doc_count = count_resp.get("count", 0)
-                # Get latest document timestamp
+
+                # Get latest document
                 latest = await opensearch._client.search(
                     index=index_name,
-                    body={"size": 1, "sort": [{"timestamp": "desc"}], "_source": ["timestamp", "host"]},
+                    body={"size": 1, "sort": [{"timestamp": "desc"}]},
                 )
                 latest_hit = latest.get("hits", {}).get("hits", [])
-                latest_ts = latest_hit[0]["_source"].get("timestamp") if latest_hit else None
-                latest_host = latest_hit[0]["_source"].get("host") if latest_hit else None
+                latest_doc = latest_hit[0]["_source"] if latest_hit else None
+                latest_ts = latest_doc.get("timestamp") if latest_doc else None
+                latest_host = latest_doc.get("host") if latest_doc else None
+
+                # Get oldest document
+                oldest = await opensearch._client.search(
+                    index=index_name,
+                    body={"size": 1, "sort": [{"timestamp": "asc"}], "_source": ["timestamp"]},
+                )
+                oldest_hit = oldest.get("hits", {}).get("hits", [])
+                oldest_ts = oldest_hit[0]["_source"].get("timestamp") if oldest_hit else None
+
+                # Get mapping (field types)
+                mapping_resp = await opensearch._client.indices.get_mapping(index=index_name)
+                mapping = mapping_resp.get(index_name, {}).get("mappings", {}).get("properties", {})
+                field_types = {k: v.get("type", "?") for k, v in mapping.items()}
+
+                # Get index settings
+                settings_resp = await opensearch._client.indices.get_settings(index=index_name)
+                idx_settings = settings_resp.get(index_name, {}).get("settings", {}).get("index", {})
+
                 result[index_name] = {
-                    "exists": True, "doc_count": doc_count,
-                    "latest_timestamp": latest_ts, "latest_host": latest_host,
+                    "exists": True,
+                    "doc_count": doc_count,
+                    "oldest_timestamp": oldest_ts,
+                    "latest_timestamp": latest_ts,
+                    "latest_host": latest_host,
+                    "latest_doc_sample": latest_doc,
+                    "field_types": field_types,
+                    "index_uuid": idx_settings.get("uuid"),
+                    "refresh_interval": idx_settings.get("refresh_interval"),
                 }
             else:
                 result[index_name] = {"exists": False}
         except Exception as e:
-            result[index_name] = {"exists": "unknown", "error": str(e)}
+            result[index_name] = {"exists": "unknown", "error": str(e)[:500]}
     return result
 
 

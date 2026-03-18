@@ -469,7 +469,20 @@ class OpenSearchClient:
                 aggregations=aggregations,
             )
         except Exception as e:
-            logger.error("Log search failed", error=str(e))
+            logger.error("Log search failed",
+                         error=str(e),
+                         error_type=type(e).__name__,
+                         index=self.logs_index,
+                         query_snippet=str(body.get("query", ""))[:300])
+            # Try a simple count to check if the index has data at all
+            try:
+                count_resp = await self._client.count(index=self.logs_index)
+                doc_count = count_resp.get("count", "?")
+                logger.error("Log search failed but index has docs",
+                             index=self.logs_index, doc_count=doc_count)
+            except Exception:
+                logger.error("Log search: index count also failed",
+                             index=self.logs_index)
             return LogSearchResult(total=0, hits=[], aggregations={})
     
     async def get_dashboard_stats(self) -> DashboardStats:
