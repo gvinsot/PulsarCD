@@ -446,7 +446,8 @@ async def admin_mcp_test(request: Request):
                 url, json=payload, headers=headers,
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
-                data = await resp.json()
+                from .llm_agent import _parse_mcp_response
+                data = await _parse_mcp_response(resp)
                 if "error" in data:
                     error = data["error"]
                     msg = error.get("message", str(error)) if isinstance(error, dict) else str(error)
@@ -1424,7 +1425,8 @@ async def create_agent_task(request: Dict[str, Any]) -> Dict[str, Any]:
                 url, json=payload, headers=headers,
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
-                data = await resp.json()
+                from .llm_agent import _parse_mcp_response
+                data = await _parse_mcp_response(resp)
 
                 if "error" in data:
                     error = data["error"]

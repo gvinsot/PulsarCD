@@ -19,6 +19,33 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+
+async def _parse_mcp_response(resp) -> dict:
+    """Parse an MCP server response, handling both JSON and Streamable HTTP (SSE).
+
+    Streamable HTTP servers return text/event-stream with SSE events like:
+        event: message
+        data: {"jsonrpc":"2.0","result":{...},"id":1}
+
+    Regular MCP servers return application/json directly.
+    """
+    content_type = resp.headers.get("Content-Type", "")
+
+    if "text/event-stream" in content_type:
+        # Parse SSE: find the last JSON-RPC data line
+        text = await resp.text()
+        last_data = None
+        for line in text.split("\n"):
+            line = line.strip()
+            if line.startswith("data:"):
+                last_data = line[5:].strip()
+        if last_data:
+            return json.loads(last_data)
+        raise ValueError(f"No data line found in SSE response: {text[:500]}")
+
+    # Regular JSON response
+    return await resp.json()
+
 import aiohttp
 import structlog
 
@@ -346,7 +373,7 @@ class LLMAgent:
                         headers=headers,
                         timeout=aiohttp.ClientTimeout(total=10),
                     ) as resp:
-                        data = await resp.json()
+                        data = await _parse_mcp_response(resp)
                         mcp_tools = data.get("result", {}).get("tools", [])
                         for tool in mcp_tools:
                             tool_name = tool["name"]
@@ -408,7 +435,7 @@ class LLMAgent:
                     headers=headers,
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
-                    data = await resp.json()
+                    data = await _parse_mcp_response(resp)
 
                     if "error" in data:
                         error = data["error"]
