@@ -1029,13 +1029,16 @@ class OpenSearchClient:
                 "levels": [b["key"] for b in aggs.get("levels", {}).get("buckets", [])],
             }
         except Exception as e:
-            logger.error("Failed to get metadata for AI", error=str(e))
+            error_msg = f"{type(e).__name__}: {str(e)[:300]}"
+            logger.error("Failed to get metadata for AI", error=error_msg,
+                         index=self.logs_index)
             return {
                 "hosts": [],
                 "containers": [],
                 "compose_projects": [],
                 "compose_services": [],
-                "levels": ["ERROR", "WARN", "INFO", "DEBUG"],
+                "levels": [],
+                "error": error_msg,
             }
 
     async def run_logs_query(self, body: Dict[str, Any]) -> Dict[str, Any]:

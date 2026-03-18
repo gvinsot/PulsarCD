@@ -601,6 +601,20 @@ async def get_error_detector_status():
 async def get_opensearch_status():
     """Diagnostic endpoint: check OpenSearch index health, doc counts, mappings, and samples."""
     result = {}
+
+    # Cluster info
+    try:
+        import opensearchpy as _ospy
+        result["_client_version"] = getattr(_ospy, "__versionstr__", "unknown")
+    except Exception:
+        pass
+    try:
+        info = await opensearch._client.info()
+        result["_cluster_name"] = info.get("cluster_name")
+        result["_server_version"] = info.get("version", {}).get("number")
+    except Exception as e:
+        result["_cluster_error"] = f"{type(e).__name__}: {str(e)[:300]}"
+
     for index_name in [opensearch.logs_index, opensearch.metrics_index, opensearch.host_metrics_index]:
         try:
             exists = await opensearch._client.indices.exists(index=index_name)
@@ -1449,9 +1463,173 @@ async def execute_host_action(host_name: str, request: Dict[str, str]) -> Dict[s
 # ============== Health ==============
 
 @app.get("/api/health")
-async def health_check() -> Dict[str, str]:
-    """Health check endpoint."""
-    return {"status": "healthy", "service": "pulsarcd"}
+async def health_check() -> Dict[str, Any]:
+    """Health check endpoint with OpenSearch connectivity status."""
+    result: Dict[str, Any] = {"status": "healthy", "service": "pulsarcd"}
+
+    # OpenSearch connectivity check (quick, no auth needed)
+    if opensearch and opensearch._client:
+        try:
+            import opensearchpy as _ospy
+            result["opensearch_client_version"] = getattr(_ospy, "__versionstr__", "unknown")
+        except Exception:
+            pass
+        try:
+            info = await opensearch._client.info()
+            os_version = info.get("version", {}).get("number", "unknown")
+            result["opensearch"] = "connected"
+            result["opensearch_version"] = os_version
+            # Quick doc counts
+            for idx_name in [opensearch.logs_index, opensearch.metrics_index, opensearch.host_metrics_index]:
+                try:
+                    count_resp = await opensearch._client.count(index=idx_name)
+                    result[f"{idx_name}_docs"] = count_resp.get("count", 0)
+                except Exception as e:
+                    result[f"{idx_name}_docs"] = f"error: {str(e)[:100]}"
+        except Exception as e:
+            result["opensearch"] = "error"
+            result["opensearch_error"] = f"{type(e).__name__}: {str(e)[:200]}"
+    else:
+        result["opensearch"] = "not_configured"
+
+    return result
+
+
+@app.get("/api/health/opensearch")
+async def opensearch_probe() -> Dict[str, Any]:
+    """Deep OpenSearch diagnostic — no auth required.
+
+    Tests:
+    1. Cluster connectivity and version
+    2. List ALL indices with doc counts
+    3. Write a test doc (single + bulk)
+    4. Read and delete the test doc
+    5. Check index mappings
+    """
+    import json as _json
+    result: Dict[str, Any] = {"timestamp": datetime.utcnow().isoformat()}
+
+    if not opensearch or not opensearch._client:
+        result["error"] = "OpenSearch client not configured"
+        return result
+
+    client = opensearch._client
+
+    # 1. Cluster info
+    try:
+        info = await client.info()
+        result["cluster"] = {
+            "name": info.get("cluster_name"),
+            "server_version": info.get("version", {}).get("number"),
+            "distribution": info.get("version", {}).get("distribution"),
+        }
+        import opensearchpy as _ospy
+        result["client_version"] = getattr(_ospy, "__versionstr__", "unknown")
+    except Exception as e:
+        result["cluster_error"] = f"{type(e).__name__}: {str(e)[:300]}"
+        return result
+
+    # 2. List all indices
+    try:
+        cat_resp = await client.cat.indices(format="json")
+        result["indices"] = [
+            {
+                "index": idx.get("index"),
+                "docs_count": idx.get("docs.count"),
+                "store_size": idx.get("store.size"),
+                "health": idx.get("health"),
+                "status": idx.get("status"),
+            }
+            for idx in cat_resp
+        ]
+    except Exception as e:
+        result["indices_error"] = f"{type(e).__name__}: {str(e)[:300]}"
+
+    # 3. Write test doc (single)
+    test_index = opensearch.logs_index
+    test_id = "__probe_test__"
+    test_doc = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "host": "__probe__",
+        "container_id": "__probe__",
+        "container_name": "__probe__",
+        "compose_project": "__probe__",
+        "compose_service": "__probe__",
+        "stream": "stdout",
+        "message": "OpenSearch probe test",
+        "level": "INFO",
+    }
+
+    try:
+        write_resp = await client.index(
+            index=test_index, id=test_id, body=test_doc, refresh="true"
+        )
+        result["write_test"] = {
+            "status": "ok",
+            "result": write_resp.get("result"),
+            "index": write_resp.get("_index"),
+            "version": write_resp.get("_version"),
+        }
+    except Exception as e:
+        result["write_test"] = {"status": "error", "error": f"{type(e).__name__}: {str(e)[:300]}"}
+
+    # 4. Bulk write test
+    try:
+        bulk_id = "__probe_bulk__"
+        bulk_doc = test_doc.copy()
+        bulk_doc["message"] = "OpenSearch probe bulk test"
+        ndjson = (
+            _json.dumps({"index": {"_index": test_index, "_id": bulk_id}}) + "\n"
+            + _json.dumps(bulk_doc) + "\n"
+        )
+        bulk_resp = await client.bulk(body=ndjson, refresh="true")
+        items = bulk_resp.get("items", [])
+        item_status = items[0].get("index", {}).get("status") if items else None
+        item_error = items[0].get("index", {}).get("error") if items else None
+        result["bulk_test"] = {
+            "status": "ok" if not bulk_resp.get("errors") else "error",
+            "errors": bulk_resp.get("errors"),
+            "item_status": item_status,
+            "item_error": str(item_error)[:300] if item_error else None,
+        }
+    except Exception as e:
+        result["bulk_test"] = {"status": "error", "error": f"{type(e).__name__}: {str(e)[:300]}"}
+
+    # 5. Read back
+    try:
+        get_resp = await client.get(index=test_index, id=test_id)
+        result["read_test"] = {"status": "ok", "found": get_resp.get("found")}
+    except Exception as e:
+        result["read_test"] = {"status": "error", "error": f"{type(e).__name__}: {str(e)[:300]}"}
+
+    # 6. Cleanup
+    for doc_id in [test_id, "__probe_bulk__"]:
+        try:
+            await client.delete(index=test_index, id=doc_id, refresh="true")
+        except Exception:
+            pass
+
+    # 7. Check recent docs (any data at all?)
+    try:
+        search_resp = await client.search(
+            index=test_index,
+            body={"query": {"match_all": {}}, "size": 3, "sort": [{"timestamp": "desc"}]},
+        )
+        total = search_resp.get("hits", {}).get("total", {})
+        total_val = total.get("value", total) if isinstance(total, dict) else total
+        sample_hits = [
+            {k: v for k, v in h.get("_source", {}).items() if k in ("timestamp", "host", "compose_project", "level", "message")}
+            for h in search_resp.get("hits", {}).get("hits", [])
+        ]
+        result["search_test"] = {
+            "status": "ok",
+            "total_docs": total_val,
+            "sample_hits": sample_hits,
+        }
+    except Exception as e:
+        result["search_test"] = {"status": "error", "error": f"{type(e).__name__}: {str(e)[:300]}"}
+
+    return result
 
 
 @app.get("/api/github/check-access")

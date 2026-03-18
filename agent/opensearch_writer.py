@@ -144,6 +144,23 @@ class OpenSearchWriter:
         Returns True if the full write-read-delete cycle succeeds.
         This proves the OpenSearch connection and index mapping work end-to-end.
         """
+        # Log server info first
+        try:
+            info = await self._client.info()
+            server_version = info.get("version", {}).get("number", "unknown")
+            cluster_name = info.get("cluster_name", "unknown")
+            import opensearchpy as _ospy
+            client_version = getattr(_ospy, "__versionstr__", "unknown")
+            logger.warning("Self-test: cluster info",
+                           server_version=server_version,
+                           client_version=client_version,
+                           cluster_name=cluster_name,
+                           hosts=self.config.hosts)
+        except Exception as e:
+            logger.critical("Self-test: cannot reach OpenSearch cluster!",
+                            error=str(e), hosts=self.config.hosts)
+            return False
+
         test_id = "__selftest__"
         test_doc = {
             "timestamp": datetime.utcnow().isoformat(),

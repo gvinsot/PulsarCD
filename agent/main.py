@@ -85,11 +85,17 @@ class Agent:
 
     async def start(self):
         """Start the agent."""
-        logger.info(
+        try:
+            import opensearchpy as _ospy
+            os_client_ver = getattr(_ospy, "__versionstr__", "unknown")
+        except Exception:
+            os_client_ver = "import_failed"
+        logger.warning(
             "Starting PulsarCD Agent",
             agent_id=self.config.agent_id,
             backend_url=self.config.backend_url,
             opensearch_hosts=self.config.opensearch.hosts,
+            opensearch_py_version=os_client_ver,
         )
 
         # Initialize OpenSearch with retry (wait for DNS/network to be ready)
