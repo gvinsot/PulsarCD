@@ -1,6 +1,7 @@
 """Main entry point for PulsarCD."""
 
 import logging
+import os
 import uvicorn
 import structlog
 
@@ -21,6 +22,12 @@ class EndpointFilter(logging.Filter):
         message = record.getMessage()
         return not any(path in message for path in self.EXCLUDED_PATHS)
 
+
+# Configure log level from environment
+_log_level = os.environ.get("AGENT_LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, _log_level, logging.INFO),
+)
 
 # Configure structured logging
 structlog.configure(
@@ -54,7 +61,7 @@ def main():
         host=settings.host,
         port=settings.port,
         reload=settings.debug,
-        log_level="info",
+        log_level=_log_level.lower(),
     )
 
 

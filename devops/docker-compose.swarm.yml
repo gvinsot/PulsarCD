@@ -73,6 +73,7 @@ services:
       - pulsarcd-data:/data
     environment:
       - PULSARCD_DEBUG=false
+      - AGENT_LOG_LEVEL=${AGENT_LOG_LEVEL:-INFO}
 
       # OpenSearch configuration (use stack-prefixed name)
       - PULSARCD_OPENSEARCH__HOSTS=["http://opensearch:9200"]
@@ -218,6 +219,9 @@ services:
 
       # Authentication key for swarm-manager API (must match PULSARCD_AUTH__AGENT_KEY)
       - AGENT_AUTH_KEY=${PULSARCD_AUTH__AGENT_KEY:-}
+
+      # Log level (DEBUG, INFO, WARNING, ERROR)
+      - AGENT_LOG_LEVEL=${AGENT_LOG_LEVEL:-INFO}
     networks:
       - internal
     depends_on:
