@@ -493,6 +493,91 @@ done
 echo ""
 
 # ============================================================================
+# Step 3b: Auto-detect multi-arch build requirement
+# ============================================================================
+# Check if BUILD_PLATFORMS is already set explicitly (env var or .env file)
+BUILD_PLATFORMS="${BUILD_PLATFORMS:-}"
+
+if [ -z "$BUILD_PLATFORMS" ]; then
+    # Check for explicit x-build-platforms in compose file first
+    COMPOSE_PLATFORMS=$(awk '/^x-build-platforms:/{gsub(/^x-build-platforms:[[:space:]]*/, ""); gsub(/[[:space:]]*$/, ""); gsub(/"/, ""); gsub(/\047/, ""); print}' "$COMPOSE_PATH" 2>/dev/null)
+    if [ -n "$COMPOSE_PLATFORMS" ]; then
+        BUILD_PLATFORMS="$COMPOSE_PLATFORMS"
+        log_info "Multi-arch platforms from compose x-build-platforms: $BUILD_PLATFORMS"
+    else
+        # Auto-detect: scan Dockerfiles for multi-arch patterns
+        MULTIARCH_DETECTED=false
+        MULTIARCH_REASON=""
+
+        for img in $IMAGES; do
+            # Extract dockerfile path for this image (same awk as Step 4)
+            SERVICE_INFO=$(awk -v target_img="$img" '
+            /^[[:space:]]{2}[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ {
+                service = $0; gsub(/^[[:space:]]+/, "", service); gsub(/:.*/, "", service)
+                current_image = ""; context = "."; dockerfile = "Dockerfile"
+            }
+            /^[[:space:]]{4}image:[[:space:]]*/ {
+                img_line = $0; gsub(/^[[:space:]]+image:[[:space:]]*/, "", img_line); gsub(/[[:space:]]*$/, "", img_line)
+                gsub(/"/, "", img_line); gsub(/\047/, "", img_line)
+                current_image = img_line
+            }
+            /^[[:space:]]{6}context:[[:space:]]*/ {
+                ctx = $0; gsub(/^[[:space:]]+context:[[:space:]]*/, "", ctx); gsub(/[[:space:]]*$/, "", ctx)
+                context = ctx
+            }
+            /^[[:space:]]{6}dockerfile:[[:space:]]*/ {
+                df = $0; gsub(/^[[:space:]]+dockerfile:[[:space:]]*/, "", df); gsub(/[[:space:]]*$/, "", df)
+                dockerfile = df
+            }
+            /^[[:space:]]{2}[a-zA-Z]/ {
+                if (current_image == target_img && context != "") {
+                    printf "%s|%s", context, dockerfile
+                    exit
+                }
+            }
+            END {
+                if (current_image == target_img && context != "") {
+                    printf "%s|%s", context, dockerfile
+                }
+            }
+            ' "$COMPOSE_PATH")
+
+            if [ -n "$SERVICE_INFO" ]; then
+                CTX=$(echo "$SERVICE_INFO" | cut -d'|' -f1)
+                DF=$(echo "$SERVICE_INFO" | cut -d'|' -f2)
+
+                # Resolve context relative to compose file location
+                if [[ "$CTX" != /* ]]; then
+                    CTX="$DEVOPS_PATH/$CTX"
+                fi
+                DOCKERFILE_PATH="$CTX/$DF"
+
+                if [ -f "$DOCKERFILE_PATH" ]; then
+                    # Pattern 1: Architecture-conditional logic (dpkg --print-architecture in if/RUN)
+                    if grep -qE 'dpkg --print-architecture|TARGETARCH|TARGETPLATFORM|BUILDPLATFORM' "$DOCKERFILE_PATH" 2>/dev/null; then
+                        MULTIARCH_DETECTED=true
+                        MULTIARCH_REASON="$DF contains arch-conditional logic"
+                        break
+                    fi
+                    # Pattern 2: Multi-stage with --platform in FROM
+                    if grep -qE '^FROM\s+--platform=' "$DOCKERFILE_PATH" 2>/dev/null; then
+                        MULTIARCH_DETECTED=true
+                        MULTIARCH_REASON="$DF uses --platform in FROM"
+                        break
+                    fi
+                fi
+            fi
+        done
+
+        if [ "$MULTIARCH_DETECTED" = true ]; then
+            BUILD_PLATFORMS="linux/amd64,linux/arm64"
+            log_info "Multi-arch auto-detected ($MULTIARCH_REASON)"
+            log_info "Enabling multi-arch build: $BUILD_PLATFORMS"
+        fi
+    fi
+fi
+
+# ============================================================================
 # Step 4: Build images
 # ============================================================================
 log_info "Building Docker images..."
@@ -503,10 +588,6 @@ if [ "$NO_CACHE" = "--no-cache" ]; then
     BUILD_ARGS="--no-cache"
     log_info "Building with --no-cache (forced fresh build)"
 fi
-
-# Multi-platform build support
-# Set BUILD_PLATFORMS env var to enable (e.g., "linux/amd64,linux/arm64")
-BUILD_PLATFORMS="${BUILD_PLATFORMS:-}"
 
 if [ -n "$BUILD_PLATFORMS" ]; then
     # ── Multi-arch build using docker buildx ──
