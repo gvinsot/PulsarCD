@@ -1,12 +1,11 @@
 """OpenSearch writer for agent - writes logs and metrics directly to OpenSearch."""
 
 import hashlib
-import json
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import structlog
-from opensearchpy import AsyncOpenSearch
+from opensearchpy import AsyncOpenSearch, helpers
 
 from .config import OpenSearchConfig
 
@@ -34,9 +33,6 @@ class OpenSearchWriter:
             ssl_show_warn=False,
         )
         self._write_count = 0
-        self._log_index_calls = 0
-        self._log_index_total_docs = 0
-        self._verified = False
 
     async def _ensure_index(self, index_name: str, mapping: dict):
         """Create an index if it doesn't exist, handling opensearch-py 2.x/3.x differences.
@@ -334,22 +330,12 @@ class OpenSearchWriter:
         unique_str = f"{entry.get('host')}:{entry.get('container_id')}:{timestamp}:{entry.get('message', '')[:100]}"
         return hashlib.md5(unique_str.encode()).hexdigest()
 
-    async def index_logs(self, entries: List[Dict[str, Any]]) -> int:
-        """Bulk index log entries using the direct bulk API.
-
-        Uses the OpenSearch bulk NDJSON API directly instead of the
-        helpers.async_bulk abstraction, which can silently drop data
-        in certain failure modes.
-
-        Returns number of successfully indexed docs.
-        """
+    async def index_logs(self, entries: List[Dict[str, Any]]):
+        """Bulk index log entries."""
         if not entries:
-            return 0
+            return
 
-        self._log_index_calls += 1
-
-        # Build NDJSON body for bulk API
-        ndjson_lines = []
+        actions = []
         for entry in entries:
             doc_id = self._generate_log_id(entry)
             doc = entry.copy()
@@ -358,106 +344,28 @@ class OpenSearchWriter:
             if isinstance(doc.get("timestamp"), datetime):
                 doc["timestamp"] = doc["timestamp"].isoformat()
 
-            # Action line
-            ndjson_lines.append(
-                json.dumps({"index": {"_index": self.logs_index, "_id": doc_id}})
-            )
-            # Document line
-            ndjson_lines.append(json.dumps(doc, default=str))
-
-        body = "\n".join(ndjson_lines) + "\n"
+            actions.append({
+                "_index": self.logs_index,
+                "_id": doc_id,
+                "_source": doc,
+            })
 
         try:
-            resp = await self._client.bulk(body=body)
-
-            # Parse response
-            has_errors = resp.get("errors", False)
-            items = resp.get("items", [])
-            success = sum(
-                1 for item in items
-                if item.get("index", {}).get("status") in (200, 201)
+            success, failed = await helpers.async_bulk(
+                self._client, actions, raise_on_error=False
             )
-            failed = len(items) - success
-
-            self._log_index_total_docs += success
-
-            if has_errors:
-                # Log first error detail
-                for item in items:
-                    item_resp = item.get("index", {})
-                    if item_resp.get("status") not in (200, 201):
-                        logger.warning("Bulk index item error",
-                                       status=item_resp.get("status"),
-                                       error=str(item_resp.get("error", ""))[:300],
-                                       index=self.logs_index)
-                        break
-
-            # Always log at WARNING for first 5 calls, then every 20th call
-            if self._log_index_calls <= 5 or self._log_index_calls % 20 == 0:
-                sample = entries[0] if entries else {}
-                logger.warning(
-                    "index_logs result",
-                    call_num=self._log_index_calls,
-                    success=success,
-                    failed=failed,
-                    has_errors=has_errors,
-                    batch_size=len(entries),
-                    index=self.logs_index,
-                    sample_host=sample.get("host"),
-                    sample_container=sample.get("container_name"),
-                    sample_project=sample.get("compose_project"),
-                    sample_level=sample.get("level"),
-                )
-
-            # Verify docs actually exist after first successful call
-            if not self._verified and success > 0:
-                try:
-                    # Wait briefly for refresh
-                    count_resp = await self._client.count(index=self.logs_index)
-                    doc_count = count_resp.get("count", "?")
-                    logger.warning(
-                        "Post-indexing verification",
-                        index=self.logs_index,
-                        doc_count=doc_count,
-                        just_indexed=success,
-                    )
-                    self._verified = True
-                except Exception as ve:
-                    logger.warning("Post-indexing verification failed", error=str(ve))
-
-            return success
-
+            if failed:
+                logger.warning("Some logs failed to index", failed=len(failed))
+            self._write_count += 1
+            if self._write_count % 50 == 0:
+                sample = actions[0]["_source"] if actions else {}
+                logger.warning("[periodic] Indexed logs", write_num=self._write_count,
+                               count=success, failed=len(failed) if failed else 0,
+                               sample_keys=list(sample.keys()), sample_host=sample.get("host"),
+                               sample_container=sample.get("container_name"))
+            logger.debug("Indexed logs", count=success)
         except Exception as e:
-            logger.error("Bulk index failed — trying individual fallback",
-                         error=str(e), error_type=type(e).__name__,
-                         batch_size=len(entries), index=self.logs_index)
-
-            # Fallback: index individually (slower but more reliable)
-            fallback_success = 0
-            for entry in entries[:50]:  # Limit fallback to 50 docs
-                try:
-                    doc = entry.copy()
-                    if isinstance(doc.get("timestamp"), datetime):
-                        doc["timestamp"] = doc["timestamp"].isoformat()
-                    doc_id = self._generate_log_id(entry)
-                    await self._client.index(
-                        index=self.logs_index, id=doc_id, body=doc
-                    )
-                    fallback_success += 1
-                except Exception as fe:
-                    logger.error("Individual index fallback also failed",
-                                 error=str(fe)[:200])
-                    break
-
-            if fallback_success > 0:
-                logger.warning("Individual fallback succeeded",
-                               indexed=fallback_success, total=len(entries))
-            else:
-                logger.critical("ALL indexing methods failed!",
-                                index=self.logs_index,
-                                hosts=self.config.hosts)
-
-            return fallback_success
+            logger.error("Failed to index logs", error=str(e))
 
     async def index_container_stats(self, stats: Dict[str, Any]):
         """Index container statistics."""
