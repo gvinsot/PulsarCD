@@ -1884,7 +1884,7 @@ function getChartOptions(isPercent = false) {
                     callback: isPercent ? (v) => `${v}%` : undefined
                 },
                 beginAtZero: true,
-                max: isPercent ? 100 : undefined
+                suggestedMax: isPercent ? 100 : undefined
             }
         }
     };
