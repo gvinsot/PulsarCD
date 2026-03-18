@@ -516,7 +516,7 @@ if [ -z "$BUILD_PLATFORMS" ]; then
                 # Check previous service before resetting
                 if (current_image == target_img && context != "") {
                     printf "%s|%s", context, dockerfile
-                    exit
+                    found = 1; exit
                 }
                 current_image = ""; context = "."; dockerfile = "Dockerfile"
             }
@@ -534,7 +534,7 @@ if [ -z "$BUILD_PLATFORMS" ]; then
                 dockerfile = df
             }
             END {
-                if (current_image == target_img && context != "") {
+                if (!found && current_image == target_img && context != "") {
                     printf "%s|%s", context, dockerfile
                 }
             }
@@ -616,7 +616,7 @@ if [ -n "$BUILD_PLATFORMS" ]; then
             # Check previous service before resetting
             if (current_image == target_img && context != "") {
                 printf "%s|%s|%s", context, dockerfile, target
-                exit
+                found = 1; exit
             }
             current_image = ""; context = "."; dockerfile = "Dockerfile"; target = ""
         }
@@ -638,7 +638,7 @@ if [ -n "$BUILD_PLATFORMS" ]; then
             target = tgt
         }
         END {
-            if (current_image == target_img && context != "") {
+            if (!found && current_image == target_img && context != "") {
                 printf "%s|%s|%s", context, dockerfile, target
             }
         }

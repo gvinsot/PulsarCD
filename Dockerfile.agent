@@ -33,7 +33,8 @@ ENV LD_LIBRARY_PATH="/opt/rocm/lib:/opt/rocm/lib64:${LD_LIBRARY_PATH}"
 COPY agent/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy agent code
+# Copy shared utilities and agent code
+COPY shared/ ./shared/
 COPY agent/ ./agent/
 
 # Environment variables (override at runtime)
