@@ -332,6 +332,71 @@ class LLMAgent:
         """Return agent action history (newest first)."""
         return list(reversed(self._history))
 
+    def _build_error_history_context(self, repo_name: str = "", fingerprint: str = "") -> str:
+        """Build a summary of recent error-handling history for LLM context.
+
+        Filters history entries relevant to the current error (by repo or
+        fingerprint) and returns a formatted block the LLM can use to avoid
+        creating duplicate tasks.
+        """
+        if not self._history:
+            return ""
+
+        relevant_types = {
+            "failure_handled", "recurring_handled", "recurring_cooldown",
+            "recurring_detected",
+        }
+        cutoff = (datetime.utcnow() - timedelta(hours=24)).isoformat() + "Z"
+        relevant: List[Dict[str, Any]] = []
+
+        for entry in reversed(self._history):
+            if entry.get("type") not in relevant_types:
+                continue
+            if entry.get("timestamp", "") < cutoff:
+                continue
+            # Match by repo or fingerprint when provided
+            entry_repo = entry.get("repo", "") or entry.get("projects", "")
+            entry_fp = entry.get("fingerprint", "")
+            if repo_name and repo_name.lower() not in entry_repo.lower():
+                if fingerprint and fingerprint != entry_fp:
+                    continue
+            relevant.append(entry)
+            if len(relevant) >= 10:
+                break
+
+        if not relevant:
+            return ""
+
+        lines = ["--- Recent error-handling history (last 24h) ---"]
+        for e in relevant:
+            ts = e.get("timestamp", "?")
+            etype = e.get("type", "?")
+            label = e.get("label", "") or e.get("repo", "") or ""
+            stage = e.get("stage", "")
+            count = e.get("count", "")
+            resp_preview = (e.get("response", "") or "")[:200]
+
+            parts = [f"[{ts}] {etype}"]
+            if stage:
+                parts.append(f"stage={stage}")
+            if label:
+                parts.append(f"target={label}")
+            if count:
+                parts.append(f"occurrences={count}")
+            if resp_preview:
+                parts.append(f"action_taken: {resp_preview}")
+            lines.append(" | ".join(parts))
+
+        lines.append(
+            "\nIMPORTANT: Review this history before creating tasks. "
+            "Do NOT create a new PulsarTeam task if:\n"
+            "- A task was already created for the same (or very similar) error\n"
+            "- The error was previously reported and appears to no longer be recurring\n"
+            "Instead, note that the issue was already reported and summarize the "
+            "current status."
+        )
+        return "\n".join(lines)
+
     def _is_cooled_down(self, dedup_key: str) -> bool:
         """Check if a dedup key is within cooldown window."""
         now = datetime.utcnow()
@@ -611,10 +676,14 @@ class LLMAgent:
         }
         specific_instructions = instruction_map.get(stage, "")
 
+        history_context = self._build_error_history_context(repo_name=repo_name)
+        history_block = f"\n\n{history_context}" if history_context else ""
+
         system_prompt = (
             f"{self._error_handling.instructions}\n\n"
             f"--- Specific instructions for this error ---\n"
-            f"{specific_instructions}\n\n"
+            f"{specific_instructions}"
+            f"{history_block}\n\n"
             f"IMPORTANT: You MUST call at least one MCP tool to investigate "
             f"before responding. A response without any tool call is insufficient.\n"
             f"Respond with: 1) Tools called and their results "
@@ -691,10 +760,16 @@ class LLMAgent:
                          response="Skipped — cooldown active (max 1 investigation per hour per pattern)")
             return None
 
+        history_context = self._build_error_history_context(
+            repo_name=projects_list, fingerprint=pattern.fingerprint,
+        )
+        history_block = f"\n\n{history_context}" if history_context else ""
+
         system_prompt = (
             f"{self._error_handling.instructions}\n\n"
             f"--- Specific instructions for this error ---\n"
-            f"{self._error_handling.on_recurring_error}\n\n"
+            f"{self._error_handling.on_recurring_error}"
+            f"{history_block}\n\n"
             f"IMPORTANT: You MUST call at least one MCP tool to investigate "
             f"before responding. A response without any tool call is insufficient.\n"
             f"Respond with: 1) Tools called and their results "
