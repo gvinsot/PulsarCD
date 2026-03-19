@@ -666,8 +666,35 @@ class LLMAgent:
                         "content": result,
                     })
 
+            # When approaching the iteration limit, nudge the LLM to wrap up
+            if iteration == _MAX_ITERATIONS - 3:
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "You are running low on remaining steps. "
+                        "Wrap up your investigation now: stop calling tools "
+                        "and provide your final diagnosis and recommendations."
+                    ),
+                })
+                logger.info("LLM agent nudged to wrap up", iteration=iteration + 1)
+
+        # Exhausted iterations — try to extract something useful from the
+        # conversation rather than returning a bare error message.
         logger.warning("LLM agent reached max iterations", max=_MAX_ITERATIONS)
+        last_text = self._extract_last_text(messages)
+        if last_text:
+            return last_text
         return "Agent reached maximum iterations without a final response."
+
+    @staticmethod
+    def _extract_last_text(messages: List[dict]) -> str:
+        """Walk messages backwards and return the last non-empty assistant text."""
+        for msg in reversed(messages):
+            if msg.get("role") == "assistant":
+                content = msg.get("content") or ""
+                if content.strip():
+                    return content.strip()
+        return ""
 
     async def handle_failure(self, stage: str, repo_name: str, version: str, error_output: str):
         """Handle a build/test/deploy failure via the LLM agent.

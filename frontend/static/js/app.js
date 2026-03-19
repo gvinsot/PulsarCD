@@ -297,7 +297,7 @@ async function sendLLMTest() {
             const data = await response.json();
             const reply = document.createElement('div');
             reply.className = 'llm-test-msg assistant';
-            reply.textContent = data.response || '(empty response)';
+            reply.innerHTML = simpleMarkdown(data.response || '(empty response)');
             messages.appendChild(reply);
         }
     } catch (e) {
