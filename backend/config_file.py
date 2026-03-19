@@ -116,6 +116,15 @@ class PipelineGatesConfig(BaseModel):
     )
 
 
+class TagCleanupConfig(BaseModel):
+    """Automatic cleanup of old git tags and Docker registry images."""
+    enabled: bool = False
+    max_age_days: int = 30
+    interval_hours: int = 24
+    dry_run: bool = True
+    keep_latest_n: int = 5
+
+
 class PulsarConfig(BaseModel):
     """Top-level configuration loaded from config.yml."""
     llm: LLMConfig = LLMConfig()
@@ -125,6 +134,7 @@ class PulsarConfig(BaseModel):
     ]
     error_handling: ErrorHandlingConfig = ErrorHandlingConfig()
     pipeline_gates: PipelineGatesConfig = PipelineGatesConfig()
+    tag_cleanup: TagCleanupConfig = TagCleanupConfig()
 
 
 def _apply_env_overrides(config: PulsarConfig) -> PulsarConfig:

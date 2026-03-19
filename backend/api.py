@@ -47,6 +47,7 @@ error_detector = None
 user_manager = None
 llm_agent = None
 pipeline_state: Optional[PipelineStateManager] = None
+tag_cleaner = None
 
 
 async def _notify_agent_failure(stage: str, repo_name: str, version: str, error_output: str):
@@ -175,6 +176,19 @@ async def lifespan(app: FastAPI):
         _auto_build_task = asyncio.create_task(auto_build_poller())
         logger.info("Auto-build poller started", interval=f"{AUTO_BUILD_POLL_INTERVAL}s")
 
+    # Start tag cleanup background task
+    global tag_cleaner
+    if settings.pulsar_config and github_service.is_configured():
+        from .tag_cleanup import TagCleaner
+        tag_cleaner = TagCleaner(
+            cleanup_config=settings.pulsar_config.tag_cleanup,
+            github_service=github_service,
+            registry_url=settings.github.registry_url or "",
+            registry_username=settings.github.registry_username or "",
+            registry_password=settings.github.registry_password or "",
+        )
+        tag_cleaner.start()
+
     # Log MCP API key for configuration
     if _mcp_available and settings.mcp.enabled:
         logger.info("MCP server enabled", mcp_api_key=settings.mcp.api_key)
@@ -187,6 +201,8 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down PulsarCD API")
+    if tag_cleaner:
+        await tag_cleaner.stop()
     if error_detector:
         await error_detector.stop()
     if _auto_build_task:
@@ -2568,6 +2584,36 @@ async def get_stacks_deployed_tags():
     latest_built = {name: tag for name, tag in latest_results if tag}
 
     return {"tags": deployed_tags, "latest_built": latest_built}
+
+
+# ============== Tag Cleanup ==============
+
+@app.post("/api/admin/tag-cleanup/run")
+async def trigger_tag_cleanup(
+    dry_run: bool = Query(default=None, description="Override dry_run setting for this run"),
+):
+    """Manually trigger a tag cleanup cycle."""
+    if not tag_cleaner:
+        raise HTTPException(status_code=400, detail="Tag cleanup not configured")
+
+    # Temporarily override dry_run if requested
+    original_dry_run = tag_cleaner._config.dry_run
+    if dry_run is not None:
+        tag_cleaner._config.dry_run = dry_run
+    try:
+        result = await tag_cleaner.run_cleanup()
+    finally:
+        tag_cleaner._config.dry_run = original_dry_run
+
+    return result
+
+
+@app.get("/api/admin/tag-cleanup/config")
+async def get_tag_cleanup_config():
+    """Get current tag cleanup configuration."""
+    if not settings.pulsar_config:
+        raise HTTPException(status_code=400, detail="PulsarConfig not loaded")
+    return settings.pulsar_config.tag_cleanup.model_dump()
 
 
 # ============== Build config detection ==============
