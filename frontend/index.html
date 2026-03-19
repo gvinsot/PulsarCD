@@ -1155,17 +1155,37 @@
 
                         <!-- LLM Tab -->
                         <div class="settings-panel active" id="settings-panel-llm">
+                            <p class="settings-section-desc">
+                                Uses the OpenAI-compatible API (<code>/v1/chat/completions</code>).
+                                Works with OpenAI, Anthropic, Gemini, Mistral, Ollama, vLLM, and others.
+                            </p>
                             <div class="settings-field">
-                                <label>LLM URL</label>
-                                <input type="text" id="settings-llm-url" placeholder="http://vllm:8000" />
+                                <label>Provider preset</label>
+                                <select id="settings-llm-preset" onchange="applyLLMPreset()">
+                                    <option value="">Custom</option>
+                                    <option value="openai">OpenAI</option>
+                                    <option value="anthropic">Anthropic (Claude)</option>
+                                    <option value="gemini">Google Gemini</option>
+                                    <option value="mistral">Mistral</option>
+                                    <option value="ollama">Ollama (local)</option>
+                                    <option value="vllm">vLLM (local)</option>
+                                </select>
+                            </div>
+                            <div class="settings-field">
+                                <label>Base URL</label>
+                                <input type="text" id="settings-llm-url" placeholder="https://api.openai.com" />
                             </div>
                             <div class="settings-field">
                                 <label>Model</label>
-                                <input type="text" id="settings-llm-model" placeholder="model name" />
+                                <input type="text" id="settings-llm-model" placeholder="gpt-4o, claude-sonnet-4-20250514, gemini-2.5-flash..." />
                             </div>
                             <div class="settings-field">
                                 <label>API Key</label>
-                                <input type="password" id="settings-llm-apikey" placeholder="(optional)" />
+                                <input type="password" id="settings-llm-apikey" placeholder="(required for cloud providers)" />
+                            </div>
+                            <div class="settings-field settings-field-inline">
+                                <button class="btn btn-sm btn-secondary" onclick="testLLMConnection()">Test connection</button>
+                                <span id="settings-llm-test-result" class="settings-status"></span>
                             </div>
                         </div>
 
@@ -1296,6 +1316,6 @@
         </main>
     </div>
 
-    <script src="/static/js/app.js?v=33"></script>
+    <script src="/static/js/app.js?v=34"></script>
 </body>
 </html>

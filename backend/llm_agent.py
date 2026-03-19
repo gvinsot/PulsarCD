@@ -278,8 +278,22 @@ def _build_error_output(output: str, max_bytes: int = _MAX_OUTPUT_BYTES) -> str:
 class LLMAgent:
     """Async LLM agent that uses MCP tools to investigate and handle errors."""
 
+    @staticmethod
+    def _resolve_chat_url(base_url: str) -> str:
+        """Build the chat completions endpoint from the configured URL.
+
+        If the URL already contains ``chat/completions`` (e.g. Gemini's
+        ``/v1beta/openai/chat/completions``), use it as-is.
+        Otherwise append the standard OpenAI path ``/v1/chat/completions``.
+        """
+        stripped = base_url.rstrip("/")
+        if "chat/completions" in stripped:
+            return stripped
+        return f"{stripped}/v1/chat/completions"
+
     def __init__(self, config: PulsarConfig, mcp_api_key: str = "", data_dir: str = "/data"):
         self._llm_url = config.llm.url.rstrip("/")
+        self._llm_chat_url = self._resolve_chat_url(config.llm.url)
         self._llm_model = config.llm.model
         self._llm_api_key = config.llm.api_key
         self._context_tokens = config.llm.context_tokens
@@ -587,7 +601,7 @@ class LLMAgent:
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
-                        f"{self._llm_url}/v1/chat/completions",
+                        self._llm_chat_url,
                         json=payload,
                         headers=headers,
                         timeout=aiohttp.ClientTimeout(total=120),

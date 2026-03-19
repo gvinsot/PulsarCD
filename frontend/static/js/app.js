@@ -202,6 +202,53 @@ function closeSettingsModal() {
     document.getElementById('settings-modal').classList.remove('active');
 }
 
+// ============== LLM Provider Presets ==============
+
+const LLM_PRESETS = {
+    openai:     { url: 'https://api.openai.com',        model: 'gpt-5.4' },
+    anthropic:  { url: 'https://api.anthropic.com',      model: 'claude-sonnet-4-20250514' },
+    gemini:     { url: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash' },
+    mistral:    { url: 'https://api.mistral.ai',         model: 'mistral-small-latest' },
+    ollama:     { url: 'http://localhost:11434',          model: 'qwen3:8b' },
+    vllm:       { url: 'http://vllm-dev-service:8000',   model: '' },
+};
+
+function applyLLMPreset() {
+    const preset = LLM_PRESETS[document.getElementById('settings-llm-preset').value];
+    if (!preset) return;
+    document.getElementById('settings-llm-url').value = preset.url;
+    document.getElementById('settings-llm-model').value = preset.model;
+}
+
+async function testLLMConnection() {
+    const result = document.getElementById('settings-llm-test-result');
+    result.textContent = 'Testing...';
+    result.className = 'settings-status';
+
+    try {
+        const resp = await fetch(`${API_BASE}/admin/llm-connection-test`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                url: document.getElementById('settings-llm-url').value,
+                model: document.getElementById('settings-llm-model').value,
+                api_key: document.getElementById('settings-llm-apikey').value,
+            }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            result.textContent = `Connected — model: ${data.model}`;
+            result.className = 'settings-status success';
+        } else {
+            result.textContent = data.error || 'Connection failed';
+            result.className = 'settings-status error';
+        }
+    } catch (e) {
+        result.textContent = 'Network error: ' + e.message;
+        result.className = 'settings-status error';
+    }
+}
+
 // ============== LLM Test Chat ==============
 
 let _llmTestBusy = false;
@@ -610,18 +657,20 @@ async function saveSettings() {
     status.textContent = 'Saving...';
     status.className = 'settings-status';
 
-    // Merge: LLM + MCP from Settings, error_handling + gates from stored config
-    const stored = _settingsConfig || {};
-    const config = {
-        llm: {
-            url: document.getElementById('settings-llm-url').value,
-            model: document.getElementById('settings-llm-model').value,
-            api_key: document.getElementById('settings-llm-apikey').value,
-        },
-        mcp_servers: collectMCPServers(),
-        error_handling: stored.error_handling || {},
-        pipeline_gates: stored.pipeline_gates || {},
-    };
+    // Re-fetch full config to avoid overwriting fields managed elsewhere
+    const config = await apiGet('/admin/config');
+    if (!config) {
+        status.textContent = 'Failed to load current config';
+        status.className = 'settings-status error';
+        return;
+    }
+
+    // Overlay only the fields from this modal
+    config.llm = config.llm || {};
+    config.llm.url = document.getElementById('settings-llm-url').value;
+    config.llm.model = document.getElementById('settings-llm-model').value;
+    config.llm.api_key = document.getElementById('settings-llm-apikey').value;
+    config.mcp_servers = collectMCPServers();
 
     try {
         const resp = await fetch(`${API_BASE}/admin/config`, {
@@ -630,6 +679,7 @@ async function saveSettings() {
             body: JSON.stringify(config),
         });
         if (resp.ok) {
+            _settingsConfig = config;
             status.textContent = 'Saved';
             status.className = 'settings-status';
             setTimeout(() => { status.textContent = ''; }, 2000);

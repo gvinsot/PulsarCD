@@ -5364,6 +5364,16 @@ a.btn {
     color: var(--status-error);
 }
 
+.settings-status.success {
+    color: var(--status-success);
+}
+
+.settings-field-inline {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
 .settings-section-divider {
     height: 1px;
     background: var(--border-color);

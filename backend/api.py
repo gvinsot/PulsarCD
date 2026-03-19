@@ -429,12 +429,62 @@ async def admin_update_config(request: Request):
             llm_agent._pipeline_gates = new_config.pipeline_gates
             llm_agent._mcp_servers = new_config.mcp_servers
             llm_agent._llm_url = new_config.llm.url.rstrip("/")
+            llm_agent._llm_chat_url = llm_agent._resolve_chat_url(new_config.llm.url)
             llm_agent._llm_model = new_config.llm.model
             llm_agent._llm_api_key = new_config.llm.api_key
+            llm_agent._context_tokens = new_config.llm.context_tokens
+            llm_agent._max_output_tokens = new_config.llm.max_output_tokens
 
         return {"saved": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/admin/llm-connection-test")
+async def admin_llm_connection_test(request: Request):
+    """Quick connectivity check: send a minimal chat completion request."""
+    body = await request.json()
+    url = (body.get("url") or "").strip()
+    model = (body.get("model") or "").strip()
+    api_key = (body.get("api_key") or "").strip()
+
+    if not url or not model:
+        raise HTTPException(status_code=400, detail="url and model are required")
+
+    from .llm_agent import LLMAgent
+    chat_url = LLMAgent._resolve_chat_url(url)
+
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": "Reply with exactly: ok"}],
+        "max_tokens": 16,
+        "temperature": 0,
+    }
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                chat_url, json=payload, headers=headers,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                if resp.status != 200:
+                    body_text = await resp.text()
+                    return {"ok": False, "error": f"HTTP {resp.status}: {body_text[:300]}"}
+                data = await resp.json()
+                content = (
+                    data.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                )
+                model_used = data.get("model", model)
+                return {"ok": True, "model": model_used, "reply": content.strip()}
+    except aiohttp.ClientError as e:
+        return {"ok": False, "error": f"Connection failed: {e}"}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
 @app.post("/api/admin/mcp-test")
