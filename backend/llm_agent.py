@@ -647,7 +647,10 @@ class LLMAgent:
                     fn_name = fn.get("name", "")
                     try:
                         fn_args = json.loads(fn.get("arguments", "{}"))
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as e:
+                        logger.warning("Failed to parse tool arguments",
+                                       tool=fn_name, error=str(e),
+                                       raw_args=fn.get("arguments", "")[:200])
                         fn_args = {}
 
                     logger.info("LLM agent calling tool",

@@ -309,7 +309,8 @@ async def auth_middleware(request: Request, call_next):
         payload = decode_token(token, settings.auth.jwt_secret)
         request.state.user = payload.get("sub", "")
         request.state.role = payload.get("role", "viewer")
-    except jwt.PyJWTError:
+    except jwt.PyJWTError as e:
+        logger.warning("JWT authentication failed", error=str(e), path=request.url.path)
         return JSONResponse(status_code=401, content={"detail": "Invalid or expired token"})
 
     # Admin-only paths
@@ -439,6 +440,7 @@ async def admin_update_config(request: Request):
 
         return {"saved": True}
     except Exception as e:
+        logger.error("Failed to save config", error=str(e))
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -484,8 +486,10 @@ async def admin_llm_connection_test(request: Request):
                 model_used = data.get("model", model)
                 return {"ok": True, "model": model_used, "reply": content.strip()}
     except aiohttp.ClientError as e:
+        logger.warning("LLM connection test failed", url=chat_url, error=str(e))
         return {"ok": False, "error": f"Connection failed: {e}"}
     except Exception as e:
+        logger.error("LLM connection test error", url=chat_url, error=str(e))
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
@@ -524,8 +528,10 @@ async def admin_mcp_test(request: Request):
                 tool_names = [t.get("name", "?") for t in mcp_tools]
                 return {"ok": True, "tools": tool_names, "count": len(tool_names)}
     except aiohttp.ClientError as e:
+        logger.warning("MCP connection test failed", url=url, error=str(e))
         return {"ok": False, "error": f"Connection failed: {e}"}
     except Exception as e:
+        logger.error("MCP connection test error", url=url, error=str(e))
         return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
 
@@ -796,6 +802,7 @@ async def recreate_opensearch_index(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        logger.error("Failed to recreate index", index=index, error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1296,6 +1303,7 @@ async def get_service_logs(
                     return {"type": "service_tasks", "tasks": tasks, "service": service_name}
         return result
     except Exception as e:
+        logger.error("Failed to get container details", service=service_name, error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -2570,9 +2578,12 @@ async def cancel_action(action_id: str) -> Dict[str, Any]:
     # Wait briefly for the task to acknowledge cancellation
     try:
         await asyncio.wait_for(asyncio.shield(action.task), timeout=5)
-    except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+    except (asyncio.TimeoutError, asyncio.CancelledError):
         pass
-    
+    except Exception as e:
+        logger.warning("Error while waiting for action cancellation",
+                       action_id=action_id, error=str(e))
+
     if action.status == "running":
         action.status = "cancelled"
     
@@ -2686,8 +2697,10 @@ async def get_stacks_buildable() -> Dict[str, bool]:
         name = repo["name"]
         try:
             _buildable_cache[name] = await deployer.has_build_config(name)
-        except Exception:
-            _buildable_cache[name] = True  # assume buildable on error
+        except Exception as e:
+            logger.warning("Failed to check build config, assuming buildable",
+                           repo=name, error=str(e))
+            _buildable_cache[name] = True
     return _buildable_cache
 
 
@@ -2801,8 +2814,10 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
         try:
             buildable = await deployer.has_build_config(repo_name)
             _buildable_cache[repo_name] = buildable
-        except Exception:
-            buildable = True  # assume buildable on error
+        except Exception as e:
+            logger.warning("Failed to check build config, assuming buildable",
+                           repo=repo_name, error=str(e))
+            buildable = True
 
     initial_stage = "build" if buildable else "deploy"
     _set_pipeline(repo_name, initial_stage, "running", version, build_id=None, test_id=None, deploy_id=None)
@@ -3226,7 +3241,8 @@ async def terminal_websocket(
             await websocket.close(code=4001, reason="Missing token")
             return
         decode_token(token, settings.auth.jwt_secret)
-    except jwt.PyJWTError:
+    except jwt.PyJWTError as e:
+        logger.warning("Terminal WebSocket auth failed", error=str(e))
         await websocket.close(code=4001, reason="Invalid token")
         return
 
