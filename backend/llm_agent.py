@@ -226,7 +226,7 @@ def compact_messages(
             # (no useful text content) — if so, drop it too
             if idx > 0 and messages[idx - 1].get("role") == "assistant":
                 assistant_msg = messages[idx - 1]
-                if assistant_msg.get("tool_calls") and not assistant_msg.get("content", "").strip():
+                if assistant_msg.get("tool_calls") and not (assistant_msg.get("content") or "").strip():
                     # Check no other tool results reference this assistant's tool_calls
                     drop_indices.add(idx - 1)
 
