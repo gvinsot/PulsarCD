@@ -94,6 +94,8 @@ services:
       - PULSARCD_GITHUB__REPOS_PATH=${PULSARCD_GITHUB__REPOS_PATH:-/home/user/repos}
       - PULSARCD_GITHUB__SSH_HOST=${PULSARCD_GITHUB__SSH_HOST:-dockerhost}
       - PULSARCD_GITHUB__SSH_USER=${PULSARCD_GITHUB__SSH_USER:-user}
+      # Which repos to show in Stacks: "all" (default) or "starred"
+      - PULSARCD_GITHUB__REPOS_MODE=${PULSARCD_GITHUB__REPOS_MODE:-all}
       # Docker registry for build/push operations
       - PULSARCD_GITHUB__REGISTRY_URL=${DOCKER_REGISTRY_URL}
       - PULSARCD_GITHUB__REGISTRY_USERNAME=${DOCKER_REGISTRY_USERNAME}
