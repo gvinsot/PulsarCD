@@ -185,7 +185,11 @@ class GitHubService:
         logger.info("All GitHub caches invalidated")
 
     async def get_starred_repos(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
-        """Get list of starred repositories for the configured user.
+        """Get list of repositories to display in Stacks.
+
+        Behaviour depends on ``config.repos_mode``:
+        - ``"all"``     → fetch all repos accessible to the authenticated user
+        - ``"starred"`` → fetch only starred repos (legacy behaviour)
 
         Args:
             force_refresh: If True, bypass cache and fetch fresh data.
@@ -195,7 +199,7 @@ class GitHubService:
         """
         # Check cache first (unless force refresh requested)
         if not force_refresh and self._is_cache_valid():
-            logger.debug("Returning cached starred repos", count=len(self._starred_repos_cache))
+            logger.debug("Returning cached repos", count=len(self._starred_repos_cache))
             return self._starred_repos_cache
 
         if not self.config.token:
@@ -205,22 +209,30 @@ class GitHubService:
         # If rate-limited, return stale cache if available
         if self._is_rate_limited():
             if self._starred_repos_cache:
-                logger.info("Rate limited, returning stale starred repos cache")
+                logger.info("Rate limited, returning stale repos cache")
                 return self._starred_repos_cache
             return []
 
         session = await self._get_session()
 
-        # Use authenticated user's starred repos
-        url = "https://api.github.com/user/starred"
-        params = {"per_page": 100, "sort": "updated"}
+        starred_only = (self.config.repos_mode or "all").lower() == "starred"
+
+        if starred_only:
+            url = "https://api.github.com/user/starred"
+            params = {"per_page": 100, "sort": "updated"}
+            scope_hint = "Starring: Read"
+        else:
+            url = "https://api.github.com/user/repos"
+            params = {"per_page": 100, "sort": "updated", "affiliation": "owner,collaborator,organization_member"}
+            scope_hint = "Contents: Read"
 
         repos = []
         page = 1
 
         # Log token prefix for debugging (first 10 chars only for security)
         token_prefix = self.config.token[:10] if self.config.token else "none"
-        logger.info("Fetching starred repos", token_prefix=f"{token_prefix}...", url=url)
+        mode_label = "starred" if starred_only else "all"
+        logger.info("Fetching repos", mode=mode_label, token_prefix=f"{token_prefix}...", url=url)
 
         try:
             while True:
@@ -229,21 +241,21 @@ class GitHubService:
                     # Log response headers for debugging scopes
                     scopes = response.headers.get("X-OAuth-Scopes", "none")
                     rate_limit = response.headers.get("X-RateLimit-Remaining", "?")
-                    logger.info("GitHub API response", 
-                               status=response.status, 
+                    logger.info("GitHub API response",
+                               status=response.status,
                                page=page,
-                               scopes=scopes, 
+                               scopes=scopes,
                                rate_limit=rate_limit)
-                    
+
                     self._handle_rate_limit(response.headers, response.status)
                     if response.status == 403 and self._is_rate_limited():
-                        logger.warning("GitHub rate limit exceeded during starred repos fetch")
+                        logger.warning("GitHub rate limit exceeded during repos fetch")
                         if self._starred_repos_cache:
                             return self._starred_repos_cache
                         break
                     if response.status != 200:
                         error_text = await response.text()
-                        error_msg = self._parse_permission_error(error_text, response.status, "starred repos", "Starring: Read")
+                        error_msg = self._parse_permission_error(error_text, response.status, "repos", scope_hint)
                         logger.error("GitHub API error", status=response.status, error=error_text, hint=error_msg)
                         break
 
@@ -277,11 +289,11 @@ class GitHubService:
             # Update cache
             self._starred_repos_cache = repos
             self._starred_repos_cache_time = datetime.now()
-            logger.info("Fetched and cached starred repos", count=len(repos))
+            logger.info("Fetched and cached repos", mode=mode_label, count=len(repos))
             return repos
 
         except Exception as e:
-            logger.error("Failed to fetch starred repos", error=str(e))
+            logger.error("Failed to fetch repos", mode=mode_label, error=str(e))
             return []
 
     def is_configured(self) -> bool:

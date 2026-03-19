@@ -100,6 +100,8 @@ class GitHubConfig(BaseModel):
     registry_url: Optional[str] = None
     registry_username: Optional[str] = None
     registry_password: Optional[str] = None
+    # Which repos to show in Stacks: "all" (default) or "starred"
+    repos_mode: str = "all"
 
 
 class AuthConfig(BaseModel):
