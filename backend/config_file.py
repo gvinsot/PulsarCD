@@ -147,6 +147,36 @@ def _apply_env_overrides(config: PulsarConfig) -> PulsarConfig:
     if ai_model:
         config.llm.model = ai_model
 
+    # Tag cleanup overrides
+    tag_cleanup_enabled = os.environ.get("PULSARCD_TAG_CLEANUP_ENABLED")
+    if tag_cleanup_enabled is not None:
+        config.tag_cleanup.enabled = tag_cleanup_enabled.lower() in ("1", "true", "yes")
+
+    tag_cleanup_dry_run = os.environ.get("PULSARCD_TAG_CLEANUP_DRY_RUN")
+    if tag_cleanup_dry_run is not None:
+        config.tag_cleanup.dry_run = tag_cleanup_dry_run.lower() in ("1", "true", "yes")
+
+    tag_cleanup_max_age = os.environ.get("PULSARCD_TAG_CLEANUP_MAX_AGE_DAYS")
+    if tag_cleanup_max_age:
+        try:
+            config.tag_cleanup.max_age_days = int(tag_cleanup_max_age)
+        except ValueError:
+            logger.warning("Invalid PULSARCD_TAG_CLEANUP_MAX_AGE_DAYS", value=tag_cleanup_max_age)
+
+    tag_cleanup_interval = os.environ.get("PULSARCD_TAG_CLEANUP_INTERVAL_HOURS")
+    if tag_cleanup_interval:
+        try:
+            config.tag_cleanup.interval_hours = int(tag_cleanup_interval)
+        except ValueError:
+            logger.warning("Invalid PULSARCD_TAG_CLEANUP_INTERVAL_HOURS", value=tag_cleanup_interval)
+
+    tag_cleanup_keep = os.environ.get("PULSARCD_TAG_CLEANUP_KEEP_LATEST_N")
+    if tag_cleanup_keep:
+        try:
+            config.tag_cleanup.keep_latest_n = int(tag_cleanup_keep)
+        except ValueError:
+            logger.warning("Invalid PULSARCD_TAG_CLEANUP_KEEP_LATEST_N", value=tag_cleanup_keep)
+
     return config
 
 
