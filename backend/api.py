@@ -415,12 +415,14 @@ async def admin_get_config():
 @app.put("/api/admin/config")
 async def admin_update_config(request: Request):
     """Update configuration file (admin only)."""
-    from .config_file import PulsarConfig, save_config_file, _apply_env_overrides
+    from .config_file import PulsarConfig, save_config_file
     body = await request.json()
     try:
         new_config = PulsarConfig(**body)
         save_config_file(new_config, settings.data_dir)
-        settings.pulsar_config = _apply_env_overrides(new_config)
+        # Do NOT apply env overrides here: the user's explicit UI changes
+        # take precedence over environment defaults.
+        settings.pulsar_config = new_config
 
         # Update LLM agent with new config
         if llm_agent:
