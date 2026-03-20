@@ -5758,12 +5758,16 @@ async function cancelAction(actionId) {
 // ============== Action Logs Modal ==============
 
 let currentActionLogsId = null;
+let currentActionLogsType = null;
+let currentActionLogsRepo = null;
 let actionLogsPollTimer = null;
 let actionLogsPollOffset = 0;
 let actionLogsFirstRender = true;
 
 function openActionLogs(actionId, actionType, repoName) {
     currentActionLogsId = actionId;
+    currentActionLogsType = actionType;
+    currentActionLogsRepo = repoName;
 
     const modal = document.getElementById('action-logs-modal');
     const title = document.getElementById('action-logs-title');
@@ -5781,6 +5785,38 @@ function closeActionLogsModal() {
     stopActionLogsPoll();
     document.getElementById('action-logs-modal').classList.remove('active');
     currentActionLogsId = null;
+    currentActionLogsType = null;
+    currentActionLogsRepo = null;
+}
+
+function analyzeActionLogs() {
+    const content = document.getElementById('action-logs-content');
+    const logLines = Array.from(content.querySelectorAll('.log-line'))
+        .map(el => el.textContent)
+        .join('\n');
+
+    const actionType = currentActionLogsType || 'Action';
+    const repoName = currentActionLogsRepo || 'unknown';
+
+    // Truncate logs if too long (keep last 200 lines)
+    const lines = logLines.split('\n');
+    const truncated = lines.length > 200
+        ? '... (truncated)\n' + lines.slice(-200).join('\n')
+        : logLines;
+
+    const taskDesc = [
+        `Analyze the following ${actionType} logs for project '${repoName}'.`,
+        `Identify any errors, warnings, or issues and suggest fixes.\n`,
+        `Logs:\n\`\`\`\n${truncated}\n\`\`\``
+    ].join('\n');
+
+    document.getElementById('task-project').value = repoName;
+    document.getElementById('task-source').value = `${actionType} logs`;
+    document.getElementById('task-description').value = taskDesc;
+    document.getElementById('task-submit-btn').disabled = false;
+    document.getElementById('task-submit-btn').textContent = 'Send Task';
+
+    document.getElementById('create-task-modal').classList.add('active');
 }
 
 function stopActionLogsPoll() {
