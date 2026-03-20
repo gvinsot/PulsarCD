@@ -1904,7 +1904,8 @@ async def get_config() -> Dict[str, Any]:
             "retention_days": settings.collector.retention_days,
         },
         "ai": {
-            "model": settings.ai.model,
+            "model": settings.pulsar_config.llm.model if settings.pulsar_config else settings.ai.model,
+            "url": settings.pulsar_config.llm.url if settings.pulsar_config else "",
         },
         "swarm": {
             "manager_host": collector._swarm_manager_host if hasattr(collector, '_swarm_manager_host') else None,

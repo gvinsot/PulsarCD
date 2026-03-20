@@ -133,11 +133,19 @@ SYSTEM_PROMPT = build_system_prompt()
 
 
 class AIService:
-    """Service for AI-powered query conversion using vLLM (OpenAI-compatible API)."""
+    """Service for AI-powered query conversion using an OpenAI-compatible API."""
 
-    def __init__(self, vllm_url: str = "http://localhost:8000", model: str = "Qwen/Qwen2.5-1.5B-Instruct"):
+    def __init__(self, vllm_url: str = "http://localhost:8000", model: str = "Qwen/Qwen2.5-1.5B-Instruct", api_key: str = ""):
         self.vllm_url = vllm_url.rstrip("/")
         self.model = model
+        self.api_key = api_key
+        # Resolve the chat endpoint: use as-is if it already contains
+        # chat/completions (e.g. Gemini), otherwise append the standard path.
+        stripped = self.vllm_url
+        if "chat/completions" in stripped:
+            self.chat_url = stripped
+        else:
+            self.chat_url = f"{stripped}/v1/chat/completions"
         self._session: Optional[aiohttp.ClientSession] = None
         self._available = False
 
@@ -151,10 +159,13 @@ class AIService:
             await self._session.close()
 
     async def check_availability(self) -> bool:
-        """Check if vLLM is available and model is loaded."""
+        """Check if the LLM provider is available and model is loaded."""
         try:
             session = await self._get_session()
-            async with session.get(f"{self.vllm_url}/v1/models", timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            headers = {}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            async with session.get(f"{self.vllm_url}/v1/models", headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     models = [m.get("id", "") for m in data.get("data", [])]
@@ -170,7 +181,7 @@ class AIService:
         return False
 
     async def _chat_completion(self, messages: list, max_tokens: int = 512, temperature: float = 0.1, timeout: float = 30) -> Optional[str]:
-        """Send a chat completion request to vLLM and return the response text."""
+        """Send a chat completion request and return the response text."""
         session = await self._get_session()
 
         payload = {
@@ -180,9 +191,14 @@ class AIService:
             "temperature": temperature,
         }
 
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
         async with session.post(
-            f"{self.vllm_url}/v1/chat/completions",
+            self.chat_url,
             json=payload,
+            headers=headers,
             timeout=aiohttp.ClientTimeout(total=timeout),
         ) as resp:
             if resp.status == 200:
@@ -522,22 +538,32 @@ ai_service: Optional[AIService] = None
 
 
 def get_ai_service() -> AIService:
-    """Get or create AI service instance.
-
-    Uses config file settings (llm.url, llm.model) with env var fallback.
-    """
-    import os
+    """Get or create AI service instance using PulsarConfig.llm as source of truth."""
     from .config import settings
 
     global ai_service
+
+    pulsar_config = getattr(settings, "pulsar_config", None)
+    llm = getattr(pulsar_config, "llm", None) if pulsar_config else None
+
+    if llm:
+        url = llm.url
+        model = llm.model
+        api_key = llm.api_key
+    else:
+        import os
+        url = os.environ.get("PULSARCD_VLLM_URL", "http://vllm:8000")
+        model = settings.ai.model
+        api_key = ""
+
+    # Recreate if config has changed since last call
+    if ai_service is not None:
+        if ai_service.vllm_url != url.rstrip("/") or ai_service.model != model or ai_service.api_key != api_key:
+            logger.info("LLM config changed, recreating AIService",
+                        old_url=ai_service.vllm_url, new_url=url,
+                        old_model=ai_service.model, new_model=model)
+            ai_service = None
+
     if ai_service is None:
-        # Prefer config file settings, fall back to env vars
-        pulsar_config = getattr(settings, "pulsar_config", None)
-        if pulsar_config and hasattr(pulsar_config, "llm"):
-            vllm_url = pulsar_config.llm.url
-            model = pulsar_config.llm.model
-        else:
-            vllm_url = os.environ.get("PULSARCD_VLLM_URL", "http://vllm:8000")
-            model = settings.ai.model
-        ai_service = AIService(vllm_url, model)
+        ai_service = AIService(url, model, api_key)
     return ai_service
