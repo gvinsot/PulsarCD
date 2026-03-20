@@ -287,13 +287,17 @@ class LLMAgent:
     def _resolve_chat_url(base_url: str) -> str:
         """Build the chat completions endpoint from the configured URL.
 
-        If the URL already contains ``chat/completions`` (e.g. Gemini's
-        ``/v1beta/openai/chat/completions``), use it as-is.
-        Otherwise append the standard OpenAI path ``/v1/chat/completions``.
+        Handles common user inputs:
+        - ``http://host:8000``                → append ``/v1/chat/completions``
+        - ``http://host:8000/v1``             → append ``/chat/completions``
+        - ``http://host:8000/v1/chat/completions`` → use as-is
+        - Gemini: ``/v1beta/openai/chat/completions`` → use as-is
         """
         stripped = base_url.rstrip("/")
         if "chat/completions" in stripped:
             return stripped
+        if stripped.endswith("/v1") or stripped.endswith("/v1beta"):
+            return f"{stripped}/chat/completions"
         return f"{stripped}/v1/chat/completions"
 
     def __init__(self, config: PulsarConfig, mcp_api_key: str = "", data_dir: str = "/data"):
@@ -312,6 +316,11 @@ class LLMAgent:
         self._cooldown_map: Dict[str, datetime] = {}
         self._history_path = Path(data_dir) / "agent_history.json"
         self._history: List[Dict[str, Any]] = self._load_history()
+        logger.info("LLM agent initialized",
+                     chat_url=self._llm_chat_url,
+                     model=self._llm_model,
+                     context_tokens=self._context_tokens,
+                     max_output_tokens=self._max_output_tokens)
 
     def _load_history(self) -> List[Dict[str, Any]]:
         """Load agent history from file."""
@@ -660,17 +669,18 @@ class LLMAgent:
                            tool=name, error_type=type(e).__name__, error=str(e))
             return f"Error calling tool '{name}': {e}"
 
-    def _compute_max_output_tokens(self, messages: List[dict]) -> int:
+    def _compute_max_output_tokens(self, messages: List[dict], tools_tokens: int = 0) -> int:
         """Compute max_tokens for the LLM response based on remaining context budget.
 
-        Ensures we don't request more output tokens than the context can hold,
-        while still being generous with the output budget.
+        vLLM rejects requests where input_tokens + max_tokens exceeds the
+        model's context limit.  We estimate input size conservatively and cap
+        max_tokens so the total stays safely within the configured context.
         """
-        input_tokens = _estimate_messages_tokens(messages)
-        # Reserve the full output budget, but cap so input + output <= context
+        input_tokens = _estimate_messages_tokens(messages) + tools_tokens
         available = self._context_tokens - input_tokens
-        # Use the configured max output but don't exceed what's available
-        max_out = min(self._max_output_tokens, max(2048, available))
+        # Cap at configured max, but also leave 10% headroom for estimation errors
+        safe_available = int(available * 0.9)
+        max_out = min(self._max_output_tokens, max(1024, safe_available))
         return max_out
 
     async def _run_agent(self, system_prompt: str, user_message: str) -> str:
@@ -712,7 +722,7 @@ class LLMAgent:
             )
 
             # Compute dynamic max_tokens for this call
-            max_output = self._compute_max_output_tokens(messages)
+            max_output = self._compute_max_output_tokens(messages, current_tools_tokens)
 
             # Build LLM request
             payload: Dict[str, Any] = {
@@ -738,23 +748,24 @@ class LLMAgent:
                     ) as resp:
                         if resp.status != 200:
                             body = await resp.text()
-                            # If tools caused the error, retry without them
-                            if use_tools and resp.status in (400, 404):
-                                logger.warning(
-                                    "LLM rejected tools payload, retrying without tools",
-                                    status=resp.status,
-                                    model=self._llm_model,
-                                    body=body[:500])
-                                tools_supported = False
-                                continue
+                            body_short = body[:500]
                             logger.error("LLM API error",
                                          status=resp.status,
                                          url=self._llm_chat_url,
                                          model=self._llm_model,
                                          has_tools=bool(use_tools),
                                          tool_count=len(use_tools) if use_tools else 0,
+                                         max_tokens=max_output,
+                                         msg_count=len(messages),
                                          body=body[:1000])
-                            return f"LLM API error (status {resp.status})"
+                            # If tools caused the error, retry without them
+                            if use_tools and resp.status in (400, 404):
+                                logger.warning(
+                                    "Retrying without tools",
+                                    status=resp.status)
+                                tools_supported = False
+                                continue
+                            return f"LLM API error (status {resp.status}): {body_short}"
 
                         data = await resp.json()
 

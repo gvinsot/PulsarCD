@@ -20,8 +20,8 @@ class LLMConfig(BaseModel):
     url: str = "http://vllm-dev-service:8000"
     model: str = "txn545/Qwen3.5-122B-A10B-NVFP4"
     api_key: str = ""
-    context_tokens: int = 256000
-    max_output_tokens: int = 128000
+    context_tokens: int = 128000
+    max_output_tokens: int = 16384
 
 
 class MCPServerConfig(BaseModel):
@@ -146,6 +146,20 @@ def _apply_env_overrides(config: PulsarConfig) -> PulsarConfig:
     ai_model = os.environ.get("PULSARCD_AI__MODEL")
     if ai_model:
         config.llm.model = ai_model
+
+    llm_context = os.environ.get("PULSARCD_LLM__CONTEXT_TOKENS")
+    if llm_context:
+        try:
+            config.llm.context_tokens = int(llm_context)
+        except ValueError:
+            logger.warning("Invalid PULSARCD_LLM__CONTEXT_TOKENS", value=llm_context)
+
+    llm_max_output = os.environ.get("PULSARCD_LLM__MAX_OUTPUT_TOKENS")
+    if llm_max_output:
+        try:
+            config.llm.max_output_tokens = int(llm_max_output)
+        except ValueError:
+            logger.warning("Invalid PULSARCD_LLM__MAX_OUTPUT_TOKENS", value=llm_max_output)
 
     # Tag cleanup overrides
     tag_cleanup_enabled = os.environ.get("PULSARCD_TAG_CLEANUP_ENABLED")

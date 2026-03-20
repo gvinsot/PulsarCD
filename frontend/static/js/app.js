@@ -189,6 +189,8 @@ async function openSettingsModal() {
     document.getElementById('settings-llm-url').value = llm.url || '';
     document.getElementById('settings-llm-model').value = llm.model || '';
     document.getElementById('settings-llm-apikey').value = llm.api_key || '';
+    document.getElementById('settings-llm-context-tokens').value = llm.context_tokens || 128000;
+    document.getElementById('settings-llm-max-output-tokens').value = llm.max_output_tokens || 16384;
 
     // Populate MCP servers
     renderMCPServers(config.mcp_servers || []);
@@ -674,6 +676,8 @@ async function saveSettings() {
     config.llm.url = document.getElementById('settings-llm-url').value;
     config.llm.model = document.getElementById('settings-llm-model').value;
     config.llm.api_key = document.getElementById('settings-llm-apikey').value;
+    config.llm.context_tokens = parseInt(document.getElementById('settings-llm-context-tokens').value, 10) || 128000;
+    config.llm.max_output_tokens = parseInt(document.getElementById('settings-llm-max-output-tokens').value, 10) || 16384;
     config.mcp_servers = collectMCPServers();
 
     try {

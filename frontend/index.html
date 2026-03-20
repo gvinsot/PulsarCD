@@ -1187,6 +1187,16 @@
                                 <label>API Key</label>
                                 <input type="password" id="settings-llm-apikey" placeholder="(required for cloud providers)" autocomplete="off" data-lpignore="true" data-1p-ignore />
                             </div>
+                            <div class="settings-field settings-field-row">
+                                <div class="settings-field-half">
+                                    <label>Context window (tokens)</label>
+                                    <input type="number" id="settings-llm-context-tokens" placeholder="128000" min="4096" step="1024" />
+                                </div>
+                                <div class="settings-field-half">
+                                    <label>Max output (tokens)</label>
+                                    <input type="number" id="settings-llm-max-output-tokens" placeholder="16384" min="256" step="256" />
+                                </div>
+                            </div>
                             <div class="settings-field settings-field-inline">
                                 <button class="btn btn-sm btn-secondary" onclick="testLLMConnection()">Test connection</button>
                                 <span id="settings-llm-test-result" class="settings-status"></span>
