@@ -687,6 +687,8 @@ class LLMAgent:
         tools = await self._discover_tools()
         openai_tools = tools if tools else None
         self._last_tools_called: List[str] = []
+        # Track whether the LLM supports tool-calling; disable on 400/404
+        tools_supported = True
 
         # Estimate tokens consumed by tools schema (sent with every request)
         tools_tokens = _estimate_tokens(json.dumps(openai_tools)) if openai_tools else 0
@@ -697,9 +699,12 @@ class LLMAgent:
         ]
 
         for iteration in range(_MAX_ITERATIONS):
+            use_tools = openai_tools if tools_supported else None
+            current_tools_tokens = tools_tokens if use_tools else 0
+
             # --- Context compaction before each LLM call ---
             # Budget = context_tokens - tools overhead
-            effective_budget = self._context_tokens - tools_tokens
+            effective_budget = self._context_tokens - current_tools_tokens
             messages = compact_messages(
                 messages,
                 context_budget_tokens=effective_budget,
@@ -716,8 +721,8 @@ class LLMAgent:
                 "max_tokens": max_output,
                 "temperature": 0.2,
             }
-            if openai_tools:
-                payload["tools"] = openai_tools
+            if use_tools:
+                payload["tools"] = use_tools
 
             headers = {"Content-Type": "application/json"}
             if self._llm_api_key:
@@ -733,12 +738,21 @@ class LLMAgent:
                     ) as resp:
                         if resp.status != 200:
                             body = await resp.text()
+                            # If tools caused the error, retry without them
+                            if use_tools and resp.status in (400, 404):
+                                logger.warning(
+                                    "LLM rejected tools payload, retrying without tools",
+                                    status=resp.status,
+                                    model=self._llm_model,
+                                    body=body[:500])
+                                tools_supported = False
+                                continue
                             logger.error("LLM API error",
                                          status=resp.status,
                                          url=self._llm_chat_url,
                                          model=self._llm_model,
-                                         has_tools=bool(openai_tools),
-                                         tool_count=len(openai_tools) if openai_tools else 0,
+                                         has_tools=bool(use_tools),
+                                         tool_count=len(use_tools) if use_tools else 0,
                                          body=body[:1000])
                             return f"LLM API error (status {resp.status})"
 
