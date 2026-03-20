@@ -2482,22 +2482,33 @@ async def test_stack(
 async def get_action_status(action_id: str) -> Dict[str, Any]:
     """Get the status of a background build/deploy/test action."""
     action = _background_actions.get(action_id)
-    if not action:
-        raise HTTPException(status_code=404, detail="Action not found")
-    
-    response = {
-        "action_id": action.id,
-        "action_type": action.action_type,
-        "repo": action.repo_name,
-        "status": action.status,
-        "started_at": action.started_at.isoformat(),
-        "elapsed_seconds": (datetime.utcnow() - action.started_at).total_seconds(),
-    }
-    
-    if action.result:
-        response["result"] = action.result
-    
-    return response
+    if action:
+        response = {
+            "action_id": action.id,
+            "action_type": action.action_type,
+            "repo": action.repo_name,
+            "status": action.status,
+            "started_at": action.started_at.isoformat(),
+            "elapsed_seconds": (datetime.utcnow() - action.started_at).total_seconds(),
+        }
+        if action.result:
+            response["result"] = action.result
+        return response
+
+    # Fallback: reconstruct minimal status from persisted pipeline state
+    if pipeline_state:
+        for repo_name, entry in pipeline_state.items():
+            for stage_name, stage in entry.stages.items():
+                if stage.action_id == action_id:
+                    return {
+                        "action_id": action_id,
+                        "action_type": stage_name,
+                        "repo": repo_name,
+                        "status": stage.status or "completed",
+                        "restored": True,
+                    }
+
+    raise HTTPException(status_code=404, detail="Action not found")
 
 
 @app.get("/api/stacks/actions/{action_id}/logs")
@@ -2505,20 +2516,38 @@ async def get_action_logs(
     action_id: str,
     offset: int = Query(default=0, ge=0, description="Line offset to start from"),
 ) -> Dict[str, Any]:
-    """Get the streaming logs of a background build/deploy action."""
+    """Get the streaming logs of a background build/deploy action.
+
+    Falls back to persisted pipeline state logs when the action is no
+    longer in memory (e.g. after a server restart).
+    """
     action = _background_actions.get(action_id)
-    if not action:
-        raise HTTPException(status_code=404, detail="Action not found")
-    
-    lines = action.output_lines[offset:]
-    
-    return {
-        "action_id": action.id,
-        "status": action.status,
-        "lines": lines,
-        "offset": offset,
-        "total_lines": len(action.output_lines),
-    }
+    if action:
+        lines = action.output_lines[offset:]
+        return {
+            "action_id": action.id,
+            "status": action.status,
+            "lines": lines,
+            "offset": offset,
+            "total_lines": len(action.output_lines),
+        }
+
+    # Fallback: look up the action_id in persisted pipeline state
+    if pipeline_state:
+        for repo_name, entry in pipeline_state.items():
+            for stage_name, stage in entry.stages.items():
+                if stage.action_id == action_id and stage.last_log:
+                    lines = stage.last_log[offset:]
+                    return {
+                        "action_id": action_id,
+                        "status": stage.status or "completed",
+                        "lines": lines,
+                        "offset": offset,
+                        "total_lines": len(stage.last_log),
+                        "restored": True,
+                    }
+
+    raise HTTPException(status_code=404, detail="Action not found")
 
 
 @app.get("/api/stacks/actions/{action_id}/logs/stream")

@@ -15,8 +15,8 @@ import structlog
 
 logger = structlog.get_logger()
 
-# Maximum log lines stored per stage
-_MAX_LOG_LINES = 50
+# Maximum log lines stored per stage (persisted to disk for post-restart access)
+_MAX_LOG_LINES = 500
 
 # Sentinel for set_pipeline's optional IDs
 _UNSET = object()
