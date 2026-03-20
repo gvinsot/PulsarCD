@@ -57,6 +57,11 @@ _NOTIFICATION_COOLDOWN = timedelta(hours=1)
 _MAX_ITERATIONS = 25  # More iterations with context compaction
 _MAX_OUTPUT_BYTES = 64 * 1024  # 64 KB for error output in prompts
 _MAX_HISTORY = 100  # Max entries in agent history
+# Maximum input tokens for the initial prompt (system + user messages).
+# The LLM context window is shared between input and output; this budget
+# ensures the prompt leaves enough room for tool-calling iterations and the
+# final response.  64k tokens ≈ 256k chars at ~4 chars/token.
+_MAX_INPUT_TOKENS = 64_000
 
 # Token estimation: ~4 chars per token for mixed content (code, logs, natural language).
 # This is a conservative estimate; actual ratio varies by language/content.
@@ -346,12 +351,19 @@ class LLMAgent:
         """Return agent action history (newest first)."""
         return list(reversed(self._history))
 
-    def _build_error_history_context(self, repo_name: str = "", fingerprint: str = "") -> str:
+    def _build_error_history_context(
+        self, repo_name: str = "", fingerprint: str = "",
+        max_tokens: int = 0,
+    ) -> str:
         """Build a summary of recent error-handling history for LLM context.
 
         Filters history entries relevant to the current error (by repo or
         fingerprint) and returns a formatted block the LLM can use to avoid
         creating duplicate tasks.
+
+        Args:
+            max_tokens: When > 0, cap the output to roughly this many tokens.
+                        Entries are progressively shortened or dropped to fit.
         """
         if not self._history:
             return ""
@@ -381,6 +393,15 @@ class LLMAgent:
         if not relevant:
             return ""
 
+        # Determine max preview length per entry based on token budget
+        max_preview = 200
+        if max_tokens > 0:
+            # Reserve ~200 tokens for header/footer, divide rest among entries
+            available_chars = max(200, max_tokens * _CHARS_PER_TOKEN - 800)
+            # ~60 chars overhead per entry (timestamp, type, labels)
+            per_entry_budget = max(40, available_chars // len(relevant) - 60)
+            max_preview = min(max_preview, per_entry_budget)
+
         lines = ["--- Recent error-handling history (last 24h) ---"]
         for e in relevant:
             ts = e.get("timestamp", "?")
@@ -388,7 +409,7 @@ class LLMAgent:
             label = e.get("label", "") or e.get("repo", "") or ""
             stage = e.get("stage", "")
             count = e.get("count", "")
-            resp_preview = (e.get("response", "") or "")[:200]
+            resp_preview = (e.get("response", "") or "")[:max_preview]
 
             parts = [f"[{ts}] {etype}"]
             if stage:
@@ -409,7 +430,72 @@ class LLMAgent:
             "Instead, note that the issue was already reported and summarize the "
             "current status."
         )
-        return "\n".join(lines)
+        result = "\n".join(lines)
+
+        # Final hard-cap: if still over budget, truncate
+        if max_tokens > 0:
+            max_chars = max_tokens * _CHARS_PER_TOKEN
+            if len(result) > max_chars:
+                result = result[:max_chars - 40] + "\n... [history truncated]"
+
+        return result
+
+    def _fit_prompt_to_budget(
+        self,
+        instructions: str,
+        specific_instructions: str,
+        error_output: str,
+        repo_name: str = "",
+        fingerprint: str = "",
+    ) -> Tuple[str, str, str]:
+        """Build system_prompt components that fit within _MAX_INPUT_TOKENS.
+
+        Returns (history_block, compact_output, overflow_note).
+        Progressively shrinks history then error output to fit the budget.
+        """
+        # Fixed overhead: instructions + specific + boilerplate (~constant)
+        fixed_text = instructions + specific_instructions
+        fixed_tokens = _estimate_tokens(fixed_text) + 200  # boilerplate margin
+
+        budget = min(_MAX_INPUT_TOKENS, self._context_tokens // 2)
+        remaining = budget - fixed_tokens
+
+        # 1. Build error output first (higher priority than history)
+        compact_output = _build_error_output(error_output)
+        output_tokens = _estimate_tokens(compact_output)
+
+        # 2. Allocate up to 25% of remaining budget for history
+        history_budget = min(remaining // 4, 8000)  # max 8k tokens for history
+        history_context = self._build_error_history_context(
+            repo_name=repo_name, fingerprint=fingerprint,
+            max_tokens=history_budget,
+        )
+        history_tokens = _estimate_tokens(history_context)
+
+        # 3. Check total fits in budget
+        total = fixed_tokens + output_tokens + history_tokens
+        if total <= budget:
+            return history_context, compact_output, ""
+
+        # 4. Over budget: shrink history first
+        overflow = total - budget
+        if history_tokens > 0:
+            reduced_history_budget = max(500, history_budget - overflow)
+            history_context = self._build_error_history_context(
+                repo_name=repo_name, fingerprint=fingerprint,
+                max_tokens=reduced_history_budget,
+            )
+            history_tokens = _estimate_tokens(history_context)
+            total = fixed_tokens + output_tokens + history_tokens
+
+        # 5. Still over budget: truncate error output
+        if total > budget:
+            max_output_chars = max(2000, (budget - fixed_tokens - history_tokens) * _CHARS_PER_TOKEN)
+            if len(compact_output) > max_output_chars:
+                compact_output = compact_output[:max_output_chars - 50] + \
+                    "\n... [output truncated to fit context budget]"
+
+        return history_context, compact_output, ""
 
     def _is_cooled_down(self, dedup_key: str) -> bool:
         """Check if a dedup key is within cooldown window."""
@@ -764,7 +850,10 @@ class LLMAgent:
         }
         specific_instructions = instruction_map.get(stage, "")
 
-        history_context = self._build_error_history_context(repo_name=repo_name)
+        history_context, compact_output, _ = self._fit_prompt_to_budget(
+            self._error_handling.instructions, specific_instructions,
+            error_output, repo_name=repo_name,
+        )
         history_block = f"\n\n{history_context}" if history_context else ""
 
         system_prompt = (
@@ -778,7 +867,6 @@ class LLMAgent:
             f"2) Diagnosis 3) Actions taken or recommended."
         )
 
-        compact_output = _build_error_output(error_output)
         user_message = (
             f"{stage.upper()} FAILED for project '{repo_name}' (version: {version}).\n"
             f"Error output:\n```\n{compact_output}\n```"
@@ -848,7 +936,10 @@ class LLMAgent:
                          response="Skipped — cooldown active (max 1 investigation per hour per pattern)")
             return None
 
-        history_context = self._build_error_history_context(
+        history_context, compact_sample, _ = self._fit_prompt_to_budget(
+            self._error_handling.instructions,
+            self._error_handling.on_recurring_error,
+            pattern.sample_message or "",
             repo_name=projects_list, fingerprint=pattern.fingerprint,
         )
         history_block = f"\n\n{history_context}" if history_context else ""
@@ -875,7 +966,7 @@ class LLMAgent:
             f"========================\n"
             f"Occurrences: {pattern.count} in {duration_str}\n"
             f"Affected services: {services_list}\n"
-            f"Error sample:\n```\n{pattern.sample_message}\n```"
+            f"Error sample:\n```\n{compact_sample}\n```"
         )
 
         logger.info("LLM agent handling recurring error",
