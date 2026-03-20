@@ -253,6 +253,10 @@ async function testLLMConnection() {
 
 let _llmTestBusy = false;
 
+function clearLLMChat() {
+    document.getElementById('llm-test-messages').innerHTML = '';
+}
+
 async function sendLLMTest() {
     if (_llmTestBusy) return;
     const input = document.getElementById('llm-test-input');
