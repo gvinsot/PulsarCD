@@ -1304,6 +1304,36 @@ function openCreateTaskModal(source, index) {
 
 function closeCreateTaskModal() {
     document.getElementById('create-task-modal').classList.remove('active');
+    // Reset to edit mode
+    const ta = document.getElementById('task-description');
+    const preview = document.getElementById('task-description-preview');
+    const btn = document.getElementById('task-toggle-preview');
+    ta.style.display = '';
+    preview.style.display = 'none';
+    btn.textContent = 'Preview';
+}
+
+function toggleTaskPreview() {
+    const ta = document.getElementById('task-description');
+    const preview = document.getElementById('task-description-preview');
+    const btn = document.getElementById('task-toggle-preview');
+    if (preview.style.display === 'none') {
+        preview.innerHTML = simpleMarkdown(ta.value);
+        preview.style.display = '';
+        ta.style.display = 'none';
+        btn.textContent = 'Edit';
+    } else {
+        preview.style.display = 'none';
+        ta.style.display = '';
+        btn.textContent = 'Preview';
+    }
+}
+
+function updateTaskPreview() {
+    const preview = document.getElementById('task-description-preview');
+    if (preview.style.display !== 'none') {
+        preview.innerHTML = simpleMarkdown(document.getElementById('task-description').value);
+    }
 }
 
 async function submitCreateTask() {

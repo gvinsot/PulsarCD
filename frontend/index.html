@@ -1126,8 +1126,12 @@
                                 <input type="text" id="task-source" class="task-input" readonly />
                             </div>
                             <div class="task-form-group">
-                                <label for="task-description">Task description</label>
-                                <textarea id="task-description" class="task-textarea" rows="12" placeholder="Describe the task for the agent..."></textarea>
+                                <label for="task-description">
+                                    Task description
+                                    <button type="button" class="btn-toggle-preview" id="task-toggle-preview" onclick="toggleTaskPreview()">Preview</button>
+                                </label>
+                                <textarea id="task-description" class="task-textarea" rows="12" placeholder="Describe the task for the agent..." oninput="updateTaskPreview()"></textarea>
+                                <div id="task-description-preview" class="task-preview markdown-body" style="display:none"></div>
                             </div>
                         </div>
                     </div>
