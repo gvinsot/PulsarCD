@@ -546,7 +546,7 @@ function renderMCPServers(servers) {
             </div>
             <div class="settings-field">
                 <label>API Key</label>
-                <input type="password" class="mcp-apikey" value="${escapeHtml(s.api_key || '')}" />
+                <input type="password" class="mcp-apikey" value="${escapeHtml(s.api_key || '')}" autocomplete="off" data-lpignore="true" data-1p-ignore />
             </div>
             <div class="settings-field">
                 <button class="btn btn-sm btn-secondary" onclick="testMCPServer(${i})" id="mcp-test-btn-${i}">Test Connection</button>

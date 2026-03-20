@@ -424,6 +424,44 @@ class LLMAgent:
             del self._cooldown_map[k]
         return False
 
+    @staticmethod
+    def _sanitize_tool_schema(schema: dict) -> dict:
+        """Clean an MCP inputSchema for OpenAI-compatible tool definitions.
+
+        Many LLM providers (vLLM, Ollama, Gemini, etc.) are strict about the
+        function parameters schema.  MCP schemas may contain fields that cause
+        400 errors: ``$schema``, ``additionalProperties``, ``default``,
+        ``examples``, etc.  This method strips them recursively.
+        """
+        # Keys that are NOT part of the OpenAI function-parameters JSON Schema
+        _STRIP_KEYS = {"$schema", "additionalProperties", "examples", "default", "$id", "$comment"}
+
+        if not isinstance(schema, dict):
+            return schema
+
+        cleaned: dict = {}
+        for key, value in schema.items():
+            if key in _STRIP_KEYS:
+                continue
+            if key == "properties" and isinstance(value, dict):
+                cleaned[key] = {
+                    k: LLMAgent._sanitize_tool_schema(v) for k, v in value.items()
+                }
+            elif key == "items" and isinstance(value, dict):
+                cleaned[key] = LLMAgent._sanitize_tool_schema(value)
+            elif key in ("anyOf", "oneOf", "allOf") and isinstance(value, list):
+                cleaned[key] = [LLMAgent._sanitize_tool_schema(v) for v in value]
+            else:
+                cleaned[key] = value
+
+        # Ensure top-level has "type": "object"
+        if "type" not in cleaned:
+            cleaned["type"] = "object"
+        if "properties" not in cleaned:
+            cleaned["properties"] = {}
+
+        return cleaned
+
     async def _discover_tools(self) -> List[dict]:
         """Discover tools from all configured MCP servers via JSON-RPC tools/list."""
         if self._tools_cache is not None:
@@ -456,15 +494,16 @@ class LLMAgent:
                         mcp_tools = data.get("result", {}).get("tools", [])
                         for tool in mcp_tools:
                             tool_name = tool["name"]
+                            raw_schema = tool.get("inputSchema", {
+                                "type": "object",
+                                "properties": {},
+                            })
                             tools.append({
                                 "type": "function",
                                 "function": {
                                     "name": tool_name,
                                     "description": tool.get("description", ""),
-                                    "parameters": tool.get("inputSchema", {
-                                        "type": "object",
-                                        "properties": {},
-                                    }),
+                                    "parameters": self._sanitize_tool_schema(raw_schema),
                                 },
                             })
                             self._tool_server_map[tool_name] = (server_url, api_key)
@@ -609,7 +648,12 @@ class LLMAgent:
                         if resp.status != 200:
                             body = await resp.text()
                             logger.error("LLM API error",
-                                         status=resp.status, body=body[:500])
+                                         status=resp.status,
+                                         url=self._llm_chat_url,
+                                         model=self._llm_model,
+                                         has_tools=bool(openai_tools),
+                                         tool_count=len(openai_tools) if openai_tools else 0,
+                                         body=body[:1000])
                             return f"LLM API error (status {resp.status})"
 
                         data = await resp.json()

@@ -1181,7 +1181,7 @@
                             </div>
                             <div class="settings-field">
                                 <label>API Key</label>
-                                <input type="password" id="settings-llm-apikey" placeholder="(required for cloud providers)" />
+                                <input type="password" id="settings-llm-apikey" placeholder="(required for cloud providers)" autocomplete="off" data-lpignore="true" data-1p-ignore />
                             </div>
                             <div class="settings-field settings-field-inline">
                                 <button class="btn btn-sm btn-secondary" onclick="testLLMConnection()">Test connection</button>
@@ -1202,7 +1202,7 @@
                                 <h4>Add user</h4>
                                 <div class="settings-add-user-form">
                                     <input type="text" id="new-user-username" placeholder="Username" />
-                                    <input type="password" id="new-user-password" placeholder="Password" />
+                                    <input type="password" id="new-user-password" placeholder="Password" autocomplete="new-password" data-lpignore="true" data-1p-ignore />
                                     <select id="new-user-role">
                                         <option value="viewer">viewer</option>
                                         <option value="admin">admin</option>
@@ -1238,7 +1238,7 @@
                         <div class="agent-panel" id="agent-panel-chat">
                             <div class="llm-test-messages" id="llm-test-messages"></div>
                             <div class="llm-test-input">
-                                <input type="text" id="llm-test-input" placeholder="Ask the agent... (e.g. 'list tools', 'check container health', 'what errors occurred recently?')" onkeydown="if(event.key==='Enter')sendLLMTest()" />
+                                <input type="text" id="llm-test-input" placeholder="Ask the agent... (e.g. 'list tools', 'check container health', 'what errors occurred recently?')" onkeydown="if(event.key==='Enter')sendLLMTest()" autocomplete="off" />
                                 <button class="btn btn-primary btn-sm" id="llm-test-send" onclick="sendLLMTest()">Send</button>
                                 <button class="btn btn-secondary btn-sm" onclick="clearLLMChat()" title="Clear chat">Clear</button>
                             </div>
