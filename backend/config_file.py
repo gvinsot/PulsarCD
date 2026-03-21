@@ -197,11 +197,17 @@ def _apply_env_overrides(config: PulsarConfig) -> PulsarConfig:
 def load_config_file(data_dir: str = "/data") -> PulsarConfig:
     """Load configuration from YAML file, creating defaults if absent.
 
+    Environment variable overrides are only applied on first boot (when no
+    config.yml exists yet) to seed sensible defaults.  Once the file has been
+    saved — either automatically on first boot or explicitly through the UI —
+    its values are the source of truth so that user changes persist across
+    container restarts.
+
     Args:
         data_dir: Directory containing config.yml
 
     Returns:
-        Parsed and env-overridden PulsarConfig
+        Parsed PulsarConfig (env-overridden only on first boot)
     """
     config_path = Path(data_dir) / "config.yml"
 
@@ -214,8 +220,12 @@ def load_config_file(data_dir: str = "/data") -> PulsarConfig:
             logger.error("Failed to parse config file, using defaults",
                          path=str(config_path), error=str(e))
             config = PulsarConfig()
+        # Existing file → respect saved values, no env overrides
+        return config
     else:
-        config = PulsarConfig()
+        # First boot: apply env overrides to seed the initial config,
+        # then persist so future restarts use the file as source of truth.
+        config = _apply_env_overrides(PulsarConfig())
         try:
             config_path.parent.mkdir(parents=True, exist_ok=True)
             config_path.write_text(
@@ -227,7 +237,7 @@ def load_config_file(data_dir: str = "/data") -> PulsarConfig:
             logger.warning("Could not write default config file",
                            path=str(config_path), error=str(e))
 
-    return _apply_env_overrides(config)
+    return config
 
 
 def save_config_file(config: PulsarConfig, data_dir: str = "/data") -> None:
