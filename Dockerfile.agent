@@ -24,7 +24,7 @@ RUN if [ "$(dpkg --print-architecture)" = "amd64" ]; then \
 
 # Add ROCm to PATH (no-op if not installed)
 ENV PATH="/opt/rocm/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/opt/rocm/lib:/opt/rocm/lib64:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH="/opt/rocm/lib:/opt/rocm/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 # NVIDIA GPU: nvidia-smi is injected at runtime by the NVIDIA Container Toolkit.
 # No install needed here — just ensure NVIDIA_VISIBLE_DEVICES is set in docker-compose.

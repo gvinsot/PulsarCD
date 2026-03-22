@@ -30,7 +30,7 @@ from .github_service import GitHubService, StackDeployer
 from .actions_queue import actions_queue, ActionType, ActionStatus
 from .pipeline_state import PipelineStateManager, _UNSET
 try:
-    from .mcp_server import mcp as mcp_server, get_mcp_app
+    from .mcp_server import mcp_read, mcp_actions, get_mcp_read_app, get_mcp_actions_app
     from .mcp_auth import MCPAuthMiddleware
     _mcp_available = True
 except Exception as _mcp_err:
@@ -192,7 +192,7 @@ async def lifespan(app: FastAPI):
     # Log MCP API key for configuration
     if _mcp_available and settings.mcp.enabled:
         logger.info("MCP server enabled", mcp_api_key=settings.mcp.api_key)
-        async with mcp_server.session_manager.run():
+        async with mcp_read.session_manager.run(), mcp_actions.session_manager.run():
             yield
     else:
         if not _mcp_available:
@@ -223,10 +223,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Mount MCP server at /ai with its own authentication middleware
-# The SDK serves internally on /mcp, so the full endpoint is /ai/mcp
+# Mount MCP servers with authentication middleware
+# Read MCP: /ai/mcp (list_stacks, list_containers, list_computers, logs, get_action_status)
+# Actions MCP: /ai/actions/mcp (build_stack, deploy_stack)
 if _mcp_available:
-    app.mount("/ai", MCPAuthMiddleware(get_mcp_app()))
+    app.mount("/ai/actions", MCPAuthMiddleware(get_mcp_actions_app()))
+    app.mount("/ai", MCPAuthMiddleware(get_mcp_read_app()))
 
 # CORS middleware - restricted to same-origin; only needed for dev/proxy setups
 app.add_middleware(

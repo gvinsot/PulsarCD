@@ -1,7 +1,8 @@
-"""MCP (Model Context Protocol) server for PulsarCD.
+"""MCP (Model Context Protocol) servers for PulsarCD.
 
-Exposes PulsarCD functionality as MCP tools for AI agents.
-Mounted on the existing FastAPI app at /mcp.
+Exposes PulsarCD functionality as MCP tools for AI agents via two servers:
+- mcp_read:    read-only tools mounted at /ai/mcp
+- mcp_actions: build/deploy tools mounted at /ai/actions/mcp
 """
 
 import asyncio
@@ -16,13 +17,13 @@ from mcp.server.fastmcp import FastMCP
 
 logger = structlog.get_logger()
 
-mcp = FastMCP(
-    name="PulsarCD",
+mcp_read = FastMCP(
+    name="PulsarCD Read",
     instructions=(
         "PulsarCD is a DevOps monitoring platform. Use these tools to "
-        "list stacks (GitHub repos), build/deploy Docker images, list containers "
-        "and hosts, search and browse logs, get error summaries per service, "
-        "and check build/deploy status.\n\n"
+        "list stacks (GitHub repos), list containers and hosts, search and "
+        "browse logs, get error summaries per service, and check "
+        "build/deploy status.\n\n"
         "Typical log workflow:\n"
         "1. Call get_log_metadata() to discover available services, containers, and hosts.\n"
         "2. Call search_logs(github_project='myrepo', last_hours=24) to browse recent logs.\n"
@@ -32,11 +33,24 @@ mcp = FastMCP(
     json_response=True,
 )
 
+mcp_actions = FastMCP(
+    name="PulsarCD Actions",
+    instructions=(
+        "PulsarCD action tools for building and deploying Docker stacks. "
+        "Use build_stack to build a Docker image from a GitHub repository, "
+        "and deploy_stack to deploy a stack to Docker Swarm. "
+        "Both return an action_id — use get_action_status (on the read MCP) "
+        "to track progress."
+    ),
+    stateless_http=True,
+    json_response=True,
+)
+
 
 # ---------------------------------------------------------------------------
 # Tool 1: list_stacks
 # ---------------------------------------------------------------------------
-@mcp.tool(description="List available stacks (starred GitHub repositories)")
+@mcp_read.tool(description="List available stacks (starred GitHub repositories)")
 async def list_stacks() -> str:
     """List all starred GitHub repos available as deployable stacks."""
     from .api import github_service
@@ -51,7 +65,7 @@ async def list_stacks() -> str:
 # ---------------------------------------------------------------------------
 # Tool 2: build_stack
 # ---------------------------------------------------------------------------
-@mcp.tool(
+@mcp_actions.tool(
     description=(
         "Build a Docker image from a GitHub repository. "
         "Returns an action_id — use get_action_status to track progress."
@@ -129,7 +143,7 @@ async def build_stack(
 # ---------------------------------------------------------------------------
 # Tool 3: deploy_stack
 # ---------------------------------------------------------------------------
-@mcp.tool(
+@mcp_actions.tool(
     description=(
         "Deploy a stack to Docker Swarm. "
         "Returns an action_id — use get_action_status to track progress."
@@ -189,7 +203,7 @@ async def deploy_stack(
 # ---------------------------------------------------------------------------
 # Tool 4: list_containers
 # ---------------------------------------------------------------------------
-@mcp.tool(description="List all Docker containers and their states across all hosts")
+@mcp_read.tool(description="List all Docker containers and their states across all hosts")
 async def list_containers(
     host: Optional[str] = None,
     status: Optional[str] = None,
@@ -223,7 +237,7 @@ async def list_containers(
 # ---------------------------------------------------------------------------
 # Tool 5: list_computers
 # ---------------------------------------------------------------------------
-@mcp.tool(description="List all monitored hosts/computers including discovered Swarm nodes")
+@mcp_read.tool(description="List all monitored hosts/computers including discovered Swarm nodes")
 async def list_computers() -> str:
     """List all hosts (configured + discovered swarm nodes)."""
     from .api import settings, collector
@@ -256,7 +270,7 @@ async def list_computers() -> str:
 # ---------------------------------------------------------------------------
 # Tool 6: get_log_metadata
 # ---------------------------------------------------------------------------
-@mcp.tool(
+@mcp_read.tool(
     description=(
         "Return all available hosts, containers, compose projects, compose services, "
         "and log levels present in the log store. Call this first to discover what "
@@ -333,7 +347,7 @@ Call get_log_metadata() first to discover valid values for host, compose_project
 """
 
 
-@mcp.tool(description=_SEARCH_DOCS)
+@mcp_read.tool(description=_SEARCH_DOCS)
 async def search_logs(
     query: Optional[str] = None,
     github_project: Optional[str] = None,
@@ -452,7 +466,7 @@ async def search_logs(
 # ---------------------------------------------------------------------------
 # Tool 8: get_action_status
 # ---------------------------------------------------------------------------
-@mcp.tool(
+@mcp_read.tool(
     description="Check the status of a background build or deploy action by its action_id"
 )
 async def get_action_status(action_id: str) -> str:
@@ -505,10 +519,19 @@ def _get_deployer_and_host():
     return StackDeployer(settings.github, host_client), host_name
 
 
-def get_mcp_app():
-    """Return the ASGI app for the MCP server.
+def get_mcp_read_app():
+    """Return the ASGI app for the read-only MCP server.
 
     The SDK serves internally on /mcp, and FastAPI mounts this at /ai,
     so the full endpoint is /ai/mcp.
     """
-    return mcp.streamable_http_app()
+    return mcp_read.streamable_http_app()
+
+
+def get_mcp_actions_app():
+    """Return the ASGI app for the actions MCP server.
+
+    The SDK serves internally on /mcp, and FastAPI mounts this at /ai/actions,
+    so the full endpoint is /ai/actions/mcp.
+    """
+    return mcp_actions.streamable_http_app()
