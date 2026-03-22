@@ -558,25 +558,19 @@ for img in $IMAGES; do
             if [ -n "$MANIFEST_OUTPUT" ]; then
                 # Check if it's a manifest list (has "manifests" field) or single manifest
                 if echo "$MANIFEST_OUTPUT" | grep -q '"manifests"'; then
-                    # It's a manifest list - extract the manifest list digest
-                    # The RepoDigest should match the manifest list digest
-                    MANIFEST_LIST_DIGEST=$(echo "$MANIFEST_OUTPUT" | grep -o '"digest"[[:space:]]*:[[:space:]]*"sha256:[^"]*"' | head -1 | sed 's/.*"sha256:/sha256:/' | sed 's/".*//')
-                    
-                    # For manifest lists, we should compare against the list digest, not platform-specific digest
-                    # Actually, docker automatically returns the manifest list digest when we inspect it
-                    # So we need to recalculate or accept that RepoDigest is the source of truth
-                    
-                    # The RepoDigest is what was actually pulled/pushed, so that's our source of truth
                     echo "    Format: Multi-arch manifest list"
                 else
-                    # Single platform manifest
-                    SINGLE_MANIFEST_DIGEST=$(echo "$MANIFEST_OUTPUT" | grep -o '"digest"[[:space:]]*:[[:space:]]*"sha256:[^"]*"' | head -1 | sed 's/.*"sha256:/sha256:/' | sed 's/".*//')
-                    
-                    if [ -n "$SINGLE_MANIFEST_DIGEST" ] && [ "$REGISTRY_SHA" != "$SINGLE_MANIFEST_DIGEST" ]; then
-                        log_warning "Registry manifest SHA differs from RepoDigest!"
-                        echo "    Manifest SHA: $SINGLE_MANIFEST_DIGEST"
-                        MISMATCHED_IMAGES+=("$RESOLVED_IMG")
-                    fi
+                    echo "    Format: Single-arch manifest"
+                fi
+
+                # Compute the actual manifest digest (hash of the manifest JSON itself)
+                # and compare it against the RepoDigest to verify integrity
+                COMPUTED_MANIFEST_DIGEST="sha256:$(echo "$MANIFEST_OUTPUT" | sha256sum | awk '{print $1}')"
+
+                if [ "$REGISTRY_SHA" != "$COMPUTED_MANIFEST_DIGEST" ]; then
+                    log_warning "Registry manifest SHA differs from RepoDigest!"
+                    echo "    Computed manifest SHA: $COMPUTED_MANIFEST_DIGEST"
+                    MISMATCHED_IMAGES+=("$RESOLVED_IMG")
                 fi
             fi
         else
