@@ -1463,7 +1463,7 @@ async def analyze_log_message(request: Dict[str, Any]) -> Dict[str, Any]:
 
 @app.post("/api/tasks/create")
 async def create_agent_task(request: Dict[str, Any]) -> Dict[str, Any]:
-    """Create a task in PulsarTeam via its MCP server."""
+    """Analyze logs via the LLM agent and create a task in PulsarTeam."""
     task = request.get("task", "").strip()
     project = request.get("project", "").strip()
 
@@ -1472,67 +1472,15 @@ async def create_agent_task(request: Dict[str, Any]) -> Dict[str, Any]:
     if not project:
         raise HTTPException(status_code=400, detail="project is required")
 
-    # Find the PulsarTeam MCP server in config
-    pulsarteam_server = None
-    mcp_servers = llm_agent._mcp_servers if llm_agent else []
-    for server in mcp_servers:
-        if server.name == "pulsarteam":
-            pulsarteam_server = server
-            break
-
-    if not pulsarteam_server:
-        raise HTTPException(status_code=500,
-                            detail="PulsarTeam MCP server not configured (add a server named 'pulsarteam' in Settings)")
-
-    url = pulsarteam_server.url.rstrip("/")
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
-    }
-    if pulsarteam_server.api_key:
-        headers["Authorization"] = f"Bearer {pulsarteam_server.api_key}"
-
-    # Call MCP tools/call with create_task
-    payload = {
-        "jsonrpc": "2.0",
-        "method": "tools/call",
-        "params": {
-            "name": "create_task",
-            "arguments": {"task": task, "project": project},
-        },
-        "id": 1,
-    }
+    if not llm_agent:
+        raise HTTPException(status_code=500, detail="LLM agent not configured")
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url, json=payload, headers=headers,
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as resp:
-                from .llm_agent import _parse_mcp_response
-                data = await _parse_mcp_response(resp)
-
-                if "error" in data:
-                    error = data["error"]
-                    error_msg = error.get("message", str(error)) if isinstance(error, dict) else str(error)
-                    logger.error("PulsarTeam MCP error", project=project, error=error_msg)
-                    raise HTTPException(status_code=502, detail=f"PulsarTeam error: {error_msg}")
-
-                result = data.get("result", {})
-                content_parts = result.get("content", [])
-                text_parts = [
-                    p.get("text", "") if isinstance(p, dict) else str(p)
-                    for p in content_parts
-                ]
-                response_text = "\n".join(text_parts)
-
-                logger.info("Task created in PulsarTeam", project=project,
-                            response_preview=response_text[:200])
-                return {"ok": True, "response": response_text[:500]}
-
-    except aiohttp.ClientError as e:
-        logger.error("PulsarTeam MCP connection error", error=str(e), url=url)
-        raise HTTPException(status_code=502, detail=f"Cannot reach PulsarTeam: {e}")
+        result = await llm_agent.handle_log_analysis(task, project)
+        return {"ok": True, "response": result[:2000] if result else ""}
+    except Exception as e:
+        logger.error("Task creation via LLM agent failed", project=project, error=str(e))
+        raise HTTPException(status_code=502, detail=f"LLM agent error: {e}")
 
 
 # ============== Hosts ==============

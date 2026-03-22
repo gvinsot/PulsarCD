@@ -1351,14 +1351,23 @@ async function submitCreateTask() {
     }
 
     btn.disabled = true;
-    btn.textContent = 'Sending...';
+    btn.textContent = 'Analyzing...';
 
     try {
-        await apiPost('/tasks/create', { task, project });
-        showNotification('success', 'Task sent to agent successfully');
+        const resp = await fetch(`${API_BASE}/tasks/create`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ task, project }),
+            signal: AbortSignal.timeout(180000),
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+        showNotification('success', 'Task created by AI agent');
         closeCreateTaskModal();
     } catch (e) {
-        showNotification('error', 'Failed to send task: ' + (e.message || e));
+        showNotification('error', 'Failed to create task: ' + (e.message || e));
         btn.disabled = false;
         btn.textContent = 'Send Task';
     }

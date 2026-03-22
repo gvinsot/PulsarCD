@@ -915,6 +915,45 @@ class LLMAgent:
                          stage=stage, repo=repo_name,
                          error_type=type(e).__name__, error=str(e))
 
+    async def handle_log_analysis(self, task_description: str, project: str) -> str:
+        """Analyze logs and create a task via the LLM agent.
+
+        Called from the frontend "AI Analysis" / "Create Agent Task" buttons.
+        The LLM MUST create a task with its findings.
+
+        Returns:
+            LLM agent's final response text.
+        """
+        system_prompt = (
+            f"{self._error_handling.instructions}\n\n"
+            "The user has requested an AI analysis of logs and wants a task created.\n"
+            "You MUST:\n"
+            "1. Use MCP tools to investigate the issue described below\n"
+            "2. Create a task with your diagnosis and recommended actions "
+            "by calling the create_task tool with project='" + project + "'\n"
+            "3. The task description must include: root cause, affected services, "
+            "and concrete steps to fix the issue\n\n"
+            "IMPORTANT: You MUST call the create_task tool. "
+            "A response without task creation is considered a failure."
+        )
+
+        logger.info("LLM agent handling log analysis", project=project)
+
+        try:
+            result = await self._run_agent(system_prompt, task_description)
+            self._record("log_analysis", project=project,
+                         response=result[:2000] if result else "")
+            logger.info("LLM agent completed log analysis",
+                        project=project,
+                        result_preview=result[:200] if result else "(empty)")
+            return result or ""
+        except Exception as e:
+            self._record("log_analysis_error", project=project, error=str(e))
+            logger.error("LLM agent error during log analysis",
+                         project=project,
+                         error_type=type(e).__name__, error=str(e))
+            raise
+
     async def handle_recurring_error(self, pattern, resolved_stacks: list = None) -> Optional[str]:
         """Handle a recurring error pattern via the LLM agent.
 
