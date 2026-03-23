@@ -4198,36 +4198,44 @@ function showGateDecision(repoName, transition) {
     if (!decision) return;
 
     const label = transition === 'build_to_test' ? 'Build → Test' : 'Test → Deploy';
-    const statusIcon = decision.approved
-        ? '<span style="color: var(--success-color);">&#10003; Approved</span>'
-        : '<span style="color: var(--danger-color);">&#10007; Rejected</span>';
     const ts = decision.timestamp ? new Date(decision.timestamp).toLocaleString() : '';
 
     const modal = document.getElementById('gate-decision-modal');
     if (!modal) {
-        // Create modal dynamically
         const m = document.createElement('div');
         m.id = 'gate-decision-modal';
         m.className = 'modal-overlay';
+        m.onclick = (e) => { if (e.target === m) m.classList.remove('active'); };
         m.innerHTML = `
-            <div class="modal-container" style="max-width: 600px;">
+            <div class="modal-container" style="max-width: 800px; width: 90%;">
                 <div class="modal-header">
                     <h3 id="gate-decision-title">Gate Decision</h3>
                     <button class="modal-close" onclick="document.getElementById('gate-decision-modal').classList.remove('active')">&times;</button>
                 </div>
-                <div class="modal-body">
-                    <div id="gate-decision-meta" style="margin-bottom: 12px; font-size: 13px; color: var(--text-muted);"></div>
-                    <div id="gate-decision-status" style="margin-bottom: 12px; font-size: 15px; font-weight: 600;"></div>
-                    <div id="gate-decision-reason" style="white-space: pre-wrap; font-size: 13px; line-height: 1.5; background: var(--bg-secondary); padding: 12px; border-radius: 8px; max-height: 400px; overflow-y: auto;"></div>
+                <div class="modal-body" style="padding: 20px;">
+                    <div id="gate-decision-info" style="display: flex; align-items: center; gap: 16px; margin-bottom: 16px; padding: 12px 16px; background: var(--bg-tertiary); border-radius: 8px; flex-wrap: wrap;">
+                        <div id="gate-decision-status" style="font-size: 15px; font-weight: 600;"></div>
+                        <div style="width: 1px; height: 20px; background: var(--border-color);"></div>
+                        <div id="gate-decision-meta" style="font-size: 13px; color: var(--text-muted); flex: 1;"></div>
+                    </div>
+                    <div style="margin-bottom: 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px;">AI Analysis</div>
+                    <div id="gate-decision-reason" class="markdown-body" style="font-size: 13px; line-height: 1.6; background: var(--bg-secondary); padding: 16px; border-radius: 8px; max-height: 500px; overflow-y: auto; border: 1px solid var(--border-color);"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="document.getElementById('gate-decision-modal').classList.remove('active')">Close</button>
                 </div>
             </div>`;
         document.body.appendChild(m);
     }
 
+    const statusIcon = decision.approved
+        ? '<span style="color: var(--status-success); display: inline-flex; align-items: center; gap: 6px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Approved</span>'
+        : '<span style="color: var(--status-error); display: inline-flex; align-items: center; gap: 6px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> Rejected</span>';
+
     document.getElementById('gate-decision-title').textContent = `Gate: ${label}`;
-    document.getElementById('gate-decision-meta').innerHTML = `<strong>${escapeHtml(repoName)}</strong>${pipeline.project_name && pipeline.project_name !== repoName ? ` (${escapeHtml(pipeline.project_name)})` : ''}${pipeline.stack_name ? ` &mdash; Stack: <code>${escapeHtml(pipeline.stack_name)}</code>` : ''}${ts ? ` &mdash; ${ts}` : ''}`;
+    document.getElementById('gate-decision-meta').innerHTML = `<strong>${escapeHtml(repoName)}</strong>${pipeline.project_name && pipeline.project_name !== repoName ? ` (${escapeHtml(pipeline.project_name)})` : ''}${pipeline.stack_name ? ` &mdash; Stack: <code>${escapeHtml(pipeline.stack_name)}</code>` : ''}${ts ? ` &mdash; <span title="${escapeHtml(decision.timestamp || '')}">${ts}</span>` : ''}`;
     document.getElementById('gate-decision-status').innerHTML = statusIcon;
-    document.getElementById('gate-decision-reason').textContent = decision.reason || 'No reason provided';
+    document.getElementById('gate-decision-reason').innerHTML = simpleMarkdown(decision.reason || 'No reason provided');
     document.getElementById('gate-decision-modal').classList.add('active');
 }
 
