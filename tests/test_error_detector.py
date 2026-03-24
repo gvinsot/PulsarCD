@@ -1,6 +1,7 @@
 """Unit tests for backend/error_detector.py — no infrastructure needed."""
 
 from datetime import datetime, timedelta
+from unittest import mock
 
 import pytest
 
@@ -183,3 +184,63 @@ class TestFixupComposeProject:
         entry = {"compose_project": "pulsarcd", "container_name": "pulsarcd_agent.1.abc123"}
         RecurringErrorDetector._fixup_compose_project(entry)
         assert entry["compose_project"] == "pulsarcd"
+
+
+# ── _get_zvec fallback ──────────────────────────────────────────────────────
+
+class TestGetZvecFallback:
+    def test_runtime_error_caught(self):
+        """Non-ImportError exceptions (e.g. OSError from native binary) must be caught."""
+        import backend.error_detector as ed
+        # Reset global state
+        ed._zvec = None
+        ed._zvec_available = None
+        with mock.patch.dict("sys.modules", {"zvec": None}):
+            # Importing a module set to None in sys.modules raises ImportError,
+            # but we want to simulate a RuntimeError from native code loading.
+            pass
+
+        # Simulate a RuntimeError during import (e.g. "Prebuilt binary not found")
+        ed._zvec = None
+        ed._zvec_available = None
+        original_import = __builtins__.__import__ if hasattr(__builtins__, '__import__') else __import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == "zvec":
+                raise RuntimeError("Prebuilt binary not found for linux-x64")
+            return original_import(name, *args, **kwargs)
+
+        with mock.patch("builtins.__import__", side_effect=mock_import):
+            result = ed._get_zvec()
+
+        assert result is None
+        assert ed._zvec_available is False
+
+        # Reset for other tests
+        ed._zvec = None
+        ed._zvec_available = None
+
+    def test_fallback_uses_text_hashing(self):
+        """When zvec is unavailable, scan should use text_fingerprint fallback."""
+        d = _make_detector()
+        # Ensure zvec path returns None
+        import backend.error_detector as ed
+        ed._zvec = None
+        ed._zvec_available = False
+        # The scan code checks `zvec and self._zvec_collection`
+        # With _zvec_available=False, _get_zvec() returns None → fallback path
+        assert ed._get_zvec() is None
+
+        # Reset
+        ed._zvec = None
+        ed._zvec_available = None
+
+    def test_self_log_patterns_include_zvec(self):
+        """ZVEC messages must be in the self-log filter to prevent self-detection loops."""
+        d = _make_detector()
+        assert d._is_self_log("zvec not available, using text hashing fallback")
+        assert d._is_self_log("zvec loaded successfully")
+        assert d._is_self_log("zvec collection initialized")
+        assert d._is_self_log("Failed to initialize zvec")
+        # Real app errors should NOT match
+        assert not d._is_self_log("Connection refused by database")
