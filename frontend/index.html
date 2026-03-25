@@ -572,6 +572,37 @@
                     </div>
                 </div>
                 
+                <!-- Service Status modal (docker service ps) -->
+                <div id="service-status-modal" class="modal">
+                    <div class="modal-content modal-lg">
+                        <div class="modal-header">
+                            <h2 id="service-status-title">Service Status</h2>
+                            <button class="modal-close" onclick="closeServiceStatusModal()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="logs-toolbar">
+                                <div class="logs-toolbar-left">
+                                    <button class="btn btn-sm" onclick="refreshServiceStatus()">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                                            <polyline points="23 4 23 10 17 10"/>
+                                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                                        </svg>
+                                        Refresh
+                                    </button>
+                                    <label class="checkbox-label" style="margin-left: 12px;">
+                                        <input type="checkbox" id="service-status-auto-refresh" checked onchange="toggleServiceStatusAutoRefresh()">
+                                        Auto-refresh
+                                    </label>
+                                </div>
+                            </div>
+                            <div id="service-status-content" class="log-viewer service-log-viewer"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" onclick="closeServiceStatusModal()">Close</button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Pipeline modal (Version → Build → Test → Deploy) -->
                 <div id="stack-pipeline-modal" class="modal">
                     <div class="modal-content modal-md">

@@ -2923,6 +2923,125 @@ async function removeService(serviceName) {
     }
 }
 
+// ============== Service Status (docker service ps) ==============
+
+let serviceStatusInterval = null;
+let currentStatusServiceName = null;
+
+async function openServiceStatus(serviceName) {
+    currentStatusServiceName = serviceName;
+
+    const modal = document.getElementById('service-status-modal');
+    const title = document.getElementById('service-status-title');
+    const content = document.getElementById('service-status-content');
+    const autoRefreshCheckbox = document.getElementById('service-status-auto-refresh');
+
+    title.textContent = `Status: ${serviceName}`;
+    content.innerHTML = '<div class="loading-placeholder">Loading task status...</div>';
+
+    modal.classList.add('active');
+
+    await refreshServiceStatus();
+
+    if (autoRefreshCheckbox.checked) {
+        startServiceStatusAutoRefresh();
+    }
+}
+
+function closeServiceStatusModal() {
+    stopServiceStatusAutoRefresh();
+    document.getElementById('service-status-modal').classList.remove('active');
+    currentStatusServiceName = null;
+}
+
+async function refreshServiceStatus() {
+    if (!currentStatusServiceName) return;
+
+    const result = await apiGet(`/services/${encodeURIComponent(currentStatusServiceName)}/tasks`);
+    renderServiceStatusTable(result ? result.tasks : [], result ? result.service : currentStatusServiceName);
+}
+
+function renderServiceStatusTable(tasks, serviceName) {
+    const content = document.getElementById('service-status-content');
+
+    if (!tasks || tasks.length === 0) {
+        content.innerHTML = '<div class="empty-placeholder">No task information available for this service</div>';
+        return;
+    }
+
+    const stateColors = {
+        'running': '#4caf50',
+        'complete': '#2196f3',
+        'ready': '#ff9800',
+        'starting': '#ff9800',
+        'preparing': '#ff9800',
+        'assigned': '#ff9800',
+        'accepted': '#ff9800',
+        'pending': '#ff9800',
+        'new': '#ff9800',
+        'failed': '#f44336',
+        'rejected': '#f44336',
+        'shutdown': '#999',
+        'orphaned': '#f44336',
+        'remove': '#999',
+    };
+
+    let html = `<div style="padding: 12px; font-family: monospace; font-size: 13px;">`;
+    html += `<table style="width: 100%; border-collapse: collapse; color: #e0e0e0;">`;
+    html += `<thead><tr style="border-bottom: 1px solid #444; text-align: left;">`;
+    html += `<th style="padding: 6px 10px;">ID</th>`;
+    html += `<th style="padding: 6px 10px;">Image</th>`;
+    html += `<th style="padding: 6px 10px;">Node</th>`;
+    html += `<th style="padding: 6px 10px;">Desired State</th>`;
+    html += `<th style="padding: 6px 10px;">Current State</th>`;
+    html += `<th style="padding: 6px 10px;">Error</th>`;
+    html += `<th style="padding: 6px 10px;">Updated</th>`;
+    html += `</tr></thead><tbody>`;
+
+    for (const task of tasks) {
+        const stateColor = stateColors[task.state] || '#999';
+        const desiredColor = stateColors[task.desired_state] || '#999';
+        const errorText = task.error || task.message || '';
+        const updatedAt = task.updated_at ? new Date(task.updated_at).toLocaleString() : '';
+        const taskIdShort = (task.id || '').substring(0, 12);
+        const imageShort = (task.image || '').replace(/^.*\//, '').replace(/@sha256:.*$/, '');
+
+        html += `<tr style="border-bottom: 1px solid #333;">`;
+        html += `<td style="padding: 6px 10px; font-family: monospace; font-size: 12px;" title="${escapeHtml(task.id || '')}">${escapeHtml(taskIdShort)}</td>`;
+        html += `<td style="padding: 6px 10px; font-size: 12px;" title="${escapeHtml(task.image || '')}">${escapeHtml(imageShort)}</td>`;
+        html += `<td style="padding: 6px 10px;">${escapeHtml(task.node || '')}</td>`;
+        html += `<td style="padding: 6px 10px; color: ${desiredColor};">${escapeHtml(task.desired_state || '')}</td>`;
+        html += `<td style="padding: 6px 10px; color: ${stateColor};">${escapeHtml(task.state || '')}</td>`;
+        html += `<td style="padding: 6px 10px; color: #f44336; max-width: 400px; word-break: break-word;">${escapeHtml(errorText)}</td>`;
+        html += `<td style="padding: 6px 10px; white-space: nowrap;">${escapeHtml(updatedAt)}</td>`;
+        html += `</tr>`;
+    }
+
+    html += `</tbody></table></div>`;
+    content.innerHTML = html;
+}
+
+function toggleServiceStatusAutoRefresh() {
+    const checked = document.getElementById('service-status-auto-refresh').checked;
+    if (checked) {
+        startServiceStatusAutoRefresh();
+    } else {
+        stopServiceStatusAutoRefresh();
+    }
+}
+
+function startServiceStatusAutoRefresh() {
+    stopServiceStatusAutoRefresh();
+    serviceStatusInterval = setInterval(refreshServiceStatus, 5000);
+}
+
+function stopServiceStatusAutoRefresh() {
+    if (serviceStatusInterval) {
+        clearInterval(serviceStatusInterval);
+        serviceStatusInterval = null;
+    }
+}
+
 // ============== Service Logs ==============
 
 let serviceLogsInterval = null;
@@ -3928,6 +4047,12 @@ function renderStacksList() {
                                     <polyline points="10 9 9 9 8 9"/>
                                 </svg>
                                 Logs
+                            </button>
+                            <button class="btn btn-sm btn-ghost service-status-btn" onclick="event.stopPropagation(); openServiceStatus('${escapeHtml(fullServiceName)}')" title="Service task status (docker service ps)">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                                    <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                                </svg>
+                                Status
                             </button>
                             <button class="btn btn-sm btn-primary service-deploy-btn" onclick="event.stopPropagation(); openServiceDeploy('${escapeHtml(fullServiceName)}', '${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', '${escapeHtml(firstContainerImage)}')" title="Deploy new version">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">

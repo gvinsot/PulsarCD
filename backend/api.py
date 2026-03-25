@@ -1309,6 +1309,35 @@ async def get_service_logs(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/services/{service_name}/tasks")
+async def get_service_tasks(
+    service_name: str = Path(...),
+    host: Optional[str] = Query(default=None),
+) -> Any:
+    """Get task status for a Docker Swarm service.
+
+    Equivalent to: docker service ps <service_name> --no-trunc
+    Returns all tasks including failed, pending, and shutdown tasks.
+    """
+    client = None
+    if host:
+        client = collector.clients.get(host)
+    else:
+        for name, c in collector.clients.items():
+            client = c
+            break
+
+    if not client:
+        raise HTTPException(status_code=404, detail="No host available")
+
+    try:
+        tasks = await client.get_service_tasks(service_name)
+        return {"tasks": tasks, "service": service_name}
+    except Exception as e:
+        logger.error("Failed to get service tasks", service=service_name, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ============== Logs Search ==============
 
 @app.post("/api/logs/search", response_model=LogSearchResult)
