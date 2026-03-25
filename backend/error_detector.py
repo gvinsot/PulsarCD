@@ -31,9 +31,10 @@ def _get_zvec():
             _zvec = zvec
             _zvec_available = True
             logger.info("zvec loaded successfully")
-        except ImportError:
+        except Exception as e:
             _zvec_available = False
-            logger.warning("zvec not installed — error detector will use text hashing fallback")
+            logger.info("zvec not available, using text hashing fallback",
+                        error=str(e), error_type=type(e).__name__)
     return _zvec
 
 
@@ -154,6 +155,8 @@ class RecurringErrorDetector:
         re.compile(r'Pipeline state', re.IGNORECASE),
         re.compile(r'Context compaction', re.IGNORECASE),
         re.compile(r'Failed to poll actions', re.IGNORECASE),
+        re.compile(r'zvec (unavailable|not available|loaded|collection)', re.IGNORECASE),
+        re.compile(r'Failed to initialize zvec', re.IGNORECASE),
     ]
 
     def __init__(
@@ -237,11 +240,13 @@ class RecurringErrorDetector:
         if self._running:
             return
         self._running = True
+        self._init_zvec()
         logger.info("Recurring error detector starting",
                      interval=self._scan_interval,
                      initial_lookback_hours=self._initial_lookback_hours,
                      pattern_ttl_hours=self._pattern_ttl_hours,
-                     threshold=self._min_occurrences)
+                     threshold=self._min_occurrences,
+                     zvec_enabled=self._zvec_collection is not None)
         asyncio.create_task(self._scan_loop())
 
     async def stop(self):
@@ -570,7 +575,6 @@ class RecurringErrorDetector:
             path.mkdir(parents=True, exist_ok=True)
             self._zvec_collection = zvec.create_and_open(
                 path=str(path), schema=schema,
-                memory_limit_mb=50,
             )
             logger.info("zvec collection initialized", path=str(path), dim=self._zvec_dim)
         except Exception as e:
