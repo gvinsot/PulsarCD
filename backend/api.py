@@ -2882,7 +2882,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                 _bt_mode = _bt_cfg.get("mode") if _bt_cfg else None
                 if _bt_mode == "manual":
                     logger.info("Pipeline: build→test manual gate, stopping", repo=repo_name)
-                    pipeline_state.record_gate(repo_name, "build_to_test", False, "Manual transition — waiting for user approval")
+                    pipeline_state.record_gate(repo_name, "build_to_test", False, "Manual transition — waiting for user approval", version=built_version)
                     _set_pipeline(repo_name, "build", "gate_rejected", built_version,
                                   build_id=build_id, test_id=None, deploy_id=None, log_lines=build_action.output_lines)
                     return
@@ -2892,7 +2892,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                             "build_to_test", repo_name, built_version or "",
                             result.get("output", "")
                         )
-                        pipeline_state.record_gate(repo_name, "build_to_test", approved, reason)
+                        pipeline_state.record_gate(repo_name, "build_to_test", approved, reason, version=built_version)
                         if not approved:
                             logger.warning("Pipeline: gate build→test REJECTED",
                                            repo=repo_name, reason=reason[:200])
@@ -2901,7 +2901,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                             return
                         logger.info("Pipeline: gate build→test approved", repo=repo_name, reason=reason[:100])
                     else:
-                        pipeline_state.record_gate(repo_name, "build_to_test", True, "Agent mode but no LLM configured, auto-approved")
+                        pipeline_state.record_gate(repo_name, "build_to_test", True, "Agent mode but no LLM configured, auto-approved", version=built_version)
                 # else: "auto" or "auto_with_success" — proceed (success already checked above)
 
             else:
@@ -2939,7 +2939,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
             _td_mode = _td_cfg.get("mode") if _td_cfg else None
             if _td_mode == "manual":
                 logger.info("Pipeline: test→deploy manual gate, stopping", repo=repo_name)
-                pipeline_state.record_gate(repo_name, "test_to_deploy", False, "Manual transition — waiting for user approval")
+                pipeline_state.record_gate(repo_name, "test_to_deploy", False, "Manual transition — waiting for user approval", version=built_version)
                 _set_pipeline(repo_name, "test", "gate_rejected", built_version,
                               build_id=build_id, test_id=test_id, deploy_id=None, log_lines=test_action.output_lines)
                 return
@@ -2949,7 +2949,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                         "test_to_deploy", repo_name, built_version or "",
                         test_result.get("output", "")
                     )
-                    pipeline_state.record_gate(repo_name, "test_to_deploy", approved, reason)
+                    pipeline_state.record_gate(repo_name, "test_to_deploy", approved, reason, version=built_version)
                     if not approved:
                         logger.warning("Pipeline: gate test→deploy REJECTED",
                                        repo=repo_name, reason=reason[:200])
@@ -2958,7 +2958,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                         return
                     logger.info("Pipeline: gate test→deploy approved", repo=repo_name, reason=reason[:100])
                 else:
-                    pipeline_state.record_gate(repo_name, "test_to_deploy", True, "Agent mode but no LLM configured, auto-approved")
+                    pipeline_state.record_gate(repo_name, "test_to_deploy", True, "Agent mode but no LLM configured, auto-approved", version=built_version)
             # else: "auto" or "auto_with_success" — proceed (success already checked above)
 
             # ── Step 3: Deploy ──

@@ -71,7 +71,7 @@ class StageState:
 class GateDecision:
     """Record of a single gate evaluation."""
 
-    __slots__ = ("transition", "approved", "reason", "timestamp")
+    __slots__ = ("transition", "approved", "reason", "timestamp", "version")
 
     def __init__(
         self,
@@ -79,11 +79,13 @@ class GateDecision:
         approved: bool,
         reason: str,
         timestamp: Optional[str] = None,
+        version: Optional[str] = None,
     ):
         self.transition = transition
         self.approved = approved
         self.reason = reason
         self.timestamp = timestamp or datetime.now(timezone.utc).isoformat()
+        self.version = version
 
     def to_dict(self) -> dict:
         return {
@@ -91,6 +93,7 @@ class GateDecision:
             "approved": self.approved,
             "reason": self.reason,
             "timestamp": self.timestamp,
+            "version": self.version,
         }
 
     @classmethod
@@ -100,6 +103,7 @@ class GateDecision:
             approved=data.get("approved", True),
             reason=data.get("reason", ""),
             timestamp=data.get("timestamp"),
+            version=data.get("version"),
         )
 
 
@@ -378,12 +382,12 @@ class PipelineStateManager:
         entry.stack_name = stack_name
         self._save()
 
-    def record_gate(self, repo_name: str, transition: str, approved: bool, reason: str):
+    def record_gate(self, repo_name: str, transition: str, approved: bool, reason: str, version: Optional[str] = None):
         """Record a gate decision (LLM reasoning) for a pipeline entry."""
         entry = self.get(repo_name)
         if not entry:
             return
-        decision = GateDecision(transition=transition, approved=approved, reason=reason)
+        decision = GateDecision(transition=transition, approved=approved, reason=reason, version=version)
         entry.gates.append(decision)
         # Keep only the most recent decisions
         if len(entry.gates) > _MAX_GATE_DECISIONS:

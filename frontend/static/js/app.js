@@ -4514,7 +4514,8 @@ async function openTransitionConfig(repoName, transition) {
                 : '<span style="color: var(--status-error); display: inline-flex; align-items: center; gap: 5px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> Rejected</span>';
             document.getElementById('transition-ai-decision-status').innerHTML = statusIcon;
             const ts = lastDecision.timestamp ? new Date(lastDecision.timestamp).toLocaleString() : '';
-            document.getElementById('transition-ai-decision-meta').innerHTML = ts ? `<span>${ts}</span>` : '';
+            const versionTag = lastDecision.version ? `<span style="background: var(--bg-secondary); padding: 2px 8px; border-radius: 4px; font-family: var(--font-mono, monospace); font-size: 11px; border: 1px solid var(--border-color);">v${escapeHtml(lastDecision.version)}</span>` : '';
+            document.getElementById('transition-ai-decision-meta').innerHTML = [versionTag, ts ? `<span>${ts}</span>` : ''].filter(Boolean).join(' <span style="width: 1px; height: 14px; background: var(--border-color); display: inline-block; vertical-align: middle; margin: 0 4px;"></span> ');
             document.getElementById('transition-ai-decision-reason').innerHTML = simpleMarkdown(lastDecision.reason || 'No details available');
         } else {
             aiSection.style.display = 'none';
