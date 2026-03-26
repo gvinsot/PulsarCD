@@ -3441,37 +3441,64 @@ a.btn {
 .pipeline-arrow.has-gate.arrow-approved::after { background: var(--status-success); }
 .pipeline-arrow.has-gate.arrow-rejected::after { background: var(--status-error); }
 
-/* Transition mode indicators on arrows */
-.pipeline-arrow.transition-mode-manual {
-    color: var(--status-warning);
-    opacity: 0.9;
-}
-.pipeline-arrow.transition-mode-agent {
-    color: var(--accent-primary);
-    opacity: 0.9;
-}
-.pipeline-arrow.transition-mode-manual::before {
-    content: '🔒';
-    font-size: 7px;
-    position: absolute;
-    top: -6px;
-    left: 50%;
-    transform: translateX(-50%);
-}
-.pipeline-arrow.transition-mode-agent::before {
-    content: '🤖';
-    font-size: 7px;
-    position: absolute;
-    top: -6px;
-    left: 50%;
-    transform: translateX(-50%);
-}
-.pipeline-arrow.transition-mode-manual,
-.pipeline-arrow.transition-mode-agent,
-.pipeline-arrow.transition-mode-auto,
-.pipeline-arrow.transition-mode-auto_with_success {
+/* Clickable transition button between pipeline steps */
+.pipeline-transition-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 3px 4px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--text-muted);
+    opacity: 0.6;
+    transition: all 0.2s;
     position: relative;
+    flex-shrink: 0;
 }
+.pipeline-transition-btn:hover {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--accent-primary);
+}
+.pipeline-transition-btn.arrow-approved {
+    color: var(--status-success);
+    opacity: 0.9;
+}
+.pipeline-transition-btn.arrow-rejected {
+    color: var(--status-error);
+    opacity: 0.9;
+}
+.pipeline-transition-btn.has-gate::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: var(--accent-primary);
+}
+.pipeline-transition-btn.has-gate.arrow-approved::after { background: var(--status-success); }
+.pipeline-transition-btn.has-gate.arrow-rejected::after { background: var(--status-error); }
+.pipeline-transition-btn.transition-mode-manual { color: var(--status-warning); opacity: 0.9; }
+.pipeline-transition-btn.transition-mode-agent { color: var(--accent-primary); opacity: 0.9; }
+
+/* Transition mode badge */
+.transition-badge {
+    font-size: 8px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    padding: 0 3px;
+    border-radius: 3px;
+    line-height: 14px;
+    white-space: nowrap;
+}
+.transition-badge.badge-manual { background: rgba(251, 191, 36, 0.2); color: var(--status-warning); }
+.transition-badge.badge-agent { background: rgba(139, 92, 246, 0.2); color: var(--accent-primary); }
+.transition-badge.badge-auto { background: rgba(14, 165, 233, 0.15); color: var(--accent-secondary); }
 
 /* Transition config modal */
 .transition-mode-options {
@@ -4473,6 +4500,10 @@ a.btn {
     }
 
     .pipeline-arrow {
+        display: none;
+    }
+
+    .pipeline-transition-btn {
         display: none;
     }
 

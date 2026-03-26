@@ -4185,6 +4185,16 @@ function renderStacksList() {
             if (!cfg || !cfg.mode) return '';
             return ' transition-mode-' + cfg.mode;
         }
+        // Transition mode badge label
+        function _transitionModeIcon(pipeline, transition) {
+            if (!pipeline || !pipeline.transition_configs) return '';
+            const cfg = pipeline.transition_configs[transition];
+            if (!cfg || !cfg.mode || cfg.mode === 'auto_with_success') return '';
+            if (cfg.mode === 'manual') return '<span class="transition-badge badge-manual">Manual</span>';
+            if (cfg.mode === 'agent') return '<span class="transition-badge badge-agent">AI</span>';
+            if (cfg.mode === 'auto') return '<span class="transition-badge badge-auto">Auto</span>';
+            return '';
+        }
         // Find gate decision for a transition
         function _gateDecision(pipeline, transition) {
             if (!pipeline || !pipeline.gates) return null;
@@ -4260,13 +4270,19 @@ function renderStacksList() {
                             <span>Build</span>
                             ${!skipBuild && buildActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${buildActionId}', 'Build Logs', '${escapeHtml(repo.name)}')" title="View build logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
                         </div>
-                        <span class="pipeline-arrow ${_gateArrowClass(pipeline, 'build', buildStep, testStep)}${gateBuildTest ? ' has-gate' : ''}${_transitionModeClass(pipeline, 'build_to_test')}" onclick="event.stopPropagation(); openTransitionConfig('${escapeHtml(repo.name)}', 'build_to_test')" title="Build → Test transition (click to configure)" style="cursor:pointer">\u2192</span>
+                        <span class="pipeline-transition-btn ${_gateArrowClass(pipeline, 'build', buildStep, testStep)}${gateBuildTest ? ' has-gate' : ''}${_transitionModeClass(pipeline, 'build_to_test')}" onclick="event.stopPropagation(); openTransitionConfig('${escapeHtml(repo.name)}', 'build_to_test')" title="Build → Test transition (click to configure)">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                            ${_transitionModeIcon(pipeline, 'build_to_test')}
+                        </span>
                         <div class="pipeline-step step-${testStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'test')" title="Test">
                             ${stepIcon(testStep)}
                             <span>Test</span>
                             ${testActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${testActionId}', 'Test Logs', '${escapeHtml(repo.name)}')" title="View test logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
                         </div>
-                        <span class="pipeline-arrow ${_gateArrowClass(pipeline, 'test', testStep, deployStep)}${gateTestDeploy ? ' has-gate' : ''}${_transitionModeClass(pipeline, 'test_to_deploy')}" onclick="event.stopPropagation(); openTransitionConfig('${escapeHtml(repo.name)}', 'test_to_deploy')" title="Test → Deploy transition (click to configure)" style="cursor:pointer">\u2192</span>
+                        <span class="pipeline-transition-btn ${_gateArrowClass(pipeline, 'test', testStep, deployStep)}${gateTestDeploy ? ' has-gate' : ''}${_transitionModeClass(pipeline, 'test_to_deploy')}" onclick="event.stopPropagation(); openTransitionConfig('${escapeHtml(repo.name)}', 'test_to_deploy')" title="Test → Deploy transition (click to configure)">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                            ${_transitionModeIcon(pipeline, 'test_to_deploy')}
+                        </span>
                         <div class="pipeline-step step-${deployStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'deploy')" title="Deploy">
                             ${stepIcon(deployStep)}
                             <span>Deploy</span>
