@@ -4264,7 +4264,9 @@ function renderStacksList() {
                             ${stepIcon(versionStep)}
                             <span>${escapeHtml(pipelineVersion)}</span>
                         </div>
-                        <span class="pipeline-arrow">\u2192</span>
+                        <span class="pipeline-transition-btn" style="pointer-events:none;">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                        </span>
                         <div class="pipeline-step step-${buildStep}" ${skipBuild ? 'title="Build: skipped (no build config)"' : `onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'build')" title="Build" style="cursor:pointer"`}>
                             ${skipBuild ? `<span class="step-icon">–</span>` : stepIcon(buildStep)}
                             <span>Build</span>
@@ -4352,13 +4354,13 @@ function showGateDecision(repoName, transition) {
     if (!modal) {
         const m = document.createElement('div');
         m.id = 'gate-decision-modal';
-        m.className = 'modal-overlay';
+        m.className = 'modal';
         m.onclick = (e) => { if (e.target === m) m.classList.remove('active'); };
         m.innerHTML = `
-            <div class="modal-container" style="max-width: 800px; width: 90%;">
+            <div class="modal-content" style="max-width: 800px; width: 90%;">
                 <div class="modal-header">
                     <h3 id="gate-decision-title">Gate Decision</h3>
-                    <button class="modal-close" onclick="document.getElementById('gate-decision-modal').classList.remove('active')">&times;</button>
+                    <button class="modal-close" onclick="document.getElementById('gate-decision-modal').classList.remove('active');">&times;</button>
                 </div>
                 <div class="modal-body" style="padding: 20px;">
                     <div id="gate-decision-info" style="display: flex; align-items: center; gap: 16px; margin-bottom: 16px; padding: 12px 16px; background: var(--bg-tertiary); border-radius: 8px; flex-wrap: wrap;">
@@ -4397,13 +4399,13 @@ async function openTransitionConfig(repoName, transition) {
     if (!modal) {
         modal = document.createElement('div');
         modal.id = 'transition-config-modal';
-        modal.className = 'modal-overlay';
+        modal.className = 'modal';
         modal.onclick = (e) => { if (e.target === modal) modal.classList.remove('active'); };
         modal.innerHTML = `
-            <div class="modal-container" style="max-width: 600px; width: 90%;">
+            <div class="modal-content" style="max-width: 600px; width: 90%;">
                 <div class="modal-header">
                     <h3 id="transition-config-title">Transition Config</h3>
-                    <button class="modal-close" onclick="document.getElementById('transition-config-modal').classList.remove('active')">&times;</button>
+                    <button class="modal-close" onclick="document.getElementById('transition-config-modal').classList.remove('active');">&times;</button>
                 </div>
                 <div class="modal-body" style="padding: 20px;">
                     <div id="transition-config-loading" class="loading-placeholder">Loading...</div>
