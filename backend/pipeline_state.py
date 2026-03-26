@@ -127,6 +127,9 @@ class PipelineEntry:
         self.gates: List[GateDecision] = []
         # Timestamp of the last successful deployment
         self.last_deployed_at: Optional[str] = None
+        # Per-project transition configs: {"build_to_test": {"mode": "...", ...}, "test_to_deploy": {...}}
+        # mode: "auto" (no gate), "auto_with_success" (auto if prev succeeded), "agent" (LLM gate), "manual"
+        self.transition_configs: Dict[str, Dict[str, Any]] = {}
 
     def to_dict(self) -> dict:
         return {
@@ -138,6 +141,7 @@ class PipelineEntry:
             "stack_name": self.stack_name,
             "gates": [g.to_dict() for g in self.gates],
             "last_deployed_at": self.last_deployed_at,
+            "transition_configs": self.transition_configs,
         }
 
     @classmethod
@@ -156,6 +160,7 @@ class PipelineEntry:
             GateDecision.from_dict(g) for g in data.get("gates", [])
         ]
         entry.last_deployed_at = data.get("last_deployed_at")
+        entry.transition_configs = data.get("transition_configs", {})
         return entry
 
     # ── Convenience for backward-compatible API response ──
@@ -187,6 +192,7 @@ class PipelineEntry:
             "stack_name": self.stack_name,
             "gates": [g.to_dict() for g in self.gates],
             "last_deployed_at": self.last_deployed_at,
+            "transition_configs": self.transition_configs,
             # Enriched per-stage data
             "stages": {name: s.to_dict() for name, s in self.stages.items()},
         }
@@ -397,6 +403,32 @@ class PipelineStateManager:
         if entry and stage in entry.stages:
             entry.stages[stage].desired_version = version
             self._save()
+
+    def set_transition_config(self, repo_name: str, transition: str, config: Dict[str, Any]):
+        """Set per-project transition configuration.
+
+        Args:
+            repo_name: Repository name
+            transition: "build_to_test" or "test_to_deploy"
+            config: {"mode": "auto"|"auto_with_success"|"agent"|"manual"}
+        """
+        valid_transitions = {"build_to_test", "test_to_deploy"}
+        valid_modes = {"auto", "auto_with_success", "agent", "manual"}
+        if transition not in valid_transitions:
+            return
+        mode = config.get("mode", "auto")
+        if mode not in valid_modes:
+            return
+        entry = self.get_or_create(repo_name)
+        entry.transition_configs[transition] = {"mode": mode}
+        self._save()
+
+    def get_transition_config(self, repo_name: str, transition: str) -> Dict[str, Any]:
+        """Get per-project transition config, or empty dict if not set."""
+        entry = self.get(repo_name)
+        if entry and transition in entry.transition_configs:
+            return entry.transition_configs[transition]
+        return {}
 
     def get_all_legacy(self) -> Dict[str, dict]:
         """Return all pipelines in legacy format for the API."""

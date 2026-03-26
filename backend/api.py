@@ -2878,19 +2878,31 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                 logger.info("Pipeline: build succeeded", repo=repo_name, version=built_version)
 
                 # ── Gate: Build → Test ──
-                if llm_agent:
-                    approved, reason = await llm_agent.evaluate_gate(
-                        "build_to_test", repo_name, built_version or "",
-                        result.get("output", "")
-                    )
-                    pipeline_state.record_gate(repo_name, "build_to_test", approved, reason)
-                    if not approved:
-                        logger.warning("Pipeline: gate build→test REJECTED",
-                                       repo=repo_name, reason=reason[:200])
-                        _set_pipeline(repo_name, "build", "gate_rejected", built_version,
-                                      build_id=build_id, test_id=None, deploy_id=None, log_lines=build_action.output_lines)
-                        return
-                    logger.info("Pipeline: gate build→test approved", repo=repo_name, reason=reason[:100])
+                _bt_cfg = pipeline_state.get_transition_config(repo_name, "build_to_test")
+                _bt_mode = _bt_cfg.get("mode") if _bt_cfg else None
+                if _bt_mode == "manual":
+                    logger.info("Pipeline: build→test manual gate, stopping", repo=repo_name)
+                    pipeline_state.record_gate(repo_name, "build_to_test", False, "Manual transition — waiting for user approval")
+                    _set_pipeline(repo_name, "build", "gate_rejected", built_version,
+                                  build_id=build_id, test_id=None, deploy_id=None, log_lines=build_action.output_lines)
+                    return
+                elif _bt_mode == "agent" or (_bt_mode is None and llm_agent):
+                    if llm_agent:
+                        approved, reason = await llm_agent.evaluate_gate(
+                            "build_to_test", repo_name, built_version or "",
+                            result.get("output", "")
+                        )
+                        pipeline_state.record_gate(repo_name, "build_to_test", approved, reason)
+                        if not approved:
+                            logger.warning("Pipeline: gate build→test REJECTED",
+                                           repo=repo_name, reason=reason[:200])
+                            _set_pipeline(repo_name, "build", "gate_rejected", built_version,
+                                          build_id=build_id, test_id=None, deploy_id=None, log_lines=build_action.output_lines)
+                            return
+                        logger.info("Pipeline: gate build→test approved", repo=repo_name, reason=reason[:100])
+                    else:
+                        pipeline_state.record_gate(repo_name, "build_to_test", True, "Agent mode but no LLM configured, auto-approved")
+                # else: "auto" or "auto_with_success" — proceed (success already checked above)
 
             else:
                 logger.info("Pipeline: skipping build (no build: in compose)", repo=repo_name)
@@ -2923,19 +2935,31 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
             logger.info("Pipeline: test succeeded", repo=repo_name)
 
             # ── Gate: Test → Deploy ──
-            if llm_agent:
-                approved, reason = await llm_agent.evaluate_gate(
-                    "test_to_deploy", repo_name, built_version or "",
-                    test_result.get("output", "")
-                )
-                pipeline_state.record_gate(repo_name, "test_to_deploy", approved, reason)
-                if not approved:
-                    logger.warning("Pipeline: gate test→deploy REJECTED",
-                                   repo=repo_name, reason=reason[:200])
-                    _set_pipeline(repo_name, "test", "gate_rejected", built_version,
-                                  build_id=build_id, test_id=test_id, deploy_id=None, log_lines=test_action.output_lines)
-                    return
-                logger.info("Pipeline: gate test→deploy approved", repo=repo_name, reason=reason[:100])
+            _td_cfg = pipeline_state.get_transition_config(repo_name, "test_to_deploy")
+            _td_mode = _td_cfg.get("mode") if _td_cfg else None
+            if _td_mode == "manual":
+                logger.info("Pipeline: test→deploy manual gate, stopping", repo=repo_name)
+                pipeline_state.record_gate(repo_name, "test_to_deploy", False, "Manual transition — waiting for user approval")
+                _set_pipeline(repo_name, "test", "gate_rejected", built_version,
+                              build_id=build_id, test_id=test_id, deploy_id=None, log_lines=test_action.output_lines)
+                return
+            elif _td_mode == "agent" or (_td_mode is None and llm_agent):
+                if llm_agent:
+                    approved, reason = await llm_agent.evaluate_gate(
+                        "test_to_deploy", repo_name, built_version or "",
+                        test_result.get("output", "")
+                    )
+                    pipeline_state.record_gate(repo_name, "test_to_deploy", approved, reason)
+                    if not approved:
+                        logger.warning("Pipeline: gate test→deploy REJECTED",
+                                       repo=repo_name, reason=reason[:200])
+                        _set_pipeline(repo_name, "test", "gate_rejected", built_version,
+                                      build_id=build_id, test_id=test_id, deploy_id=None, log_lines=test_action.output_lines)
+                        return
+                    logger.info("Pipeline: gate test→deploy approved", repo=repo_name, reason=reason[:100])
+                else:
+                    pipeline_state.record_gate(repo_name, "test_to_deploy", True, "Agent mode but no LLM configured, auto-approved")
+            # else: "auto" or "auto_with_success" — proceed (success already checked above)
 
             # ── Step 3: Deploy ──
             deploy_id = str(uuid.uuid4())[:8]
@@ -3085,6 +3109,40 @@ async def auto_build_poller():
 async def get_pipeline_status():
     """Get pipeline state for all repos."""
     return {"pipelines": pipeline_state.get_all_legacy()}
+
+
+@app.get("/api/stacks/pipeline/{repo_name}/transition/{transition}")
+async def get_transition_config(repo_name: str, transition: str):
+    """Get per-project transition config for a specific transition."""
+    valid = {"build_to_test", "test_to_deploy"}
+    if transition not in valid:
+        return JSONResponse({"error": "Invalid transition"}, status_code=400)
+    config = pipeline_state.get_transition_config(repo_name, transition)
+    # Also return last gate decision if available
+    entry = pipeline_state.get(repo_name)
+    last_decision = None
+    if entry:
+        for g in reversed(entry.gates):
+            if g.transition == transition:
+                last_decision = g.to_dict()
+                break
+    return {"repo": repo_name, "transition": transition, "config": config, "last_decision": last_decision}
+
+
+@app.put("/api/stacks/pipeline/{repo_name}/transition/{transition}")
+async def set_transition_config(repo_name: str, transition: str, request: Request):
+    """Set per-project transition config for a specific transition."""
+    valid = {"build_to_test", "test_to_deploy"}
+    if transition not in valid:
+        return JSONResponse({"error": "Invalid transition"}, status_code=400)
+    body = await request.json()
+    mode = body.get("mode", "auto")
+    valid_modes = {"auto", "auto_with_success", "agent", "manual"}
+    if mode not in valid_modes:
+        return JSONResponse({"error": f"Invalid mode. Valid: {', '.join(sorted(valid_modes))}"}, status_code=400)
+    pipeline_state.set_transition_config(repo_name, transition, {"mode": mode})
+    logger.info("Transition config updated", repo=repo_name, transition=transition, mode=mode)
+    return {"saved": True, "repo": repo_name, "transition": transition, "mode": mode}
 
 
 @app.get("/api/stacks/auto-build/status")

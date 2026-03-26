@@ -4178,6 +4178,13 @@ function renderStacksList() {
             if (fromStep === 'success' && (toStep === 'running' || toStep === 'success' || toStep === 'failed')) return 'arrow-approved';
             return '';
         }
+        // Transition mode CSS class for arrow indicator
+        function _transitionModeClass(pipeline, transition) {
+            if (!pipeline || !pipeline.transition_configs) return '';
+            const cfg = pipeline.transition_configs[transition];
+            if (!cfg || !cfg.mode) return '';
+            return ' transition-mode-' + cfg.mode;
+        }
         // Find gate decision for a transition
         function _gateDecision(pipeline, transition) {
             if (!pipeline || !pipeline.gates) return null;
@@ -4253,13 +4260,13 @@ function renderStacksList() {
                             <span>Build</span>
                             ${!skipBuild && buildActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${buildActionId}', 'Build Logs', '${escapeHtml(repo.name)}')" title="View build logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
                         </div>
-                        <span class="pipeline-arrow ${_gateArrowClass(pipeline, 'build', buildStep, testStep)}${gateBuildTest ? ' has-gate' : ''}" ${gateBuildTest ? `onclick="event.stopPropagation(); showGateDecision('${escapeHtml(repo.name)}', 'build_to_test')" title="${gateBuildTest.approved ? 'Approved' : 'Rejected'}: ${escapeHtml((gateBuildTest.reason || '').substring(0, 60))}" style="cursor:pointer"` : ''}>\u2192</span>
+                        <span class="pipeline-arrow ${_gateArrowClass(pipeline, 'build', buildStep, testStep)}${gateBuildTest ? ' has-gate' : ''}${_transitionModeClass(pipeline, 'build_to_test')}" onclick="event.stopPropagation(); openTransitionConfig('${escapeHtml(repo.name)}', 'build_to_test')" title="Build → Test transition (click to configure)" style="cursor:pointer">\u2192</span>
                         <div class="pipeline-step step-${testStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'test')" title="Test">
                             ${stepIcon(testStep)}
                             <span>Test</span>
                             ${testActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${testActionId}', 'Test Logs', '${escapeHtml(repo.name)}')" title="View test logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
                         </div>
-                        <span class="pipeline-arrow ${_gateArrowClass(pipeline, 'test', testStep, deployStep)}${gateTestDeploy ? ' has-gate' : ''}" ${gateTestDeploy ? `onclick="event.stopPropagation(); showGateDecision('${escapeHtml(repo.name)}', 'test_to_deploy')" title="${gateTestDeploy.approved ? 'Approved' : 'Rejected'}: ${escapeHtml((gateTestDeploy.reason || '').substring(0, 60))}" style="cursor:pointer"` : ''}>\u2192</span>
+                        <span class="pipeline-arrow ${_gateArrowClass(pipeline, 'test', testStep, deployStep)}${gateTestDeploy ? ' has-gate' : ''}${_transitionModeClass(pipeline, 'test_to_deploy')}" onclick="event.stopPropagation(); openTransitionConfig('${escapeHtml(repo.name)}', 'test_to_deploy')" title="Test → Deploy transition (click to configure)" style="cursor:pointer">\u2192</span>
                         <div class="pipeline-step step-${deployStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'deploy')" title="Deploy">
                             ${stepIcon(deployStep)}
                             <span>Deploy</span>
@@ -4362,6 +4369,168 @@ function showGateDecision(repoName, transition) {
     document.getElementById('gate-decision-status').innerHTML = statusIcon;
     document.getElementById('gate-decision-reason').innerHTML = simpleMarkdown(decision.reason || 'No reason provided');
     document.getElementById('gate-decision-modal').classList.add('active');
+}
+
+// ============== Transition Config Modal ==============
+
+async function openTransitionConfig(repoName, transition) {
+    const label = transition === 'build_to_test' ? 'Build → Test' : 'Test → Deploy';
+
+    // Create modal if not exists
+    let modal = document.getElementById('transition-config-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'transition-config-modal';
+        modal.className = 'modal-overlay';
+        modal.onclick = (e) => { if (e.target === modal) modal.classList.remove('active'); };
+        modal.innerHTML = `
+            <div class="modal-container" style="max-width: 600px; width: 90%;">
+                <div class="modal-header">
+                    <h3 id="transition-config-title">Transition Config</h3>
+                    <button class="modal-close" onclick="document.getElementById('transition-config-modal').classList.remove('active')">&times;</button>
+                </div>
+                <div class="modal-body" style="padding: 20px;">
+                    <div id="transition-config-loading" class="loading-placeholder">Loading...</div>
+                    <div id="transition-config-content" style="display:none;">
+                        <div style="margin-bottom: 16px; font-size: 13px; color: var(--text-muted);">
+                            Configure how the pipeline transitions between stages for this project.
+                        </div>
+                        <div class="transition-mode-options" id="transition-mode-options">
+                            <label class="transition-mode-option" data-mode="auto">
+                                <input type="radio" name="transition-mode" value="auto">
+                                <div class="transition-mode-info">
+                                    <div class="transition-mode-label">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg>
+                                        Automatic
+                                    </div>
+                                    <div class="transition-mode-desc">Always proceed to the next stage automatically, regardless of conditions.</div>
+                                </div>
+                            </label>
+                            <label class="transition-mode-option" data-mode="auto_with_success">
+                                <input type="radio" name="transition-mode" value="auto_with_success">
+                                <div class="transition-mode-info">
+                                    <div class="transition-mode-label">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                                        Automatic with success check
+                                    </div>
+                                    <div class="transition-mode-desc">Proceed only if the previous stage succeeded. Stop on failure.</div>
+                                </div>
+                            </label>
+                            <label class="transition-mode-option" data-mode="agent">
+                                <input type="radio" name="transition-mode" value="agent">
+                                <div class="transition-mode-info">
+                                    <div class="transition-mode-label">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M12 2a4 4 0 0 1 4 4v1a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="6" r="1"/></svg>
+                                        AI Agent gate
+                                    </div>
+                                    <div class="transition-mode-desc">LLM agent analyzes logs and decides whether to proceed. Uses global gate instructions.</div>
+                                </div>
+                            </label>
+                            <label class="transition-mode-option" data-mode="manual">
+                                <input type="radio" name="transition-mode" value="manual">
+                                <div class="transition-mode-info">
+                                    <div class="transition-mode-label">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                                        Manual only
+                                    </div>
+                                    <div class="transition-mode-desc">Pipeline stops. A user must manually trigger the next stage.</div>
+                                </div>
+                            </label>
+                        </div>
+                        <div id="transition-ai-logs-section" style="margin-top: 20px; display: none;">
+                            <div style="margin-bottom: 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px;">Last AI Decision</div>
+                            <div id="transition-ai-decision-info" style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding: 10px 14px; background: var(--bg-tertiary); border-radius: 8px; flex-wrap: wrap;">
+                                <div id="transition-ai-decision-status" style="font-size: 14px; font-weight: 600;"></div>
+                                <div style="width: 1px; height: 18px; background: var(--border-color);"></div>
+                                <div id="transition-ai-decision-meta" style="font-size: 12px; color: var(--text-muted); flex: 1;"></div>
+                            </div>
+                            <div id="transition-ai-decision-reason" class="markdown-body" style="font-size: 13px; line-height: 1.6; background: var(--bg-secondary); padding: 14px; border-radius: 8px; max-height: 300px; overflow-y: auto; border: 1px solid var(--border-color);"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="document.getElementById('transition-config-modal').classList.remove('active')">Cancel</button>
+                    <button class="btn btn-primary" id="transition-config-save" onclick="saveTransitionConfig()">Save</button>
+                </div>
+            </div>`;
+        document.body.appendChild(modal);
+    }
+
+    // Store context
+    modal.dataset.repo = repoName;
+    modal.dataset.transition = transition;
+    document.getElementById('transition-config-title').textContent = `Transition: ${label}`;
+    document.getElementById('transition-config-loading').style.display = '';
+    document.getElementById('transition-config-content').style.display = 'none';
+    modal.classList.add('active');
+
+    // Fetch current config from API
+    try {
+        const data = await apiGet(`/stacks/pipeline/${encodeURIComponent(repoName)}/transition/${encodeURIComponent(transition)}`);
+        const config = (data && data.config) || {};
+        const currentMode = config.mode || 'auto_with_success';
+        const lastDecision = data && data.last_decision;
+
+        // Select current mode
+        document.querySelectorAll('#transition-mode-options input[name="transition-mode"]').forEach(r => {
+            r.checked = (r.value === currentMode);
+            r.closest('.transition-mode-option').classList.toggle('selected', r.value === currentMode);
+        });
+
+        // Add click handler for mode selection visual feedback
+        document.querySelectorAll('#transition-mode-options .transition-mode-option').forEach(opt => {
+            opt.onclick = () => {
+                const radio = opt.querySelector('input[type="radio"]');
+                radio.checked = true;
+                document.querySelectorAll('#transition-mode-options .transition-mode-option').forEach(o => o.classList.remove('selected'));
+                opt.classList.add('selected');
+            };
+        });
+
+        // Show AI decision logs if available
+        const aiSection = document.getElementById('transition-ai-logs-section');
+        if (lastDecision) {
+            aiSection.style.display = '';
+            const statusIcon = lastDecision.approved
+                ? '<span style="color: var(--status-success); display: inline-flex; align-items: center; gap: 5px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Approved</span>'
+                : '<span style="color: var(--status-error); display: inline-flex; align-items: center; gap: 5px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> Rejected</span>';
+            document.getElementById('transition-ai-decision-status').innerHTML = statusIcon;
+            const ts = lastDecision.timestamp ? new Date(lastDecision.timestamp).toLocaleString() : '';
+            document.getElementById('transition-ai-decision-meta').innerHTML = ts ? `<span>${ts}</span>` : '';
+            document.getElementById('transition-ai-decision-reason').innerHTML = simpleMarkdown(lastDecision.reason || 'No details available');
+        } else {
+            aiSection.style.display = 'none';
+        }
+
+        document.getElementById('transition-config-loading').style.display = 'none';
+        document.getElementById('transition-config-content').style.display = '';
+    } catch (err) {
+        document.getElementById('transition-config-loading').innerHTML = `<div class="error-placeholder">Failed to load config: ${escapeHtml(err.message || String(err))}</div>`;
+    }
+}
+
+async function saveTransitionConfig() {
+    const modal = document.getElementById('transition-config-modal');
+    const repoName = modal.dataset.repo;
+    const transition = modal.dataset.transition;
+    const selected = document.querySelector('#transition-mode-options input[name="transition-mode"]:checked');
+    if (!selected) return;
+
+    const saveBtn = document.getElementById('transition-config-save');
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+
+    try {
+        await apiPut(`/stacks/pipeline/${encodeURIComponent(repoName)}/transition/${encodeURIComponent(transition)}`, { mode: selected.value });
+        modal.classList.remove('active');
+        // Refresh stacks view to reflect new config
+        if (typeof refreshStacks === 'function') refreshStacks();
+    } catch (err) {
+        alert('Failed to save: ' + (err.message || err));
+    } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save';
+    }
 }
 
 // ============== Pipeline Modal (Version → Build → Test → Deploy) ==============

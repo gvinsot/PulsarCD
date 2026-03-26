@@ -3441,6 +3441,88 @@ a.btn {
 .pipeline-arrow.has-gate.arrow-approved::after { background: var(--status-success); }
 .pipeline-arrow.has-gate.arrow-rejected::after { background: var(--status-error); }
 
+/* Transition mode indicators on arrows */
+.pipeline-arrow.transition-mode-manual {
+    color: var(--status-warning);
+    opacity: 0.9;
+}
+.pipeline-arrow.transition-mode-agent {
+    color: var(--accent-primary);
+    opacity: 0.9;
+}
+.pipeline-arrow.transition-mode-manual::before {
+    content: '🔒';
+    font-size: 7px;
+    position: absolute;
+    top: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+.pipeline-arrow.transition-mode-agent::before {
+    content: '🤖';
+    font-size: 7px;
+    position: absolute;
+    top: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+.pipeline-arrow.transition-mode-manual,
+.pipeline-arrow.transition-mode-agent,
+.pipeline-arrow.transition-mode-auto,
+.pipeline-arrow.transition-mode-auto_with_success {
+    position: relative;
+}
+
+/* Transition config modal */
+.transition-mode-options {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.transition-mode-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.transition-mode-option:hover {
+    border-color: var(--accent-primary);
+    background: rgba(var(--accent-primary-rgb, 139, 92, 246), 0.05);
+}
+.transition-mode-option.selected {
+    border-color: var(--accent-primary);
+    background: rgba(var(--accent-primary-rgb, 139, 92, 246), 0.1);
+    box-shadow: 0 0 0 1px var(--accent-primary);
+}
+.transition-mode-option input[type="radio"] {
+    margin-top: 2px;
+    accent-color: var(--accent-primary);
+    flex-shrink: 0;
+}
+.transition-mode-info {
+    flex: 1;
+    min-width: 0;
+}
+.transition-mode-label {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+.transition-mode-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
 /* Step states */
 .pipeline-step.step-idle { background: var(--bg-tertiary); color: var(--text-muted); }
 .pipeline-step.step-running { background: rgba(14, 165, 233, 0.15); color: var(--accent-secondary); }
