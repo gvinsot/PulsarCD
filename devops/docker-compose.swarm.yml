@@ -1,5 +1,3 @@
-version: '3.9'
-
 # ============================================================================
 # PulsarCD - Docker Swarm Deployment (Agent-Based Architecture)
 # Deploy with: docker stack deploy -c docker-compose.swarm.yml pulsarcd
