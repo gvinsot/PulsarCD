@@ -1222,6 +1222,12 @@ class StackDeployer:
         # Strip leading 'v' from version if present
         if deploy_version.startswith('v'):
             deploy_version = deploy_version[1:]
+
+        # Ensure we always have a tag for git checkout so the deploy script
+        # checks out the correct commit (not the latest on current branch)
+        checkout_ref = tag
+        if not checkout_ref and deploy_version:
+            checkout_ref = f"v{deploy_version}"
         
         result = {
             "action": "deploy",
@@ -1250,8 +1256,8 @@ class StackDeployer:
             # Pass absolute repo_path to avoid path computation mismatch
             # Script format: deploy-service.sh <folder> <version> [branch/tag]
             deploy_cmd = f"cd {scripts_path} && bash deploy-service.sh \"{repo_path}\" {deploy_version}"
-            if tag:
-                deploy_cmd += f" {tag}"
+            if checkout_ref:
+                deploy_cmd += f" {checkout_ref}"
 
             if output_callback and clone_msg:
                 for line in clone_msg.split('\n'):

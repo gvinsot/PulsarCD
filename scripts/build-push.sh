@@ -613,11 +613,70 @@ if [ "$NEEDS_BUILDX" = true ]; then
     fi
 fi
 
+# ============================================================================
+# Step 4a: Check which images already exist in registry
+# ============================================================================
+IMAGES_TO_BUILD=""
+IMAGES_SKIPPED=""
+ALL_IMAGES_EXIST=true
+
+for img in $IMAGES; do
+    RESOLVED_IMG=$(echo "$img" | envsubst 2>/dev/null || echo "$img")
+    if [[ "$RESOLVED_IMG" =~ \$\{ ]]; then
+        RESOLVED_IMG=$(echo "$RESOLVED_IMG" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g')
+    fi
+    BASE_IMAGE="${RESOLVED_IMG%:*}"
+    TARGET_TAG="${BASE_IMAGE}:${FULL_VERSION}"
+
+    if [ "$NO_CACHE" != "--no-cache" ] && docker manifest inspect "$TARGET_TAG" >/dev/null 2>&1; then
+        log_success "Image $TARGET_TAG already exists in registry — skipping build"
+        IMAGES_SKIPPED="$IMAGES_SKIPPED $img"
+    else
+        IMAGES_TO_BUILD="$IMAGES_TO_BUILD $img"
+        ALL_IMAGES_EXIST=false
+    fi
+done
+
+if [ "$ALL_IMAGES_EXIST" = true ]; then
+    log_success "All images already exist in registry for version $FULL_VERSION — nothing to build"
+    # Restore original state
+    if [ -n "$ORIGINAL_BRANCH" ] && [ "$ORIGINAL_BRANCH" != "HEAD" ]; then
+        CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
+        if [ "$CURRENT_BRANCH" != "$ORIGINAL_BRANCH" ]; then
+            git checkout "$ORIGINAL_BRANCH" 2>/dev/null || true
+        fi
+    fi
+    if [ "$STASHED" = true ]; then
+        git stash pop 2>/dev/null || true
+    fi
+    echo ""
+    echo "=============================================="
+    echo "  Build Skipped (images already exist)"
+    echo "=============================================="
+    echo ""
+    log_success "Version: $FULL_VERSION"
+    log_info "All images for this version are already in the registry."
+    log_info "Use --no-cache to force a rebuild."
+    echo ""
+    echo "--- COMPLETED ---"
+    exit 0
+fi
+
+if [ -n "$IMAGES_SKIPPED" ]; then
+    log_info "Images to build (new):$(echo "$IMAGES_TO_BUILD" | sed 's/ /\n  - /g')"
+    log_info "Images skipped (already exist):$(echo "$IMAGES_SKIPPED" | sed 's/ /\n  - /g')"
+    echo ""
+fi
+
+# ============================================================================
+# Step 4b: Build images that don't already exist
+# ============================================================================
+
 # Collect single-arch images to build via docker compose
 SINGLEARCH_IMAGES=""
 
 BUILD_FAILED=false
-for img in $IMAGES; do
+for img in $IMAGES_TO_BUILD; do
     RESOLVED_IMG=$(echo "$img" | envsubst 2>/dev/null || echo "$img")
     if [[ "$RESOLVED_IMG" =~ \$\{ ]]; then
         RESOLVED_IMG=$(echo "$RESOLVED_IMG" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g')
@@ -691,7 +750,7 @@ log_success "All images built successfully!"
 # ============================================================================
 log_info "Tagging images with version: $FULL_VERSION"
 
-for img in $IMAGES; do
+for img in $IMAGES_TO_BUILD; do
     RESOLVED_IMG=$(echo "$img" | envsubst 2>/dev/null || echo "$img")
     if [[ "$RESOLVED_IMG" =~ \$\{ ]]; then
         RESOLVED_IMG=$(echo "$RESOLVED_IMG" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g')

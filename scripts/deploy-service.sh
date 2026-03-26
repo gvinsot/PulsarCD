@@ -288,9 +288,9 @@ if [ -n "$BRANCH" ] || [ -n "$COMMIT" ]; then
                 exit 1
             }
         elif git show-ref --verify --quiet "refs/tags/$BRANCH"; then
-            # It's a tag - checkout directly
+            # It's a tag - checkout directly (use refs/tags/ to avoid ambiguity with branches)
             log_info "Checking out tag: $BRANCH"
-            git checkout "$BRANCH" || {
+            git checkout "refs/tags/$BRANCH" || {
                 log_error "Failed to checkout tag: $BRANCH"
                 exit 1
             }
@@ -552,26 +552,13 @@ for img in $IMAGES; do
             REGISTRY_SHA=$(echo "$REPO_DIGEST" | sed 's/.*@sha256:/sha256:/')
             echo "    Registry SHA: $REGISTRY_SHA"
             
-            # Get the manifest digest from registry (could be manifest list or single manifest)
-            MANIFEST_OUTPUT=$(docker manifest inspect "$RESOLVED_IMG" 2>/dev/null)
-            
-            if [ -n "$MANIFEST_OUTPUT" ]; then
-                # Check if it's a manifest list (has "manifests" field) or single manifest
-                if echo "$MANIFEST_OUTPUT" | grep -q '"manifests"'; then
-                    echo "    Format: Multi-arch manifest list"
-                else
-                    echo "    Format: Single-arch manifest"
-                fi
-
-                # Compute the actual manifest digest (hash of the manifest JSON itself)
-                # and compare it against the RepoDigest to verify integrity
-                COMPUTED_MANIFEST_DIGEST="sha256:$(echo "$MANIFEST_OUTPUT" | sha256sum | awk '{print $1}')"
-
-                if [ "$REGISTRY_SHA" != "$COMPUTED_MANIFEST_DIGEST" ]; then
-                    log_warning "Registry manifest SHA differs from RepoDigest!"
-                    echo "    Computed manifest SHA: $COMPUTED_MANIFEST_DIGEST"
-                    MISMATCHED_IMAGES+=("$RESOLVED_IMG")
-                fi
+            # Verify the image was pulled from registry (not locally built)
+            # by checking that the RepoDigests reference matches our registry
+            if echo "$REPO_DIGEST" | grep -q "^${REGISTRY}/"; then
+                echo "    Source: Registry (verified)"
+            else
+                log_warning "Image may not have been pulled from expected registry: $REGISTRY"
+                echo "    RepoDigest: $REPO_DIGEST"
             fi
         else
             log_warning "No registry digest found - image may be locally built"
@@ -644,26 +631,25 @@ log_info "Service status:"
 docker stack services "$STACK_NAME" 2>/dev/null || true
 echo ""
 
-# Display SHA mismatch warnings if any
+# Display warnings for images without registry digests (locally built)
 if [ ${#MISMATCHED_IMAGES[@]} -gt 0 ]; then
     echo ""
     echo -e "${RED}============================================="
-    echo -e "  ⚠  WARNING: IMAGE SHA MISMATCH DETECTED"
+    echo -e "  ⚠  WARNING: LOCALLY BUILT IMAGES DETECTED"
     echo -e "=============================================${NC}"
     echo ""
-    log_error "The following images have SHA mismatches or missing registry digests:"
+    log_error "The following images have no registry digest (may be locally built):"
     for mismatch_img in "${MISMATCHED_IMAGES[@]}"; do
         echo -e "${RED}  ✗ $mismatch_img${NC}"
     done
     echo ""
     echo -e "${YELLOW}This may indicate:${NC}"
-    echo "  - Local cached image is stale"
-    echo "  - Image tag was overwritten in registry"
-    echo "  - Deploying a locally built image instead of registry image"
+    echo "  - Image was built locally and not pushed to registry"
+    echo "  - Image tag does not exist in the registry"
     echo ""
     echo -e "${YELLOW}Recommended actions:${NC}"
     echo "  - Verify image versions: docker image inspect <image>"
     echo "  - Force pull latest: docker pull <image>"
-    echo "  - Check registry: docker manifest inspect <image>"
+    echo "  - Push local images: docker push <image>"
     echo ""
 fi
