@@ -3472,7 +3472,7 @@ a.btn {
 .pipeline-transition-btn.has-gate::after {
     content: '';
     position: absolute;
-    bottom: -1px;
+    bottom: -5px;
     left: 50%;
     transform: translateX(-50%);
     width: 4px;
