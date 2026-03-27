@@ -36,10 +36,11 @@ mcp_read = FastMCP(
 mcp_actions = FastMCP(
     name="PulsarCD Actions",
     instructions=(
-        "PulsarCD action tools for building and deploying Docker stacks. "
+        "PulsarCD action tools for building, testing and deploying Docker stacks. "
         "Use build_stack to build a Docker image from a GitHub repository, "
+        "test_stack to run the test suite, "
         "and deploy_stack to deploy a stack to Docker Swarm. "
-        "Both return an action_id — use get_action_status (on the read MCP) "
+        "All return an action_id — use get_action_status (on the read MCP) "
         "to track progress."
     ),
     stateless_http=True,
@@ -198,6 +199,88 @@ async def deploy_stack(
 
     action.task = asyncio.create_task(_run_deploy())
     return json.dumps({"action_id": action_id, "action_type": "deploy", "repo": repo_name})
+
+
+# ---------------------------------------------------------------------------
+# Tool 3b: test_stack
+# ---------------------------------------------------------------------------
+@mcp_actions.tool(
+    description=(
+        "Run tests for a stack (executes the 'test' build target from "
+        "docker-compose.swarm.yml). "
+        "Returns an action_id — use get_action_status to track progress."
+    )
+)
+async def test_stack(
+    repo_name: str,
+    ssh_url: str,
+    branch: Optional[str] = None,
+    tag: Optional[str] = None,
+    commit: Optional[str] = None,
+) -> str:
+    """Run tests for a stack. Returns action_id for tracking."""
+    from .api import github_service, _background_actions, BackgroundAction
+
+    if not github_service or not github_service.is_configured():
+        return json.dumps({"error": "GitHub integration not configured"})
+
+    # Validate branch/commit/tag
+    owner = None
+    if ssh_url:
+        match = re.search(r"[:/]([^/]+)/[^/]+\.git$", ssh_url)
+        if match:
+            owner = match.group(1)
+
+    if branch and owner:
+        is_valid, error_msg = await github_service.validate_branch(owner, repo_name, branch)
+        if not is_valid:
+            return json.dumps({"error": error_msg})
+
+    if tag and owner:
+        if not re.match(r"^v?\d+(\.\d+){1,2}$", tag):
+            return json.dumps({"error": f"Invalid tag format: '{tag}'. Expected vX.X.X"})
+
+    if commit and owner:
+        if not re.match(r"^[a-fA-F0-9]{7,40}$", commit):
+            return json.dumps({"error": f"Invalid commit hash format: '{commit}'"})
+        is_valid, error_msg = await github_service.validate_commit(owner, repo_name, commit)
+        if not is_valid:
+            return json.dumps({"error": error_msg})
+
+    deployer, host_name = _get_deployer_and_host()
+
+    action_id = str(uuid.uuid4())[:8]
+    action = BackgroundAction(action_id, "test", repo_name)
+    _background_actions[action_id] = action
+
+    async def _run_test():
+        try:
+            result = await deployer.test(
+                repo_name,
+                ssh_url,
+                branch=branch,
+                tag=tag,
+                commit=commit,
+                output_callback=action.append_output,
+                cancel_event=action.cancel_event,
+            )
+            result["host"] = host_name
+            action.result = result
+            action.status = "completed" if result.get("success") else "failed"
+            if action.cancel_event.is_set():
+                action.status = "cancelled"
+        except Exception as e:
+            action.status = "failed"
+            action.result = {
+                "success": False,
+                "output": str(e),
+                "action": "test",
+                "repo": repo_name,
+            }
+            action.append_output(str(e))
+
+    action.task = asyncio.create_task(_run_test())
+    return json.dumps({"action_id": action_id, "action_type": "test", "repo": repo_name})
 
 
 # ---------------------------------------------------------------------------

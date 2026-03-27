@@ -384,32 +384,40 @@ deploy:
 
 ## Opérations via MCP (Model Context Protocol)
 
-PulsarCD expose un serveur MCP permettant aux agents IA d'interagir avec la plateforme. Le MCP est sécurisé par authentification Bearer token.
+PulsarCD expose **deux serveurs MCP distincts** permettant aux agents IA d'interagir avec la plateforme. La séparation isole les opérations de lecture (monitoring, logs) des opérations d'écriture (build, deploy). Les deux serveurs sont sécurisés par authentification Bearer token.
 
-### Endpoint
-
-```
-POST https://<TRAEFIK_HOST>/ai/mcp
-```
+| Serveur | Endpoint | Rôle |
+|---------|----------|------|
+| **PulsarCD Read** | `POST https://<TRAEFIK_HOST>/ai/mcp` | Lecture seule : logs, containers, hosts, statut |
+| **PulsarCD Actions** | `POST https://<TRAEFIK_HOST>/ai/actions/mcp` | Écriture : build et deploy de stacks |
 
 ### Authentification
 
 Chaque requête MCP nécessite un header `Authorization: Bearer <token>`.
-Deux types de tokens sont acceptés :
+Deux types de tokens sont acceptés (identiques pour les deux serveurs) :
 - **Clé API MCP** : configurée via `PULSARCD_MCP__API_KEY` (auto-générée au démarrage si non fournie, affichée dans les logs)
 - **JWT** : les mêmes tokens utilisés par l'interface web (obtenus via `/api/auth/login`)
 
-### Tools disponibles
+### Tools — PulsarCD Read (`/ai/mcp`)
 
 | Tool | Description | Paramètres |
 |------|-------------|------------|
 | `list_stacks` | Lister les stacks disponibles (repos GitHub starred) | aucun |
-| `build_stack` | Builder une image Docker depuis un repo GitHub | `repo_name`, `ssh_url`, `version`, `branch?`, `commit?` |
-| `deploy_stack` | Déployer une stack sur Docker Swarm | `repo_name`, `ssh_url`, `version`, `tag?` |
 | `list_containers` | Lister les containers et leur état | `host?`, `status?` |
 | `list_computers` | Lister les hosts/machines monitorés | aucun |
-| `search_logs` | Rechercher dans les logs collectés | `query?`, `hosts?`, `containers?`, `levels?`, `start_time?`, `end_time?`, `size?` |
+| `get_log_metadata` | Découvrir les services, containers, hosts et niveaux de log disponibles | aucun |
+| `search_logs` | Rechercher dans les logs collectés | `query?`, `github_project?`, `compose_services?`, `hosts?`, `containers?`, `levels?`, `http_status_min?`, `http_status_max?`, `last_hours?`, `start_time?`, `end_time?`, `opensearch_query?`, `size?` |
 | `get_action_status` | Vérifier le statut d'un build/deploy | `action_id` |
+
+### Tools — PulsarCD Actions (`/ai/actions/mcp`)
+
+| Tool | Description | Paramètres |
+|------|-------------|------------|
+| `build_stack` | Builder une image Docker depuis un repo GitHub | `repo_name`, `ssh_url`, `version`, `branch?`, `commit?` |
+| `test_stack` | Lancer les tests d'une stack (cible `test` du docker-compose.swarm.yml) | `repo_name`, `ssh_url`, `branch?`, `tag?`, `commit?` |
+| `deploy_stack` | Déployer une stack sur Docker Swarm | `repo_name`, `ssh_url`, `version`, `tag?` |
+
+> **Note** : `build_stack`, `test_stack` et `deploy_stack` retournent un `action_id`. Utilisez `get_action_status` (sur le serveur Read) pour suivre la progression.
 
 ### Configuration dans Claude Desktop
 
@@ -417,8 +425,15 @@ Deux types de tokens sont acceptés :
 {
   "mcpServers": {
     "pulsarcd": {
+      "type": "streamable-http",
       "url": "https://<TRAEFIK_HOST>/ai/mcp",
-      "transport": "streamable-http",
+      "headers": {
+        "Authorization": "Bearer <MCP_API_KEY>"
+      }
+    },
+    "pulsarcd-actions": {
+      "type": "streamable-http",
+      "url": "https://<TRAEFIK_HOST>/ai/actions/mcp",
       "headers": {
         "Authorization": "Bearer <MCP_API_KEY>"
       }
@@ -431,5 +446,5 @@ Deux types de tokens sont acceptés :
 
 | Variable | Description | Défaut |
 |----------|-------------|--------|
-| `PULSARCD_MCP__ENABLED` | Activer/désactiver le serveur MCP | `true` |
+| `PULSARCD_MCP__ENABLED` | Activer/désactiver les deux serveurs MCP | `true` |
 | `PULSARCD_MCP__API_KEY` | Clé API dédiée pour le MCP | auto-générée (UUID) |
