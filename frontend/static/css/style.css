@@ -4827,6 +4827,7 @@ a.btn {
     display: flex;
     flex-direction: column;
     flex: 1;
+    min-height: 0;
     overflow: hidden;
 }
 
@@ -4834,6 +4835,7 @@ a.btn {
     display: none;
     flex-direction: column;
     flex: 1;
+    min-height: 0;
     overflow: hidden;
     padding: 16px;
 }

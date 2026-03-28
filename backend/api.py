@@ -3046,6 +3046,14 @@ async def auto_build_poller():
         state["untagged_commits"] = untagged_count
 
         if latest_sha != state["last_sha"] and not state.get("building"):
+            # Check version_to_build transition config — skip if manual
+            _vb_cfg = pipeline_state.get_transition_config(name, "version_to_build")
+            _vb_mode = _vb_cfg.get("mode") if _vb_cfg else None
+            if _vb_mode == "manual":
+                logger.info("Auto-build skipped (version→build set to manual)", repo=name)
+                state["last_sha"] = latest_sha
+                return
+
             logger.info("New commit detected, triggering pipeline",
                         repo=name,
                         old_sha=state["last_sha"][:7],
@@ -3114,7 +3122,7 @@ async def get_pipeline_status():
 @app.get("/api/stacks/pipeline/{repo_name}/transition/{transition}")
 async def get_transition_config(repo_name: str, transition: str):
     """Get per-project transition config for a specific transition."""
-    valid = {"build_to_test", "test_to_deploy"}
+    valid = {"version_to_build", "build_to_test", "test_to_deploy"}
     if transition not in valid:
         return JSONResponse({"error": "Invalid transition"}, status_code=400)
     config = pipeline_state.get_transition_config(repo_name, transition)
@@ -3132,7 +3140,7 @@ async def get_transition_config(repo_name: str, transition: str):
 @app.put("/api/stacks/pipeline/{repo_name}/transition/{transition}")
 async def set_transition_config(repo_name: str, transition: str, request: Request):
     """Set per-project transition config for a specific transition."""
-    valid = {"build_to_test", "test_to_deploy"}
+    valid = {"version_to_build", "build_to_test", "test_to_deploy"}
     if transition not in valid:
         return JSONResponse({"error": "Invalid transition"}, status_code=400)
     body = await request.json()

@@ -4166,6 +4166,7 @@ function renderStacksList() {
             }
             return null;
         }
+        const gateVersionBuild = _gateDecision(pipeline, 'version_to_build');
         const gateBuildTest = _gateDecision(pipeline, 'build_to_test');
         const gateTestDeploy = _gateDecision(pipeline, 'test_to_deploy');
 
@@ -4226,8 +4227,9 @@ function renderStacksList() {
                             ${stepIcon(versionStep)}
                             <span>${escapeHtml(pipelineVersion)}</span>
                         </div>
-                        <span class="pipeline-transition-btn" style="pointer-events:none;">
+                        <span class="pipeline-transition-btn ${_gateArrowClass(pipeline, 'version', versionStep, buildStep)}${gateVersionBuild ? ' has-gate' : ''}${_transitionModeClass(pipeline, 'version_to_build')}" onclick="event.stopPropagation(); openTransitionConfig('${escapeHtml(repo.name)}', 'version_to_build')" title="Version → Build transition (click to configure)">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                            ${_transitionModeIcon(pipeline, 'version_to_build')}
                         </span>
                         <div class="pipeline-step step-${buildStep}" ${skipBuild ? 'title="Build: skipped (no build config)"' : `onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'build')" title="Build" style="cursor:pointer"`}>
                             ${skipBuild ? `<span class="step-icon">–</span>` : stepIcon(buildStep)}
@@ -4354,7 +4356,7 @@ function showGateDecision(repoName, transition) {
 // ============== Transition Config Modal ==============
 
 async function openTransitionConfig(repoName, transition) {
-    const label = transition === 'build_to_test' ? 'Build → Test' : 'Test → Deploy';
+    const label = transition === 'version_to_build' ? 'Version → Build' : transition === 'build_to_test' ? 'Build → Test' : 'Test → Deploy';
 
     // Create modal if not exists
     let modal = document.getElementById('transition-config-modal');
