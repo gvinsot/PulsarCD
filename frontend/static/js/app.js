@@ -3408,8 +3408,8 @@ function scheduleStacksStateUpdate() {
 }
 
 /**
- * Lightweight update: fetches only container states and updates DOM in-place
- * without re-rendering the entire stacks list.
+ * Incremental update: fetches container data grouped by stack (same endpoint
+ * as refreshStacks) plus pipeline/version metadata, then updates DOM in-place.
  */
 async function updateStacksContainerStates() {
     if (currentView !== 'stacks') return;
@@ -3422,7 +3422,7 @@ async function updateStacksContainerStates() {
         const fetchVersions = (_versionPollCounter % VERSION_POLL_EVERY === 0);
 
         const promises = [
-            apiGet('/containers/states'),
+            apiGet('/containers/grouped?refresh=true&group_by=stack'),
             apiGet('/hosts/metrics'),
             apiGet('/stacks/pipeline/status'),
             apiGet('/stacks/auto-build/status'),
@@ -3432,13 +3432,13 @@ async function updateStacksContainerStates() {
         }
 
         const results = await Promise.all(promises);
-        const statesData = results[0];
+        const containersData = results[0];
         const hostMetrics = results[1];
         const pipelineData = results[2];
         const autoBuildData = results[3];
         const tagsData = fetchVersions ? results[4] : null;
 
-        if (!statesData) return;
+        if (!containersData) return;
         if (hostMetrics) stacksHostMetrics = hostMetrics;
 
         // Update version + pipeline data if fetched
@@ -3466,56 +3466,18 @@ async function updateStacksContainerStates() {
                 needsRerender = true;
             }
         }
-        // Always update stacksContainers from statesData BEFORE any render,
-        // so that both full re-render and incremental update use fresh data.
-        const newContainersByStack = {};
-        for (const c of statesData) {
-            let stackName = null;
-            let serviceName = null;
 
-            // Try swarm labels first
-            if (c.labels) {
-                stackName = c.labels['com.docker.swarm.stack.namespace'] || null;
-                serviceName = c.labels['com.docker.swarm.service.name'] || null;
-            }
-
-            // Extract from name if needed
-            if (!stackName && c.name && c.name.includes('.')) {
-                const mainPart = c.name.split('.')[0];
-                if (mainPart.includes('_')) {
-                    const parts = mainPart.split('_', 1);
-                    stackName = parts[0];
-                    if (!serviceName) {
-                        serviceName = mainPart;
-                    }
-                }
-            }
-
-            if (!stackName) continue; // skip non-stack containers
-
-            if (!newContainersByStack[stackName]) {
-                newContainersByStack[stackName] = {};
-            }
-            if (!serviceName) serviceName = c.name;
-            if (!newContainersByStack[stackName][serviceName]) {
-                newContainersByStack[stackName][serviceName] = [];
-            }
-            newContainersByStack[stackName][serviceName].push(c);
-        }
-
-        // Update stacksContainers for each known repo
+        // Update stacksContainers from server-grouped data (same source as refreshStacks)
         for (const repo of stacksRepos) {
             const stackName = repoToStackName(repo.name);
-            const oldStackContainers = stacksContainers[stackName] || {};
-            const newStackContainers = newContainersByStack[stackName] || {};
+            const newStackContainers = containersData[stackName] || {};
 
-            // If this stack had no containers in the poll response at all,
+            // If this stack had no entry in the response at all but had containers before,
             // keep the old data — it's likely a transient fetch failure, not a real removal
-            if (!newContainersByStack[stackName] && Object.keys(oldStackContainers).length > 0) {
-                continue; // Skip update, keep existing data
+            if (!(stackName in containersData) && Object.keys(stacksContainers[stackName] || {}).length > 0) {
+                continue;
             }
 
-            // Replace with fresh data from this poll (no stale merge)
             stacksContainers[stackName] = newStackContainers;
         }
 

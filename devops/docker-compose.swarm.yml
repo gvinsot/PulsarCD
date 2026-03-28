@@ -78,7 +78,7 @@ services:
       - PULSARCD_OPENSEARCH__INDEX_PREFIX=pulsarcd
 
       # AI/vLLM configuration
-      - PULSARCD_AI__MODEL=${VLLM_MODEL:-txn545/Qwen3.5-122B-A10B-NVFP4}
+      - PULSARCD_AI__MODEL=${VLLM_MODEL:-Qwen/Qwen3.5-122B-A10B}
       - PULSARCD_VLLM_URL=${VLLM_URL:-http://vllm-dev-service:8000}
 
       # Collector settings - agents handle log/metrics collection
