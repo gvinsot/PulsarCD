@@ -2,11 +2,16 @@
 
 Validates Bearer tokens on every MCP request before it reaches the tool handlers.
 Accepts either a valid JWT (same tokens used by the web UI) or a dedicated MCP API key.
+
+Token can be provided via:
+- Authorization: Bearer <token> header (preferred)
+- ?token=<token> query parameter (fallback for SSE clients that cannot set headers)
 """
 
 import structlog
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
+from urllib.parse import parse_qs
 
 logger = structlog.get_logger()
 
@@ -26,15 +31,24 @@ class MCPAuthMiddleware:
         headers = dict(scope.get("headers", []))
         auth_header = headers.get(b"authorization", b"").decode("utf-8", errors="ignore")
 
-        if not auth_header.startswith("Bearer "):
+        token = None
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+        else:
+            # Fallback: token via query parameter (SSE clients cannot set headers)
+            qs = scope.get("query_string", b"").decode("utf-8", errors="ignore")
+            params = parse_qs(qs)
+            token_list = params.get("token")
+            if token_list:
+                token = token_list[0]
+
+        if not token:
             response = JSONResponse(
                 status_code=401,
-                content={"error": "MCP authentication required. Provide a Bearer token."},
+                content={"error": "MCP authentication required. Provide a Bearer token or ?token= query parameter."},
             )
             await response(scope, receive, send)
             return
-
-        token = auth_header[7:]
 
         # Lazy import to get current settings (from api.py, initialized in lifespan)
         from . import api as _api

@@ -11,10 +11,15 @@ PulsarCD exposes two [MCP (Model Context Protocol)](https://modelcontextprotocol
 
 ## Authentication
 
-Both servers require a `Bearer` token in the `Authorization` header. Two token types are accepted:
+Both servers accept two token types:
 
 - **MCP API key** — dedicated key printed in the server logs at startup, or set via `PULSARCD_MCP__API_KEY`
 - **JWT token** — the same token used by the web UI
+
+The token can be provided via:
+
+- `Authorization: Bearer <token>` header (preferred)
+- `?token=<token>` query parameter (fallback for SSE clients that cannot set custom headers)
 
 ## Configuration
 
