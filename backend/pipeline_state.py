@@ -413,10 +413,10 @@ class PipelineStateManager:
 
         Args:
             repo_name: Repository name
-            transition: "build_to_test" or "test_to_deploy"
+            transition: "version_to_build", "build_to_test" or "test_to_deploy"
             config: {"mode": "auto"|"auto_with_success"|"agent"|"manual"}
         """
-        valid_transitions = {"build_to_test", "test_to_deploy"}
+        valid_transitions = {"version_to_build", "build_to_test", "test_to_deploy"}
         valid_modes = {"auto", "auto_with_success", "agent", "manual"}
         if transition not in valid_transitions:
             return
