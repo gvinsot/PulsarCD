@@ -80,7 +80,7 @@ async def build_stack(
     commit: Optional[str] = None,
 ) -> str:
     """Build a stack image. Returns action_id for tracking."""
-    from .api import github_service, _background_actions, BackgroundAction
+    from .api import github_service, _background_actions, BackgroundAction, _set_pipeline, _notify_agent_failure
     from .github_service import StackDeployer
 
     if not github_service or not github_service.is_configured():
@@ -111,6 +111,8 @@ async def build_stack(
     action = BackgroundAction(action_id, "build", repo_name)
     _background_actions[action_id] = action
 
+    _set_pipeline(repo_name, "build", "running", version, build_id=action_id)
+
     async def _run_build():
         try:
             result = await deployer.build(
@@ -127,6 +129,10 @@ async def build_stack(
             action.status = "completed" if result.get("success") else "failed"
             if action.cancel_event.is_set():
                 action.status = "cancelled"
+            status = "success" if result.get("success") else "failed"
+            _set_pipeline(repo_name, "build", status, version, build_id=action_id, log_lines=action.output_lines)
+            if not result.get("success"):
+                await _notify_agent_failure("build", repo_name, version, result.get("output", ""))
         except Exception as e:
             action.status = "failed"
             action.result = {
@@ -136,6 +142,8 @@ async def build_stack(
                 "repo": repo_name,
             }
             action.append_output(str(e))
+            _set_pipeline(repo_name, "build", "failed", version, build_id=action_id, log_lines=action.output_lines)
+            await _notify_agent_failure("build", repo_name, version, str(e))
 
     action.task = asyncio.create_task(_run_build())
     return json.dumps({"action_id": action_id, "action_type": "build", "repo": repo_name})
@@ -157,7 +165,7 @@ async def deploy_stack(
     tag: Optional[str] = None,
 ) -> str:
     """Deploy a stack. Returns action_id for tracking."""
-    from .api import github_service, _background_actions, BackgroundAction
+    from .api import github_service, _background_actions, BackgroundAction, _set_pipeline, _notify_agent_failure, pipeline_state
     from .github_service import StackDeployer
 
     if not github_service or not github_service.is_configured():
@@ -171,6 +179,10 @@ async def deploy_stack(
     action_id = str(uuid.uuid4())[:8]
     action = BackgroundAction(action_id, "deploy", repo_name)
     _background_actions[action_id] = action
+
+    deploy_version = tag.lstrip('v') if tag else version
+    prev_build_id = pipeline_state.get_legacy(repo_name).get("build_action_id") if not tag else None
+    _set_pipeline(repo_name, "deploy", "running", deploy_version, build_id=prev_build_id, deploy_id=action_id)
 
     async def _run_deploy():
         try:
@@ -187,6 +199,11 @@ async def deploy_stack(
             action.status = "completed" if result.get("success") else "failed"
             if action.cancel_event.is_set():
                 action.status = "cancelled"
+            if result.get("success"):
+                _set_pipeline(repo_name, "done", "success", deploy_version, deploy_id=action_id, log_lines=action.output_lines)
+            else:
+                _set_pipeline(repo_name, "deploy", "failed", deploy_version, deploy_id=action_id, log_lines=action.output_lines)
+                await _notify_agent_failure("deploy", repo_name, deploy_version, result.get("output", ""))
         except Exception as e:
             action.status = "failed"
             action.result = {
@@ -196,6 +213,8 @@ async def deploy_stack(
                 "repo": repo_name,
             }
             action.append_output(str(e))
+            _set_pipeline(repo_name, "deploy", "failed", deploy_version, deploy_id=action_id, log_lines=action.output_lines)
+            await _notify_agent_failure("deploy", repo_name, deploy_version, str(e))
 
     action.task = asyncio.create_task(_run_deploy())
     return json.dumps({"action_id": action_id, "action_type": "deploy", "repo": repo_name})
@@ -219,7 +238,7 @@ async def test_stack(
     commit: Optional[str] = None,
 ) -> str:
     """Run tests for a stack. Returns action_id for tracking."""
-    from .api import github_service, _background_actions, BackgroundAction
+    from .api import github_service, _background_actions, BackgroundAction, _set_pipeline, _notify_agent_failure, pipeline_state
 
     if not github_service or not github_service.is_configured():
         return json.dumps({"error": "GitHub integration not configured"})
@@ -253,6 +272,9 @@ async def test_stack(
     action = BackgroundAction(action_id, "test", repo_name)
     _background_actions[action_id] = action
 
+    version = tag.lstrip('v') if tag else pipeline_state.get_legacy(repo_name).get("version", "")
+    _set_pipeline(repo_name, "test", "running", version, test_id=action_id)
+
     async def _run_test():
         try:
             result = await deployer.test(
@@ -269,6 +291,10 @@ async def test_stack(
             action.status = "completed" if result.get("success") else "failed"
             if action.cancel_event.is_set():
                 action.status = "cancelled"
+            status = "success" if result.get("success") else "failed"
+            _set_pipeline(repo_name, "test", status, version, test_id=action_id, log_lines=action.output_lines)
+            if not result.get("success"):
+                await _notify_agent_failure("test", repo_name, version, result.get("output", ""))
         except Exception as e:
             action.status = "failed"
             action.result = {
@@ -278,6 +304,8 @@ async def test_stack(
                 "repo": repo_name,
             }
             action.append_output(str(e))
+            _set_pipeline(repo_name, "test", "failed", version, test_id=action_id, log_lines=action.output_lines)
+            await _notify_agent_failure("test", repo_name, version, str(e))
 
     action.task = asyncio.create_task(_run_test())
     return json.dumps({"action_id": action_id, "action_type": "test", "repo": repo_name})
