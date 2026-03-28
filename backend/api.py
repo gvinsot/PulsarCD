@@ -2694,12 +2694,13 @@ _buildable_cache: Dict[str, bool] = {}  # {repo_name: has_build_config}
 
 
 @app.get("/api/stacks/buildable")
-async def get_stacks_buildable() -> Dict[str, bool]:
+async def get_stacks_buildable(refresh: bool = Query(default=False)) -> Dict[str, bool]:
     """Return which stacks have build: directives in their docker-compose.swarm.yml."""
     if not github_service.is_configured():
         return {}
-    if _buildable_cache:
+    if _buildable_cache and not refresh:
         return _buildable_cache
+    _buildable_cache.clear()
     repos = await github_service.get_starred_repos()
     deployer, _ = _get_deployer_and_host()
     for repo in repos:
@@ -2817,16 +2818,17 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
             _auto_build_state[repo_name]["building"] = False
         return
 
-    # Check if this repo has build: directives in its compose file
-    buildable = _buildable_cache.get(repo_name)
-    if buildable is None:
-        try:
-            buildable = await deployer.has_build_config(repo_name)
-            _buildable_cache[repo_name] = buildable
-        except Exception as e:
-            logger.warning("Failed to check build config, assuming buildable",
-                           repo=repo_name, error=str(e))
-            buildable = True
+    # Check if this repo has build: directives in its compose file.
+    # Always re-check on disk (invalidate cache) so that a newly added
+    # Dockerfile / build: directive is picked up without server restart.
+    invalidate_buildable_cache(repo_name)
+    try:
+        buildable = await deployer.has_build_config(repo_name)
+        _buildable_cache[repo_name] = buildable
+    except Exception as e:
+        logger.warning("Failed to check build config, assuming buildable",
+                       repo=repo_name, error=str(e))
+        buildable = True
 
     initial_stage = "build" if buildable else "deploy"
     _set_pipeline(repo_name, initial_stage, "running", version, build_id=None, test_id=None, deploy_id=None)

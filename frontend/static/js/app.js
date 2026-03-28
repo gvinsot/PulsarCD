@@ -3337,7 +3337,7 @@ async function refreshStacks() {
         apiGet('/hosts/metrics'),
         apiGet('/stacks/pipeline/status'),
         apiGet('/stacks/auto-build/status'),
-        apiGet('/stacks/buildable'),
+        apiGet('/stacks/buildable?refresh=true'),
     ]);
 
     if (!reposData || !reposData.repos) {
