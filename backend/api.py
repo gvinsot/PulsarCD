@@ -483,8 +483,8 @@ async def admin_llm_connection_test(request: Request):
                 content = (
                     data.get("choices", [{}])[0]
                     .get("message", {})
-                    .get("content", "")
-                )
+                    .get("content")
+                ) or ""
                 model_used = data.get("model", model)
                 return {"ok": True, "model": model_used, "reply": content.strip()}
     except aiohttp.ClientError as e:

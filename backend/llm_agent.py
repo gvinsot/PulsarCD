@@ -784,7 +784,7 @@ class LLMAgent:
             # If no tool calls, the agent is done
             tool_calls = assistant_msg.get("tool_calls")
             if finish_reason != "tool_calls" and not tool_calls:
-                final_content = assistant_msg.get("content", "")
+                final_content = assistant_msg.get("content") or ""
                 if iteration == 0 and openai_tools:
                     logger.warning("LLM agent responded without calling any tools",
                                    response_preview=final_content[:200])

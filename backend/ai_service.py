@@ -205,7 +205,7 @@ class AIService:
                 data = await resp.json()
                 choices = data.get("choices", [])
                 if choices:
-                    return choices[0].get("message", {}).get("content", "")
+                    return choices[0].get("message", {}).get("content") or ""
             else:
                 error_text = await resp.text()
                 logger.error("vLLM request failed", status=resp.status, error=error_text[:200])
