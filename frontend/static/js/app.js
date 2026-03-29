@@ -4200,18 +4200,6 @@ function renderStacksList() {
                     </span>` : ''}
                 </span>
                 <div class="host-header-actions" onclick="event.stopPropagation();">
-                    <a class="btn btn-sm btn-ghost" href="${escapeHtml(repo.html_url)}" target="_blank" rel="noopener" title="Open on GitHub">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                            <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
-                        </svg>
-                        <span>GitHub</span>
-                    </a>
-                    <button class="btn btn-sm btn-ghost" onclick="cleanupRepoTags('${escapeHtml(repo.owner)}', '${escapeHtml(repo.name)}')" title="Clean up old tags (keep latest 5)">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                            <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                        </svg>
-                        <span>Tags</span>
-                    </button>
                     <button class="btn btn-sm btn-ghost" onclick="showStackActivity('${escapeHtml(repo.owner)}', '${escapeHtml(repo.name)}')" title="View git activity">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <circle cx="18" cy="18" r="3"/>
@@ -5630,7 +5618,7 @@ async function cleanupRepoTags(owner, repo) {
         return;
     }
     try {
-        const resp = await fetch(`/api/admin/tag-cleanup/repo/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}?dry_run=false`, { method: 'POST' });
+        const resp = await fetch(`${API_BASE}/admin/tag-cleanup/repo/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}?dry_run=false`, { method: 'POST', headers: authHeaders() });
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({}));
             alert(`Tag cleanup failed: ${err.detail || resp.statusText}`);
@@ -5659,6 +5647,25 @@ async function showStackActivity(owner, repo) {
     const diffPanel = document.getElementById('activity-diff-panel');
 
     title.textContent = `Activity: ${repo}`;
+
+    // Populate header action buttons (GitHub + Tags cleanup)
+    const headerActions = document.querySelector('#stack-activity-modal .modal-header-actions');
+    const githubUrl = `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    headerActions.innerHTML = `
+        <a class="btn btn-sm btn-ghost" href="${githubUrl}" target="_blank" rel="noopener" title="Open on GitHub">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
+            </svg>
+            <span>GitHub</span>
+        </a>
+        <button class="btn btn-sm btn-ghost" onclick="cleanupRepoTags('${owner.replace(/'/g, '\\\'')}', '${repo.replace(/'/g, '\\\'')}')" title="Clean up old tags (keep latest 5)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            </svg>
+            <span>Tags</span>
+        </button>
+        <button class="modal-close" onclick="closeActivityModal()">&times;</button>
+    `;
     graphContainer.innerHTML = '<div class="loading-placeholder">Loading activity...</div>';
     diffPanel.style.display = 'none';
     modal.classList.add('active');
