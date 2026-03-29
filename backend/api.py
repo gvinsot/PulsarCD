@@ -2705,7 +2705,11 @@ async def get_stacks_buildable(refresh: bool = Query(default=False)) -> Dict[str
     deployer, _ = _get_deployer_and_host()
     for repo in repos:
         name = repo["name"]
+        ssh_url = repo.get("ssh_url", "")
         try:
+            # Update local clone so newly added build: directives are detected
+            if ssh_url:
+                await deployer._ensure_repo_cloned(name, ssh_url)
             _buildable_cache[name] = await deployer.has_build_config(name)
         except Exception as e:
             logger.warning("Failed to check build config, assuming buildable",
@@ -2818,9 +2822,15 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
             _auto_build_state[repo_name]["building"] = False
         return
 
+    # Update local clone BEFORE checking build config, so that newly added
+    # build: directives in docker-compose.swarm.yml are picked up.
+    try:
+        await deployer._ensure_repo_cloned(repo_name, ssh_url)
+    except Exception as e:
+        logger.warning("Pipeline: failed to update repo clone before build check",
+                       repo=repo_name, error=str(e))
+
     # Check if this repo has build: directives in its compose file.
-    # Always re-check on disk (invalidate cache) so that a newly added
-    # Dockerfile / build: directive is picked up without server restart.
     invalidate_buildable_cache(repo_name)
     try:
         buildable = await deployer.has_build_config(repo_name)
