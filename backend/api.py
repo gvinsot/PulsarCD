@@ -2632,11 +2632,23 @@ async def save_stack_env(repo_name: str, request: Request):
     return {"success": True, "message": message, "repo": repo_name}
 
 
+_deployed_tags_cache = None
+_deployed_tags_cache_time = None
+_DEPLOYED_TAGS_CACHE_TTL = 10  # seconds
+
+
 @app.get("/api/stacks/deployed-tags")
 async def get_stacks_deployed_tags():
     """Get deployed image tags and latest built tags for all stacks."""
+    global _deployed_tags_cache, _deployed_tags_cache_time
+
     if not github_service.is_configured():
         raise HTTPException(status_code=400, detail="GitHub integration not configured")
+
+    # Return cached result if fresh enough
+    now = asyncio.get_event_loop().time()
+    if _deployed_tags_cache and _deployed_tags_cache_time and (now - _deployed_tags_cache_time) < _DEPLOYED_TAGS_CACHE_TTL:
+        return _deployed_tags_cache
 
     repos = await github_service.get_starred_repos()
     deployer = StackDeployer(settings.github, None)
@@ -2655,7 +2667,10 @@ async def get_stacks_deployed_tags():
     deployed_tags = {name: tag for name, tag in all_deployed.items() if tag}
     latest_built = {name: tag for name, tag in latest_results if tag}
 
-    return {"tags": deployed_tags, "latest_built": latest_built}
+    result = {"tags": deployed_tags, "latest_built": latest_built}
+    _deployed_tags_cache = result
+    _deployed_tags_cache_time = now
+    return result
 
 
 # ============== Tag Cleanup ==============

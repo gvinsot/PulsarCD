@@ -3337,7 +3337,7 @@ async function refreshStacks() {
         apiGet('/hosts/metrics'),
         apiGet('/stacks/pipeline/status'),
         apiGet('/stacks/auto-build/status'),
-        apiGet('/stacks/buildable?refresh=true'),
+        apiGet('/stacks/buildable'),
     ]);
 
     if (!reposData || !reposData.repos) {
@@ -3422,7 +3422,7 @@ async function updateStacksContainerStates() {
         const fetchVersions = (_versionPollCounter % VERSION_POLL_EVERY === 0);
 
         const promises = [
-            apiGet('/containers/grouped?refresh=true&group_by=stack'),
+            apiGet('/containers/grouped?group_by=stack'),
             apiGet('/hosts/metrics'),
             apiGet('/stacks/pipeline/status'),
             apiGet('/stacks/auto-build/status'),
