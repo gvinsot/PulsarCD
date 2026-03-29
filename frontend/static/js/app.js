@@ -4206,6 +4206,12 @@ function renderStacksList() {
                         </svg>
                         <span>GitHub</span>
                     </a>
+                    <button class="btn btn-sm btn-ghost" onclick="cleanupRepoTags('${escapeHtml(repo.owner)}', '${escapeHtml(repo.name)}')" title="Clean up old tags (keep latest 5)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                            <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                        </svg>
+                        <span>Tags</span>
+                    </button>
                     <button class="btn btn-sm btn-ghost" onclick="showStackActivity('${escapeHtml(repo.owner)}', '${escapeHtml(repo.name)}')" title="View git activity">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <circle cx="18" cy="18" r="3"/>
@@ -5618,6 +5624,29 @@ let activityTagMap = {};
 let activityCommitBranches = {};
 
 const BRANCH_COLORS = ['#00d4aa', '#0ea5e9', '#8b5cf6', '#f59e0b', '#ef4444', '#ec4899', '#14b8a6', '#f97316'];
+
+async function cleanupRepoTags(owner, repo) {
+    if (!confirm(`Delete all old tags for "${repo}"?\n\nThe 5 most recent tags, currently deployed tags, and tags newer than 30 days will be preserved.`)) {
+        return;
+    }
+    try {
+        const resp = await fetch(`/api/admin/tag-cleanup/repo/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}?dry_run=false`, { method: 'POST' });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            alert(`Tag cleanup failed: ${err.detail || resp.statusText}`);
+            return;
+        }
+        const result = await resp.json();
+        const deleted = result.deleted || [];
+        if (deleted.length === 0) {
+            showNotification('success', `No tags to clean up for ${repo}`);
+        } else {
+            showNotification('success', `Deleted ${deleted.length} tag(s) for ${repo}: ${deleted.join(', ')}`);
+        }
+    } catch (e) {
+        alert('Tag cleanup failed: ' + (e.message || e));
+    }
+}
 
 async function showStackActivity(owner, repo) {
     activityOwner = owner;

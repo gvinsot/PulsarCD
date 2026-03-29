@@ -107,6 +107,12 @@ class TagCleaner:
                      repos=len(repos), deleted=sum(len(s.get("deleted", [])) for s in summary))
         return {"repos_checked": len(repos), "results": summary}
 
+    async def run_cleanup_repo(self, owner: str, repo: str) -> Dict[str, Any]:
+        """Run cleanup for a single repo. Public entry point for per-repo cleanup."""
+        deployed_map = await self._get_deployed_tags([{"owner": owner, "name": repo}])
+        result = await self._cleanup_repo(owner, repo, deployed_map.get(repo))
+        return result or {"repo": repo, "total_tags": 0, "protected": [], "deleted": []}
+
     # ------------------------------------------------------------------
     # Per-repo logic
     # ------------------------------------------------------------------

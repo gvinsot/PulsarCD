@@ -2680,6 +2680,27 @@ async def trigger_tag_cleanup(
     return result
 
 
+@app.post("/api/admin/tag-cleanup/repo/{owner}/{repo}")
+async def trigger_repo_tag_cleanup(
+    owner: str,
+    repo: str,
+    dry_run: bool = Query(default=None, description="Override dry_run setting for this run"),
+):
+    """Manually trigger tag cleanup for a single repository."""
+    if not tag_cleaner:
+        raise HTTPException(status_code=400, detail="Tag cleanup not configured")
+
+    original_dry_run = tag_cleaner._config.dry_run
+    if dry_run is not None:
+        tag_cleaner._config.dry_run = dry_run
+    try:
+        result = await tag_cleaner.run_cleanup_repo(owner, repo)
+    finally:
+        tag_cleaner._config.dry_run = original_dry_run
+
+    return result
+
+
 @app.get("/api/admin/tag-cleanup/config")
 async def get_tag_cleanup_config():
     """Get current tag cleanup configuration."""

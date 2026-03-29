@@ -726,7 +726,9 @@ done
 
 # Build remaining single-arch images in one batch via docker compose
 if [ "$BUILD_FAILED" = false ] && [ -n "$SINGLEARCH_IMAGES" ]; then
-    log_info "Building single-arch images via docker compose..."
+    # Default to linux/amd64 unless DOCKER_DEFAULT_PLATFORM is already set
+    export DOCKER_DEFAULT_PLATFORM="${DOCKER_DEFAULT_PLATFORM:-linux/amd64}"
+    log_info "Building single-arch images via docker compose (platform: $DOCKER_DEFAULT_PLATFORM)..."
     if ! docker compose -f "$COMPOSE_PATH" build $BUILD_ARGS; then
         log_error "Docker compose build failed!"
         BUILD_FAILED=true
