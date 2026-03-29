@@ -486,7 +486,7 @@ async def admin_llm_connection_test(request: Request):
                     .get("content")
                 ) or ""
                 model_used = data.get("model", model)
-                return {"ok": True, "model": model_used, "reply": content.strip()}
+                return {"ok": True, "model": model_used, "reply": (content or "").strip()}
     except aiohttp.ClientError as e:
         logger.warning("LLM connection test failed", url=chat_url, error=str(e))
         return {"ok": False, "error": f"Connection failed: {e}"}
