@@ -3369,9 +3369,9 @@ let stacksHostMetrics = {};
 // ============== Stacks Polling (incremental container state updates) ==============
 
 let stacksPollingInterval = null;
-const STACKS_POLL_INTERVAL = 5000; // 5 seconds
+const STACKS_POLL_INTERVAL = 2000; // 2 seconds
 let _versionPollCounter = 0;
-const VERSION_POLL_EVERY = 6; // Re-fetch versions every 6th poll (~30s)
+const VERSION_POLL_EVERY = 3; // Re-fetch versions every 3rd poll (~6s)
 
 function startStacksPolling() {
     stopStacksPolling();

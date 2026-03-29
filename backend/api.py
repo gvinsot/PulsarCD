@@ -2785,7 +2785,7 @@ async def trigger_pipeline_endpoint(
         logger.info("Auto-tagged commit for pipeline", repo=repo_name, tag=new_tag, commit=commit[:7])
         await _trigger_pipeline(repo_name, ssh_url, version=next_version, tag=new_tag)
         return {"status": "started", "repo": repo_name, "tag": new_tag, "version": next_version, "auto_tagged": True}
-AUTO_BUILD_POLL_INTERVAL = 30  # seconds – repo checks are batched so this is cheap
+AUTO_BUILD_POLL_INTERVAL = 10  # seconds – repo checks are batched so this is cheap
 
 # Pipeline stages in order
 PIPELINE_STAGES = ["build", "test", "deploy", "done"]
