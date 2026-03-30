@@ -45,8 +45,9 @@ The token can be provided via:
 
 | Tool | Description |
 |------|-------------|
-| `build_stack` | Build a Docker image from a GitHub repository. Returns an `action_id` |
-| `deploy_stack` | Deploy a stack to Docker Swarm. Returns an `action_id` |
+| `build_stack` | Build a Docker image from a GitHub repository. Accepts `version` to choose which version to build. Returns an `action_id` |
+| `test_stack` | Run the test suite for a stack. Accepts `version` to choose which version to test. Returns an `action_id` |
+| `deploy_stack` | Deploy a stack to Docker Swarm. Accepts `version` (or `tag`) to choose which version to deploy. Returns an `action_id` |
 
 Both action tools run in the background and return an `action_id`. Use `get_action_status` on the read server to track progress.
 

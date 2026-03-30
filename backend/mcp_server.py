@@ -40,6 +40,11 @@ mcp_actions = FastMCP(
         "Use build_stack to build a Docker image from a GitHub repository, "
         "test_stack to run the test suite, "
         "and deploy_stack to deploy a stack to Docker Swarm. "
+        "Each tool accepts a version parameter to choose which version number "
+        "to build, test or deploy. "
+        "The version format is semver: MAJOR.MINOR or MAJOR.MINOR.PATCH "
+        "(e.g. '1.0', '2.1.3'). Tags may optionally be prefixed with 'v' "
+        "(e.g. 'v1.2.0'). "
         "All return an action_id — use get_action_status (on the read MCP) "
         "to track progress."
     ),
@@ -227,12 +232,14 @@ async def deploy_stack(
     description=(
         "Run tests for a stack (executes the 'test' build target from "
         "docker-compose.swarm.yml). "
+        "Optionally specify a version number to test. "
         "Returns an action_id — use get_action_status to track progress."
     )
 )
 async def test_stack(
     repo_name: str,
     ssh_url: str,
+    version: Optional[str] = None,
     branch: Optional[str] = None,
     tag: Optional[str] = None,
     commit: Optional[str] = None,
@@ -272,8 +279,8 @@ async def test_stack(
     action = BackgroundAction(action_id, "test", repo_name)
     _background_actions[action_id] = action
 
-    version = tag.lstrip('v') if tag else pipeline_state.get_legacy(repo_name).get("version", "")
-    _set_pipeline(repo_name, "test", "running", version, test_id=action_id)
+    resolved_version = tag.lstrip('v') if tag else (version or pipeline_state.get_legacy(repo_name).get("version", ""))
+    _set_pipeline(repo_name, "test", "running", resolved_version, test_id=action_id)
 
     async def _run_test():
         try:
@@ -292,9 +299,9 @@ async def test_stack(
             if action.cancel_event.is_set():
                 action.status = "cancelled"
             status = "success" if result.get("success") else "failed"
-            _set_pipeline(repo_name, "test", status, version, test_id=action_id, log_lines=action.output_lines)
+            _set_pipeline(repo_name, "test", status, resolved_version, test_id=action_id, log_lines=action.output_lines)
             if not result.get("success"):
-                await _notify_agent_failure("test", repo_name, version, result.get("output", ""))
+                await _notify_agent_failure("test", repo_name, resolved_version, result.get("output", ""))
         except Exception as e:
             action.status = "failed"
             action.result = {
@@ -304,8 +311,8 @@ async def test_stack(
                 "repo": repo_name,
             }
             action.append_output(str(e))
-            _set_pipeline(repo_name, "test", "failed", version, test_id=action_id, log_lines=action.output_lines)
-            await _notify_agent_failure("test", repo_name, version, str(e))
+            _set_pipeline(repo_name, "test", "failed", resolved_version, test_id=action_id, log_lines=action.output_lines)
+            await _notify_agent_failure("test", repo_name, resolved_version, str(e))
 
     action.task = asyncio.create_task(_run_test())
     return json.dumps({"action_id": action_id, "action_type": "test", "repo": repo_name})
