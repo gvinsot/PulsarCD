@@ -3586,28 +3586,12 @@ function updateStackDom(repoName, stackName, services) {
         const headerEl = groupEl.querySelector('.compose-header');
         if (!headerEl) return;
 
-        // Find the service name from the header text
-        // The display name is shown in the header, we need to match to the service key
         const containerListEl = groupEl.querySelector('.container-list');
         if (!containerListEl) return;
 
-        // Try to identify which service this compose-group corresponds to
-        // We look at existing container items for data-container-id or match by service name in text
-        let matchedServiceName = null;
-        for (const [svcName, containers] of Object.entries(services)) {
-            let displayName = svcName;
-            if (svcName.startsWith(stackName + '_')) {
-                displayName = svcName.substring(stackName.length + 1);
-            }
-            // Check if header text contains this service name
-            const headerText = headerEl.textContent.trim();
-            if (headerText.includes(displayName)) {
-                matchedServiceName = svcName;
-                break;
-            }
-        }
-
-        if (!matchedServiceName) return;
+        // Identify which service this compose-group corresponds to via data attribute
+        const matchedServiceName = groupEl.dataset.service;
+        if (!matchedServiceName || !(matchedServiceName in services)) return;
         const containers = services[matchedServiceName] || [];
 
         // Update group count
@@ -3990,7 +3974,7 @@ function renderStacksList() {
                 const firstContainerImage = containers.length > 0 ? containers[0].image : '';
                 
                 containersHtml += `
-                    <div class="compose-group${hasContainers ? '' : ' compose-group-empty'}">
+                    <div class="compose-group${hasContainers ? '' : ' compose-group-empty'}" data-service="${escapeHtml(serviceName)}">
                         <div class="compose-header">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
