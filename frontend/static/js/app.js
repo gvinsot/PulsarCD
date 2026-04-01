@@ -4536,11 +4536,15 @@ async function pipelineStack(repoName, sshUrl) {
 
     // Load tags, untagged commits and branches in parallel
     try {
-        const [tagsData, untaggedData, branchesData] = await Promise.all([
+        const [tagsResult, untaggedResult, branchesResult] = await Promise.allSettled([
             apiGet(`/stacks/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/tags?limit=20`),
             apiGet(`/stacks/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/untagged-commits?limit=10`),
             apiGet(`/stacks/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/branches`),
         ]);
+
+        const tagsData = tagsResult.status === 'fulfilled' ? tagsResult.value : null;
+        const untaggedData = untaggedResult.status === 'fulfilled' ? untaggedResult.value : null;
+        const branchesData = branchesResult.status === 'fulfilled' ? branchesResult.value : null;
 
         // Populate branch selector
         const defaultBranch = (tagsData && tagsData.default_branch) || 'main';
@@ -4589,6 +4593,7 @@ async function pipelineStack(repoName, sshUrl) {
                 <p>Failed to load data: ${escapeHtml(e.message || 'Unknown error')}</p>
             </div>
         `;
+        branchSelect.innerHTML = '<option value="main">main (default)</option>';
     }
 }
 
