@@ -2052,12 +2052,13 @@ async def get_untagged_commits(
     owner: str,
     repo: str,
     limit: int = Query(default=10, ge=1, le=50, description="Maximum number of commits to check"),
+    branch: str = Query(default=None, description="Branch name (defaults to repo default branch)"),
 ):
     """Get recent commits that don't have a tag (not yet built/deployed)."""
     if not github_service.is_configured():
         raise HTTPException(status_code=400, detail="GitHub integration not configured")
 
-    return await github_service.get_untagged_commits(owner, repo, limit)
+    return await github_service.get_untagged_commits(owner, repo, limit, branch=branch)
 
 
 @app.get("/api/stacks/{owner}/{repo}/activity")

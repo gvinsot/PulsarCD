@@ -4498,6 +4498,7 @@ async function saveTransitionConfig() {
 
 let currentPipelineRepo = null;
 let currentPipelineSshUrl = null;
+let currentPipelineOwner = null;
 let selectedPipelineTag = null;
 let selectedPipelineCommit = null;  // commit SHA for untagged builds
 
@@ -4513,12 +4514,14 @@ async function pipelineStack(repoName, sshUrl) {
     const untaggedSection = document.getElementById('pipeline-untagged-section');
     const untaggedList = document.getElementById('pipeline-untagged-list');
     const selectedDisplay = document.getElementById('pipeline-selected-tag');
+    const branchSelect = document.getElementById('pipeline-branch-select');
 
     title.textContent = `Pipeline: ${repoName}`;
     tagsList.innerHTML = '<div class="loading-placeholder">Loading...</div>';
     untaggedSection.style.display = 'none';
     untaggedList.innerHTML = '';
     selectedDisplay.style.display = 'none';
+    branchSelect.innerHTML = '<option value="">Loading branches...</option>';
 
     modal.classList.add('active');
 
@@ -4529,13 +4532,27 @@ async function pipelineStack(repoName, sshUrl) {
         return;
     }
     const owner = ownerMatch[1];
+    currentPipelineOwner = owner;
 
-    // Load tags and untagged commits in parallel
+    // Load tags, untagged commits and branches in parallel
     try {
-        const [tagsData, untaggedData] = await Promise.all([
+        const [tagsData, untaggedData, branchesData] = await Promise.all([
             apiGet(`/stacks/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/tags?limit=20`),
             apiGet(`/stacks/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/untagged-commits?limit=10`),
+            apiGet(`/stacks/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/branches`),
         ]);
+
+        // Populate branch selector
+        const defaultBranch = (tagsData && tagsData.default_branch) || 'main';
+        if (branchesData && branchesData.branches && branchesData.branches.length > 0) {
+            branchSelect.innerHTML = branchesData.branches.map(b =>
+                `<option value="${escapeHtml(b.name)}" ${b.name === defaultBranch ? 'selected' : ''}>
+                    ${escapeHtml(b.name)}${b.protected ? ' \uD83D\uDD12' : ''}
+                </option>`
+            ).join('');
+        } else {
+            branchSelect.innerHTML = `<option value="${escapeHtml(defaultBranch)}">${escapeHtml(defaultBranch)}</option>`;
+        }
 
         // Render untagged commits if any
         const untaggedCommits = (untaggedData && untaggedData.untagged_commits) || [];
@@ -4670,8 +4687,46 @@ function closePipelineModal() {
     document.getElementById('stack-pipeline-modal').classList.remove('active');
     currentPipelineRepo = null;
     currentPipelineSshUrl = null;
+    currentPipelineOwner = null;
     selectedPipelineTag = null;
     selectedPipelineCommit = null;
+}
+
+async function onPipelineBranchChange() {
+    if (!currentPipelineOwner || !currentPipelineRepo) return;
+
+    const branch = document.getElementById('pipeline-branch-select').value;
+    const untaggedSection = document.getElementById('pipeline-untagged-section');
+    const untaggedList = document.getElementById('pipeline-untagged-list');
+    const selectedDisplay = document.getElementById('pipeline-selected-tag');
+
+    selectedPipelineTag = null;
+    selectedPipelineCommit = null;
+    selectedDisplay.style.display = 'none';
+    untaggedSection.style.display = 'none';
+    untaggedList.innerHTML = '<div class="loading-placeholder">Loading...</div>';
+
+    try {
+        const branchParam = branch ? `&branch=${encodeURIComponent(branch)}` : '';
+        const untaggedData = await apiGet(
+            `/stacks/${encodeURIComponent(currentPipelineOwner)}/${encodeURIComponent(currentPipelineRepo)}/untagged-commits?limit=10${branchParam}`
+        );
+
+        const untaggedCommits = (untaggedData && untaggedData.untagged_commits) || [];
+        if (untaggedCommits.length > 0) {
+            untaggedSection.style.display = '';
+            document.getElementById('pipeline-untagged-count').textContent = untaggedCommits.length;
+            renderPipelineUntaggedList(untaggedCommits);
+            selectPipelineCommit(untaggedCommits[0].sha);
+        } else {
+            untaggedSection.style.display = 'none';
+            untaggedList.innerHTML = '';
+        }
+    } catch (e) {
+        console.error('Failed to load untagged commits for branch:', e);
+        untaggedSection.style.display = 'none';
+        untaggedList.innerHTML = '';
+    }
 }
 
 async function submitPipeline() {

@@ -550,22 +550,23 @@ class GitHubService:
             logger.error("Exception creating tag", repo=f"{owner}/{repo}", tag=tag_name, error=str(e))
             return {"success": False, "error": str(e)}
 
-    async def get_untagged_commits(self, owner: str, repo: str, limit: int = 10) -> Dict[str, Any]:
+    async def get_untagged_commits(self, owner: str, repo: str, limit: int = 10, branch: str = None) -> Dict[str, Any]:
         """Get recent commits that don't have a tag pointing to them.
 
-        Compares the latest commits on the default branch against all known tags
+        Compares the latest commits on the given branch against all known tags
         to find commits that haven't been tagged (= not yet built/deployed).
 
         Args:
             owner: Repository owner
             repo: Repository name
             limit: Max commits to check
+            branch: Branch name (defaults to repo default branch)
 
         Returns:
             Dict with untagged_commits list and latest_tag info
         """
         # Fetch recent commits and tags in parallel
-        commits_task = self.get_repo_commits(owner, repo, per_page=limit)
+        commits_task = self.get_repo_commits(owner, repo, branch=branch, per_page=limit)
         tags_task = self.get_repo_tags(owner, repo, limit=50)
 
         commits_data, tags_data = await asyncio.gather(commits_task, tags_task)
