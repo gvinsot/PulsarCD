@@ -2484,7 +2484,7 @@ async def get_action_status(action_id: str) -> Dict[str, Any]:
                         "action_id": action_id,
                         "action_type": stage_name,
                         "repo": repo_name,
-                        "status": stage.status or "completed",
+                        "status": stage.status if stage.status and stage.status != "idle" else "unknown",
                         "restored": True,
                     }
 

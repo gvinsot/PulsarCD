@@ -3931,6 +3931,15 @@ function renderStacksList() {
             versionStep = 'success'; buildStep = skipBuild ? 'skipped' : 'success'; testStep = 'success'; deployStep = 'pending';
         } else if (untaggedCount > 0) {
             versionStep = 'pending'; buildStep = skipBuild ? 'skipped' : 'pending'; testStep = 'pending'; deployStep = 'pending';
+        } else if (pipeline && pipeline.status === 'idle' && isDeployed) {
+            // Pipeline exists but is idle (e.g. after restart) — show per-stage statuses or success fallback
+            const ds = pipeline.stages && pipeline.stages.deploy ? pipeline.stages.deploy.status : null;
+            const bs = pipeline.stages && pipeline.stages.build ? pipeline.stages.build.status : null;
+            const ts = pipeline.stages && pipeline.stages.test ? pipeline.stages.test.status : null;
+            versionStep = 'success';
+            buildStep = skipBuild ? 'skipped' : (bs === 'failed' ? 'failed' : (effectiveHadBuild ? 'success' : 'idle'));
+            testStep = ts === 'failed' ? 'failed' : (effectiveHadTest ? 'success' : 'idle');
+            deployStep = ds === 'failed' ? 'failed' : 'success';
         } else if (isDeployed) {
             versionStep = 'success'; buildStep = skipBuild ? 'skipped' : 'success'; testStep = 'success'; deployStep = 'success';
         }
