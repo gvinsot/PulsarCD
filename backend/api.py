@@ -2877,7 +2877,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                        repo=repo_name, error=str(e))
         buildable = True
 
-    initial_stage = "build" if buildable else "deploy"
+    initial_stage = "build" if buildable else "test"
     _set_pipeline(repo_name, initial_stage, "running", version, build_id=None, test_id=None, deploy_id=None)
     pipeline_state.set_skip_build(repo_name, not buildable)
 
