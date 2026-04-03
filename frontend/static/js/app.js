@@ -5667,7 +5667,7 @@ let activityCommitBranches = {};
 const BRANCH_COLORS = ['#00d4aa', '#0ea5e9', '#8b5cf6', '#f59e0b', '#ef4444', '#ec4899', '#14b8a6', '#f97316'];
 
 async function cleanupRepoTags(owner, repo) {
-    if (!confirm(`Delete all old tags for "${repo}"?\n\nThe 5 most recent tags, currently deployed tags, and tags newer than 30 days will be preserved.`)) {
+    if (!confirm(`Delete all old tags and their Docker registry images for "${repo}"?\n\nThe 5 most recent tags, currently deployed tags, and tags newer than 30 days will be preserved.`)) {
         return;
     }
     try {
@@ -5679,10 +5679,15 @@ async function cleanupRepoTags(owner, repo) {
         }
         const result = await resp.json();
         const deleted = result.deleted || [];
+        const deletedImages = result.deleted_images || [];
         if (deleted.length === 0) {
             showNotification('success', `No tags to clean up for ${repo}`);
         } else {
-            showNotification('success', `Deleted ${deleted.length} tag(s) for ${repo}: ${deleted.join(', ')}`);
+            let msg = `Deleted ${deleted.length} tag(s) for ${repo}: ${deleted.join(', ')}`;
+            if (deletedImages.length > 0) {
+                msg += `\n🐳 ${deletedImages.length} registry image(s) removed`;
+            }
+            showNotification('success', msg);
         }
     } catch (e) {
         alert('Tag cleanup failed: ' + (e.message || e));

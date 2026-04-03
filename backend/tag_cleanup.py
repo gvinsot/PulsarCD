@@ -111,7 +111,7 @@ class TagCleaner:
         """Run cleanup for a single repo. Public entry point for per-repo cleanup."""
         deployed_map = await self._get_deployed_tags([{"owner": owner, "name": repo}])
         result = await self._cleanup_repo(owner, repo, deployed_map.get(repo))
-        return result or {"repo": repo, "total_tags": 0, "protected": [], "deleted": []}
+        return result or {"repo": repo, "total_tags": 0, "protected": [], "deleted": [], "deleted_images": []}
 
     # ------------------------------------------------------------------
     # Per-repo logic
@@ -165,6 +165,7 @@ class TagCleaner:
             return None
 
         deleted_names: List[str] = []
+        deleted_images: List[str] = []
         for tag in to_delete:
             tag_name = tag["name"]
             version = tag_name.lstrip("v")
@@ -176,7 +177,8 @@ class TagCleaner:
                 continue
 
             # 1) Delete Docker registry images for this tag
-            await self._delete_registry_images(repo, version, tag.get("sha", ""))
+            images = await self._delete_registry_images(repo, version, tag.get("sha", ""))
+            deleted_images.extend(images)
 
             # 2) Delete git tag via GitHub API
             await self._delete_git_tag(owner, repo, tag_name)
@@ -187,6 +189,7 @@ class TagCleaner:
             "total_tags": len(tags),
             "protected": list(protected),
             "deleted": deleted_names,
+            "deleted_images": deleted_images,
         }
 
     # ------------------------------------------------------------------
@@ -229,7 +232,7 @@ class TagCleaner:
     # Docker Registry V2 image deletion
     # ------------------------------------------------------------------
 
-    async def _delete_registry_images(self, repo: str, version: str, commit_sha: str) -> None:
+    async def _delete_registry_images(self, repo: str, version: str, commit_sha: str) -> List[str]:
         """Delete Docker image tags from a V2-compatible registry.
 
         Each build pushes up to 3 tags per image:
@@ -238,9 +241,12 @@ class TagCleaner:
           - {commit-sha-short}   (7-char prefix)
 
         We delete the full-version tag and the commit-sha tag.
+
+        Returns:
+            List of deleted image references (e.g. ["myapp/web:1.0.3"])
         """
         if not self._registry_url:
-            return
+            return []
 
         tags_to_delete = [version]
         if commit_sha:
@@ -252,16 +258,19 @@ class TagCleaner:
         # belong to this project.  Use the _catalog endpoint.
         catalog = await self._registry_list_repos()
         if catalog is None:
-            return
+            return []
 
         # Match registry repos that start with the project stack name
         from .github_service import GitHubService
         stack_name = GitHubService._repo_to_stack_name(repo)
         matching_repos = [r for r in catalog if r.startswith(f"{stack_name}/") or r == stack_name]
 
+        deleted: List[str] = []
         for reg_repo in matching_repos:
             for tag in tags_to_delete:
-                await self._delete_registry_tag(reg_repo, tag)
+                if await self._delete_registry_tag(reg_repo, tag):
+                    deleted.append(f"{reg_repo}:{tag}")
+        return deleted
 
     async def _registry_list_repos(self) -> Optional[List[str]]:
         """List repositories in the Docker registry via GET /v2/_catalog."""
