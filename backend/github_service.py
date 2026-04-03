@@ -981,7 +981,10 @@ class StackDeployer:
                 logger.warning("Failed to update repo", repo=repo_name, error=output)
                 return True, f"Repository exists (update failed: {output})"
 
-            return True, "Repository updated successfully"
+            # Get current commit hash
+            commit_success, commit_hash = await self._run_command(f"cd {repo_path} && git rev-parse --short HEAD")
+            commit_id = commit_hash.strip() if commit_success else "unknown"
+            return True, f"Repository updated successfully (commit {commit_id})"
 
     async def _run_command(self, command: str, output_callback=None, cancel_event=None) -> tuple[bool, str]:
         """Run a shell command on the host.

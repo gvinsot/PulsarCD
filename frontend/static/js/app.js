@@ -6146,6 +6146,7 @@ let currentActionLogsRepo = null;
 let actionLogsPollTimer = null;
 let actionLogsPollOffset = 0;
 let actionLogsFirstRender = true;
+let actionLogsEventSource = null;
 
 function openActionLogs(actionId, actionType, repoName) {
     currentActionLogsId = actionId;
@@ -6207,6 +6208,10 @@ function stopActionLogsPoll() {
         clearTimeout(actionLogsPollTimer);
         actionLogsPollTimer = null;
     }
+    if (actionLogsEventSource) {
+        actionLogsEventSource.close();
+        actionLogsEventSource = null;
+    }
 }
 
 function appendLogLine(content, line) {
@@ -6221,6 +6226,52 @@ function appendLogLine(content, line) {
 
 async function startActionLogsPoll(actionId) {
     stopActionLogsPoll();
+    actionLogsPollOffset = 0;
+    actionLogsFirstRender = true;
+
+    // Try SSE streaming first for real-time logs
+    const token = getAuthToken();
+    const sseUrl = `${API_BASE}/stacks/actions/${actionId}/logs/stream?offset=0${token ? '&token=' + encodeURIComponent(token) : ''}`;
+    const es = new EventSource(sseUrl);
+    actionLogsEventSource = es;
+
+    es.onmessage = function(event) {
+        if (actionId !== currentActionLogsId) { es.close(); return; }
+        const content = document.getElementById('action-logs-content');
+        try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'line') {
+                if (actionLogsFirstRender) {
+                    content.innerHTML = '';
+                    actionLogsFirstRender = false;
+                }
+                appendLogLine(content, data.line);
+                content.scrollTop = content.scrollHeight;
+            } else if (data.type === 'done') {
+                if (actionLogsFirstRender) {
+                    content.innerHTML = '';
+                    actionLogsFirstRender = false;
+                }
+                const statusLine = document.createElement('div');
+                statusLine.className = `log-line ${data.status === 'completed' ? 'log-success' : 'log-error'}`;
+                statusLine.textContent = `--- ${data.status.toUpperCase()} ---`;
+                content.appendChild(statusLine);
+                content.scrollTop = content.scrollHeight;
+                es.close();
+                actionLogsEventSource = null;
+            }
+        } catch (e) { /* ignore parse errors */ }
+    };
+
+    es.onerror = function() {
+        es.close();
+        actionLogsEventSource = null;
+        // Fallback to polling (action may no longer be in memory)
+        startActionLogsFallbackPoll(actionId);
+    };
+}
+
+async function startActionLogsFallbackPoll(actionId) {
     actionLogsPollOffset = 0;
     actionLogsFirstRender = true;
 
