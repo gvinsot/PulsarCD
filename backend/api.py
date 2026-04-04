@@ -2935,7 +2935,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                     _set_pipeline(repo_name, "build", "gate_rejected", built_version,
                                   build_id=build_id, test_id=None, deploy_id=None, log_lines=build_action.output_lines)
                     return
-                elif _bt_mode == "agent" or (_bt_mode is None and llm_agent):
+                elif _bt_mode == "agent":
                     if llm_agent:
                         approved, reason = await llm_agent.evaluate_gate(
                             "build_to_test", repo_name, built_version or "",
@@ -2951,6 +2951,12 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                         logger.info("Pipeline: gate build→test approved", repo=repo_name, reason=reason[:100])
                     else:
                         pipeline_state.record_gate(repo_name, "build_to_test", True, "Agent mode but no LLM configured, auto-approved", version=built_version)
+                elif _bt_mode is None:
+                    logger.info("Pipeline: build→test no mode configured, falling back to manual gate", repo=repo_name)
+                    pipeline_state.record_gate(repo_name, "build_to_test", False, "No transition mode configured — falling back to manual", version=built_version)
+                    _set_pipeline(repo_name, "build", "gate_rejected", built_version,
+                                  build_id=build_id, test_id=None, deploy_id=None, log_lines=build_action.output_lines)
+                    return
                 # else: "auto" or "auto_with_success" — proceed (success already checked above)
 
             else:
@@ -2992,7 +2998,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                 _set_pipeline(repo_name, "test", "gate_rejected", built_version,
                               build_id=build_id, test_id=test_id, deploy_id=None, log_lines=test_action.output_lines)
                 return
-            elif _td_mode == "agent" or (_td_mode is None and llm_agent):
+            elif _td_mode == "agent":
                 if llm_agent:
                     approved, reason = await llm_agent.evaluate_gate(
                         "test_to_deploy", repo_name, built_version or "",
@@ -3008,6 +3014,12 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                     logger.info("Pipeline: gate test→deploy approved", repo=repo_name, reason=reason[:100])
                 else:
                     pipeline_state.record_gate(repo_name, "test_to_deploy", True, "Agent mode but no LLM configured, auto-approved", version=built_version)
+            elif _td_mode is None:
+                logger.info("Pipeline: test→deploy no mode configured, falling back to manual gate", repo=repo_name)
+                pipeline_state.record_gate(repo_name, "test_to_deploy", False, "No transition mode configured — falling back to manual", version=built_version)
+                _set_pipeline(repo_name, "test", "gate_rejected", built_version,
+                              build_id=build_id, test_id=test_id, deploy_id=None, log_lines=test_action.output_lines)
+                return
             # else: "auto" or "auto_with_success" — proceed (success already checked above)
 
             # ── Step 3: Deploy ──
