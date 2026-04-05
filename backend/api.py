@@ -22,7 +22,7 @@ from .auth import create_token, decode_token
 from .collector import Collector
 from .config import load_config, Settings
 from .models import (
-    ActionRequest, ActionResult, ContainerInfo, ContainerStatus,
+    ActionRequest, ActionResult, ContainerAction, ContainerInfo, ContainerStatus,
     DashboardStats, LogSearchQuery, LogSearchResult, TimeSeriesPoint, TimeSeriesByHost
 )
 from .opensearch_client import OpenSearchClient
@@ -1078,10 +1078,36 @@ async def get_container_env(host: str, container_id: str) -> Dict[str, Any]:
 @app.post("/api/containers/action", response_model=ActionResult)
 async def execute_container_action(request: ActionRequest) -> ActionResult:
     """Execute an action on a container (start, stop, restart, etc.).
-    
+
     If an agent is online for the target host, the action is queued for the agent.
     Otherwise, the action is executed directly via the collector (SSH/Docker API).
+
+    For Swarm service containers, restart is always handled via the Swarm manager
+    (force-update) rather than the agent, because `docker restart <container_id>`
+    does not work reliably for Swarm-managed containers.
     """
+    # For Swarm service restarts, always use the collector path which correctly
+    # uses force_update_service via the Swarm manager API.
+    # docker restart <container_id> on a Swarm container stops it, but Swarm
+    # replaces the container with a new one (new ID), so the restart command
+    # fails on the now-dead container.
+    if request.action == ContainerAction.RESTART and collector._swarm_routing_enabled:
+        container = await collector._find_container(request.host, request.container_id)
+        if container and container.labels:
+            service_name = container.labels.get("com.docker.swarm.service.name")
+            if service_name:
+                success, message = await collector.execute_action(
+                    request.host,
+                    request.container_id,
+                    request.action.value,
+                )
+                return ActionResult(
+                    success=success,
+                    message=message,
+                    container_id=request.container_id,
+                    action=request.action,
+                )
+
     # Check if an agent is online for this host.
     # The agent registers with its own hostname which may differ from the Docker node
     # hostname stored in ContainerInfo.host (e.g. FQDN vs short name, or configured
@@ -1109,10 +1135,10 @@ async def execute_container_action(request: ActionRequest) -> ActionResult:
                 "action": request.action.value,
             },
         )
-        
+
         # Wait for the action to complete (with timeout)
         completed_action = await actions_queue.wait_for_action(action_obj.id, timeout=30.0)
-        
+
         if not completed_action:
             return ActionResult(
                 success=False,
@@ -1120,21 +1146,21 @@ async def execute_container_action(request: ActionRequest) -> ActionResult:
                 container_id=request.container_id,
                 action=request.action,
             )
-        
+
         return ActionResult(
             success=completed_action.success or False,
             message=completed_action.result or "Action completed",
             container_id=request.container_id,
             action=request.action,
         )
-    
+
     # No agent online - try direct execution via collector
     success, message = await collector.execute_action(
-        request.host, 
-        request.container_id, 
+        request.host,
+        request.container_id,
         request.action.value
     )
-    
+
     return ActionResult(
         success=success,
         message=message,

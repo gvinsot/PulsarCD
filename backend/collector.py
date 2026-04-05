@@ -561,10 +561,10 @@ class Collector:
     async def execute_action(self, host: str, container_id: str, action: str) -> tuple:
         """Execute an action on a container.
 
-        If Swarm routing is enabled, actions are executed through the
-        Swarm manager. For containers on worker nodes, uses Swarm API
-        (service update --force for restart) since the manager's Docker
-        socket can only manage local containers.
+        If Swarm routing is enabled, restart on any Swarm service container
+        (manager or worker) uses service update --force via the Swarm manager.
+        Other actions on worker-node containers are blocked (use service-level
+        operations instead).
         """
         from .models import ContainerAction
 
@@ -573,33 +573,36 @@ class Collector:
         except ValueError:
             return False, f"Invalid action: {action}"
 
-        # Check if this is a Swarm container on a remote worker node
+        # Check if this is a Swarm service container
         if self._swarm_routing_enabled and self._swarm_manager_host:
             container = await self._find_container(host, container_id)
             is_on_manager = (
                 host == self._swarm_manager_host or
                 host == self._swarm_manager_hostname
             )
-            
-            # If the container is on a worker node (not on manager), use Swarm API
-            if not is_on_manager and container:
+
+            if container:
                 service_name = None
                 if container.labels:
                     service_name = container.labels.get("com.docker.swarm.service.name")
-                
+
                 if service_name:
+                    # For restart, always use Swarm force-update (on manager AND worker nodes).
+                    # docker restart <container_id> does not work reliably for Swarm services
+                    # because Swarm manages the container lifecycle and replaces stopped containers.
                     if container_action == ContainerAction.RESTART:
                         manager_client = self.clients.get(self._swarm_manager_host)
                         if manager_client:
                             return await manager_client.force_update_service(service_name)
-                    elif container_action in (ContainerAction.STOP, ContainerAction.REMOVE):
-                        # For stop/remove on a Swarm container, scale down or remove service
-                        return False, (
-                            f"Cannot {action} a Swarm container on a worker node directly. "
-                            f"Use 'Remove' on the service '{service_name}' instead."
-                        )
-                    else:
-                        return False, f"Action '{action}' not supported for Swarm containers on worker nodes"
+                    elif not is_on_manager:
+                        # For other actions on worker nodes, block unsupported operations
+                        if container_action in (ContainerAction.STOP, ContainerAction.REMOVE):
+                            return False, (
+                                f"Cannot {action} a Swarm container on a worker node directly. "
+                                f"Use 'Remove' on the service '{service_name}' instead."
+                            )
+                        else:
+                            return False, f"Action '{action}' not supported for Swarm containers on worker nodes"
 
         # Standard path: use routing client
         client = self._get_exec_client(host)
