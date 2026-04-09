@@ -3409,14 +3409,13 @@ async def _handle_ssh_terminal(websocket, host_config, cols, rows, session_id):
     """Interactive SSH terminal session via asyncssh PTY."""
     import asyncssh
     from pathlib import Path
+    from .ssh_client import resolve_known_hosts, save_host_key_if_needed
 
-    # Resolve known_hosts setting for terminal SSH
-    known_hosts_setting = ()
-    if host_config.ssh_known_hosts_path:
-        if host_config.ssh_known_hosts_path.lower() == "none":
-            known_hosts_setting = None
-        else:
-            known_hosts_setting = host_config.ssh_known_hosts_path
+    known_hosts_setting, save_key = resolve_known_hosts(
+        host_config.ssh_known_hosts_path,
+        host_config.hostname,
+        host_config.port,
+    )
     options = {
         "host": host_config.hostname,
         "port": host_config.port,
@@ -3428,6 +3427,7 @@ async def _handle_ssh_terminal(websocket, host_config, cols, rows, session_id):
         options["client_keys"] = [str(key_path)]
 
     async with asyncssh.connect(**options) as conn:
+        save_host_key_if_needed(conn, save_key, host_config.hostname, host_config.port)
         process = await conn.create_process(
             term_type="xterm-256color",
             term_size=(cols, rows),

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import re
 import shlex
 from datetime import datetime
@@ -19,6 +20,72 @@ from .models import (
 from . import utils
 
 logger = structlog.get_logger()
+
+# ---------- TOFU (Trust On First Use) helpers ----------
+DEFAULT_KNOWN_HOSTS_PATH = str(Path.home() / ".ssh" / "known_hosts")
+
+
+def _host_is_known(known_hosts_path: str, hostname: str, port: int) -> bool:
+    """Check whether *hostname*:*port* already has an entry in *known_hosts_path*."""
+    if not os.path.isfile(known_hosts_path):
+        return False
+    try:
+        kh = asyncssh.read_known_hosts(known_hosts_path)
+        result = kh.match(hostname, None, port)
+        # result[0] = trusted host keys, result[1] = trusted CA keys
+        return bool(result[0] or result[1])
+    except Exception:
+        return False
+
+
+def _save_host_key(known_hosts_path: str, hostname: str, port: int, key) -> None:
+    """Append a server host key to the known_hosts file (TOFU)."""
+    try:
+        Path(known_hosts_path).parent.mkdir(parents=True, exist_ok=True)
+        key_data = key.export_public_key("openssh").decode("utf-8").strip()
+        host_entry = f"[{hostname}]:{port}" if port and port != 22 else hostname
+        with open(known_hosts_path, "a") as fh:
+            fh.write(f"{host_entry} {key_data}\n")
+        logger.info("TOFU: saved new host key", host=hostname, port=port,
+                     file=known_hosts_path)
+    except Exception as exc:
+        logger.warning("TOFU: failed to save host key", host=hostname,
+                       error=str(exc))
+
+
+def resolve_known_hosts(
+    ssh_known_hosts_path: Optional[str], hostname: str, port: int
+):
+    """Resolve the ``known_hosts`` parameter for :func:`asyncssh.connect` with
+    Trust-On-First-Use semantics (equivalent to ``StrictHostKeyChecking=accept-new``).
+
+    Returns ``(known_hosts_setting, save_key)`` where *save_key* indicates that
+    the server key should be persisted after a successful connection.
+    """
+    if ssh_known_hosts_path:
+        if ssh_known_hosts_path.lower() == "none":
+            return None, False          # verification explicitly disabled
+        return ssh_known_hosts_path, False  # use the caller-supplied file
+
+    # Default path — TOFU behaviour
+    kh_path = DEFAULT_KNOWN_HOSTS_PATH
+    if _host_is_known(kh_path, hostname, port):
+        return kh_path, False            # host already trusted → strict check
+    return None, True                    # unknown host → accept & save later
+
+
+def save_host_key_if_needed(
+    conn: asyncssh.SSHClientConnection,
+    save_key: bool,
+    hostname: str,
+    port: int,
+) -> None:
+    """Persist the server host key when *save_key* is ``True`` (TOFU)."""
+    if not save_key:
+        return
+    server_key = conn.get_server_host_key()
+    if server_key:
+        _save_host_key(DEFAULT_KNOWN_HOSTS_PATH, hostname, port, server_key)
 
 
 def is_localhost(hostname: str) -> bool:
@@ -67,14 +134,11 @@ class SSHClient:
             
         async with self._lock:
             if not self._is_connection_open():
-                # Resolve known_hosts: None disables verification, a path uses
-                # a specific file, default (empty) auto-discovers ~/.ssh/known_hosts
-                known_hosts_setting = ()
-                if self.config.ssh_known_hosts_path:
-                    if self.config.ssh_known_hosts_path.lower() == "none":
-                        known_hosts_setting = None  # explicitly disabled
-                    else:
-                        known_hosts_setting = self.config.ssh_known_hosts_path
+                known_hosts_setting, save_key = resolve_known_hosts(
+                    self.config.ssh_known_hosts_path,
+                    self.config.hostname,
+                    self.config.port,
+                )
                 options = {
                     "host": self.config.hostname,
                     "port": self.config.port,
@@ -87,6 +151,10 @@ class SSHClient:
                     options["client_keys"] = [str(key_path)]
                     
                 self._connection = await asyncssh.connect(**options)
+                save_host_key_if_needed(
+                    self._connection, save_key,
+                    self.config.hostname, self.config.port,
+                )
                 logger.info("SSH connected", host=self.config.name)
                 
             return self._connection
