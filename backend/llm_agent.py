@@ -316,6 +316,8 @@ class LLMAgent:
         self._cooldown_map: Dict[str, datetime] = {}
         self._history_path = Path(data_dir) / "agent_history.json"
         self._history: List[Dict[str, Any]] = self._load_history()
+        # Shared HTTP session — avoids "Too many open files" from per-call sessions
+        self._session: Optional[aiohttp.ClientSession] = None
         logger.info("LLM agent initialized",
                      chat_url=self._llm_chat_url,
                      model=self._llm_model,
@@ -332,6 +334,18 @@ class LLMAgent:
             except Exception as e:
                 logger.warning("Failed to load agent history", error=str(e))
         return []
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """Return the shared HTTP session, creating it if needed."""
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
+    async def close(self) -> None:
+        """Close the shared HTTP session."""
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     def _save_history(self) -> None:
         """Persist agent history to file."""
@@ -578,35 +592,35 @@ class LLMAgent:
 
             try:
                 payload = {"jsonrpc": "2.0", "method": "tools/list", "id": 1}
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        server_url,
-                        json=payload,
-                        headers=headers,
-                        timeout=aiohttp.ClientTimeout(total=10),
-                    ) as resp:
-                        data = await _parse_mcp_response(resp)
-                        mcp_tools = data.get("result", {}).get("tools", [])
-                        for tool in mcp_tools:
-                            tool_name = tool["name"]
-                            raw_schema = tool.get("inputSchema", {
-                                "type": "object",
-                                "properties": {},
-                            })
-                            tools.append({
-                                "type": "function",
-                                "function": {
-                                    "name": tool_name,
-                                    "description": tool.get("description", ""),
-                                    "parameters": self._sanitize_tool_schema(raw_schema),
-                                },
-                            })
-                            self._tool_server_map[tool_name] = (server_url, api_key)
+                session = await self._get_session()
+                async with session.post(
+                    server_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
+                    data = await _parse_mcp_response(resp)
+                    mcp_tools = data.get("result", {}).get("tools", [])
+                    for tool in mcp_tools:
+                        tool_name = tool["name"]
+                        raw_schema = tool.get("inputSchema", {
+                            "type": "object",
+                            "properties": {},
+                        })
+                        tools.append({
+                            "type": "function",
+                            "function": {
+                                "name": tool_name,
+                                "description": tool.get("description", ""),
+                                "parameters": self._sanitize_tool_schema(raw_schema),
+                            },
+                        })
+                        self._tool_server_map[tool_name] = (server_url, api_key)
 
-                        logger.info("MCP tools discovered",
-                                    server=server.name,
-                                    tool_count=len(mcp_tools),
-                                    tools=[t["name"] for t in mcp_tools])
+                    logger.info("MCP tools discovered",
+                                server=server.name,
+                                tool_count=len(mcp_tools),
+                                tools=[t["name"] for t in mcp_tools])
 
             except Exception as e:
                 all_servers_ok = False
@@ -641,28 +655,28 @@ class LLMAgent:
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    server_url,
-                    json=payload,
-                    headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as resp:
-                    data = await _parse_mcp_response(resp)
+            session = await self._get_session()
+            async with session.post(
+                server_url,
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                data = await _parse_mcp_response(resp)
 
-                    if "error" in data:
-                        error = data["error"]
-                        return f"Tool error: {error.get('message', str(error))}"
+                if "error" in data:
+                    error = data["error"]
+                    return f"Tool error: {error.get('message', str(error))}"
 
-                    result = data.get("result", {})
-                    content_parts = result.get("content", [])
-                    text_parts = []
-                    for part in content_parts:
-                        if isinstance(part, dict):
-                            text_parts.append(part.get("text", json.dumps(part)))
-                        else:
-                            text_parts.append(str(part))
-                    return "\n".join(text_parts) if text_parts else json.dumps(result)
+                result = data.get("result", {})
+                content_parts = result.get("content", [])
+                text_parts = []
+                for part in content_parts:
+                    if isinstance(part, dict):
+                        text_parts.append(part.get("text", json.dumps(part)))
+                    else:
+                        text_parts.append(str(part))
+                return "\n".join(text_parts) if text_parts else json.dumps(result)
 
         except Exception as e:
             logger.warning("MCP tool call failed",
@@ -739,35 +753,35 @@ class LLMAgent:
                 headers["Authorization"] = f"Bearer {self._llm_api_key}"
 
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        self._llm_chat_url,
-                        json=payload,
-                        headers=headers,
-                        timeout=aiohttp.ClientTimeout(total=120),
-                    ) as resp:
-                        if resp.status != 200:
-                            body = await resp.text()
-                            body_short = body[:500]
-                            logger.error("LLM API error",
-                                         status=resp.status,
-                                         url=self._llm_chat_url,
-                                         model=self._llm_model,
-                                         has_tools=bool(use_tools),
-                                         tool_count=len(use_tools) if use_tools else 0,
-                                         max_tokens=max_output,
-                                         msg_count=len(messages),
-                                         body=body[:1000])
-                            # If tools caused the error, retry without them
-                            if use_tools and resp.status in (400, 404):
-                                logger.warning(
-                                    "Retrying without tools",
-                                    status=resp.status)
-                                tools_supported = False
-                                continue
-                            return f"LLM API error (status {resp.status}): {body_short}"
+                session = await self._get_session()
+                async with session.post(
+                    self._llm_chat_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=120),
+                ) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        body_short = body[:500]
+                        logger.error("LLM API error",
+                                     status=resp.status,
+                                     url=self._llm_chat_url,
+                                     model=self._llm_model,
+                                     has_tools=bool(use_tools),
+                                     tool_count=len(use_tools) if use_tools else 0,
+                                     max_tokens=max_output,
+                                     msg_count=len(messages),
+                                     body=body[:1000])
+                        # If tools caused the error, retry without them
+                        if use_tools and resp.status in (400, 404):
+                            logger.warning(
+                                "Retrying without tools",
+                                status=resp.status)
+                            tools_supported = False
+                            continue
+                        return f"LLM API error (status {resp.status}): {body_short}"
 
-                        data = await resp.json()
+                    data = await resp.json()
 
             except Exception as e:
                 logger.error("LLM API request failed",

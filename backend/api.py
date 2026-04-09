@@ -214,6 +214,8 @@ async def lifespan(app: FastAPI):
     await collector.stop()
     await opensearch.close()
     await github_service.close()
+    if llm_agent:
+        await llm_agent.close()
 
 
 app = FastAPI(
