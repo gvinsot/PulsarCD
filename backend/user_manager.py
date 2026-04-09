@@ -7,6 +7,7 @@ Auto-creates a default admin user on first boot.
 import asyncio
 import json
 import os
+import secrets
 from pathlib import Path
 from typing import List, Optional
 
@@ -45,9 +46,21 @@ class UserManager:
                 logger.error("Failed to parse users file, starting fresh",
                              path=str(self._path), error=str(e))
 
-        # Auto-create default admin from env vars or fallback
+        # Auto-create default admin from env vars or generated password
         username = os.environ.get("PULSARCD_AUTH__USERNAME", "admin")
-        password = os.environ.get("PULSARCD_AUTH__PASSWORD", "changeme")
+        password = os.environ.get("PULSARCD_AUTH__PASSWORD", "")
+        if not password:
+            password = secrets.token_urlsafe(16)
+            logger.warning(
+                "No PULSARCD_AUTH__PASSWORD set. Generated random admin password — "
+                "change it immediately via the UI or set PULSARCD_AUTH__PASSWORD.",
+                generated_password=password,
+            )
+        elif password == "changeme":
+            logger.warning(
+                "Default password 'changeme' detected. Change it immediately "
+                "via the UI or set PULSARCD_AUTH__PASSWORD to a strong value."
+            )
         self._users = [User(
             username=username,
             password_hash=_bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode(),

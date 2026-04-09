@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import re
+import shlex
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
@@ -871,15 +872,15 @@ class StackDeployer:
     async def _ensure_git_configured(self) -> None:
         """Ensure git is configured with user name and email."""
         if self.config.username:
-            await self._run_command(f"git config --global user.name '{self.config.username}'")
+            await self._run_command(f"git config --global user.name {shlex.quote(self.config.username)}")
         if self.config.useremail:
-            await self._run_command(f"git config --global user.email '{self.config.useremail}'")
+            await self._run_command(f"git config --global user.email {shlex.quote(self.config.useremail)}")
 
     async def _ensure_docker_login(self) -> None:
         """Ensure docker is logged in to the registry."""
         if self.config.registry_url and self.config.registry_username and self.config.registry_password:
             # Use echo to pipe password to avoid it showing in command history
-            login_cmd = f"echo '{self.config.registry_password}' | docker login {self.config.registry_url} -u '{self.config.registry_username}' --password-stdin"
+            login_cmd = f"echo {shlex.quote(self.config.registry_password)} | docker login {shlex.quote(self.config.registry_url)} -u {shlex.quote(self.config.registry_username)} --password-stdin"
             success, output = await self._run_command(login_cmd)
             if success:
                 logger.info("Docker login successful", registry=self.config.registry_url)
@@ -1164,15 +1165,15 @@ class StackDeployer:
             # Build command with optional branch/tag/commit parameters
             # Pass absolute repo_path to avoid path computation mismatch
             # Script format: build-push.sh <folder> <version> [branch/tag] [commit] [--no-cache]
-            build_cmd = f"cd {scripts_path} && bash build-push.sh \"{repo_path}\" {version}"
+            build_cmd = f"cd {shlex.quote(scripts_path)} && bash build-push.sh {shlex.quote(repo_path)} {shlex.quote(version)}"
             if checkout_ref:
-                build_cmd += f" {checkout_ref}"
+                build_cmd += f" {shlex.quote(checkout_ref)}"
                 if commit:
-                    build_cmd += f" {commit}"
+                    build_cmd += f" {shlex.quote(commit)}"
                 else:
                     build_cmd += f" \"\""
             elif commit:
-                build_cmd += f" \"\" {commit}"
+                build_cmd += f" \"\" {shlex.quote(commit)}"
             else:
                 build_cmd += f" \"\" \"\""
             if no_cache:
@@ -1259,9 +1260,9 @@ class StackDeployer:
 
             # Pass absolute repo_path to avoid path computation mismatch
             # Script format: deploy-service.sh <folder> <version> [branch/tag]
-            deploy_cmd = f"cd {scripts_path} && bash deploy-service.sh \"{repo_path}\" {deploy_version}"
+            deploy_cmd = f"cd {shlex.quote(scripts_path)} && bash deploy-service.sh {shlex.quote(repo_path)} {shlex.quote(deploy_version)}"
             if checkout_ref:
-                deploy_cmd += f" {checkout_ref}"
+                deploy_cmd += f" {shlex.quote(checkout_ref)}"
 
             if output_callback and clone_msg:
                 for line in clone_msg.split('\n'):
@@ -1333,13 +1334,13 @@ class StackDeployer:
             repo_path = f"{repos_path}/{repo_name}"
 
             # Script format: test.sh <folder> [branch/tag] [commit]
-            test_cmd = f"cd {scripts_path} && bash test.sh \"{repo_path}\""
+            test_cmd = f"cd {shlex.quote(scripts_path)} && bash test.sh {shlex.quote(repo_path)}"
             if checkout_ref:
-                test_cmd += f" {checkout_ref}"
+                test_cmd += f" {shlex.quote(checkout_ref)}"
                 if commit:
-                    test_cmd += f" {commit}"
+                    test_cmd += f" {shlex.quote(commit)}"
             elif commit:
-                test_cmd += f" \"\" {commit}"
+                test_cmd += f" \"\" {shlex.quote(commit)}"
 
             if output_callback and clone_msg:
                 for line in clone_msg.split('\n'):

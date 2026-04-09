@@ -22,7 +22,7 @@ from .auth import create_token, decode_token
 from .collector import Collector
 from .config import load_config, Settings
 from .models import (
-    ActionRequest, ActionResult, ContainerAction, ContainerInfo, ContainerStatus,
+    ActionRequest, ActionResult, ContainerInfo, ContainerStatus,
     DashboardStats, LogSearchQuery, LogSearchResult, TimeSeriesPoint, TimeSeriesByHost
 )
 from .opensearch_client import OpenSearchClient
@@ -191,7 +191,7 @@ async def lifespan(app: FastAPI):
 
     # Log MCP API key for configuration
     if _mcp_available and settings.mcp.enabled:
-        logger.info("MCP server enabled", mcp_api_key=settings.mcp.api_key)
+        logger.info("MCP server enabled")
         async with mcp_read.session_manager.run(), mcp_actions.session_manager.run():
             yield
     else:
@@ -1067,8 +1067,10 @@ async def get_container_logs(
 
 
 @app.get("/api/containers/{host}/{container_id}/env")
-async def get_container_env(host: str, container_id: str) -> Dict[str, Any]:
+async def get_container_env(host: str, container_id: str, request: Request) -> Dict[str, Any]:
     """Get environment variables for a container by running printenv inside it."""
+    if getattr(request.state, "role", "") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
     env_data = await collector.get_container_env(host, container_id)
     if not env_data:
         raise HTTPException(status_code=404, detail="Container not found")
@@ -1078,36 +1080,10 @@ async def get_container_env(host: str, container_id: str) -> Dict[str, Any]:
 @app.post("/api/containers/action", response_model=ActionResult)
 async def execute_container_action(request: ActionRequest) -> ActionResult:
     """Execute an action on a container (start, stop, restart, etc.).
-
+    
     If an agent is online for the target host, the action is queued for the agent.
     Otherwise, the action is executed directly via the collector (SSH/Docker API).
-
-    For Swarm service containers, restart is always handled via the Swarm manager
-    (force-update) rather than the agent, because `docker restart <container_id>`
-    does not work reliably for Swarm-managed containers.
     """
-    # For Swarm service restarts, always use the collector path which correctly
-    # uses force_update_service via the Swarm manager API.
-    # docker restart <container_id> on a Swarm container stops it, but Swarm
-    # replaces the container with a new one (new ID), so the restart command
-    # fails on the now-dead container.
-    if request.action == ContainerAction.RESTART and collector._swarm_routing_enabled:
-        container = await collector._find_container(request.host, request.container_id)
-        if container and container.labels:
-            service_name = container.labels.get("com.docker.swarm.service.name")
-            if service_name:
-                success, message = await collector.execute_action(
-                    request.host,
-                    request.container_id,
-                    request.action.value,
-                )
-                return ActionResult(
-                    success=success,
-                    message=message,
-                    container_id=request.container_id,
-                    action=request.action,
-                )
-
     # Check if an agent is online for this host.
     # The agent registers with its own hostname which may differ from the Docker node
     # hostname stored in ContainerInfo.host (e.g. FQDN vs short name, or configured
@@ -1135,10 +1111,10 @@ async def execute_container_action(request: ActionRequest) -> ActionResult:
                 "action": request.action.value,
             },
         )
-
+        
         # Wait for the action to complete (with timeout)
         completed_action = await actions_queue.wait_for_action(action_obj.id, timeout=30.0)
-
+        
         if not completed_action:
             return ActionResult(
                 success=False,
@@ -1146,21 +1122,21 @@ async def execute_container_action(request: ActionRequest) -> ActionResult:
                 container_id=request.container_id,
                 action=request.action,
             )
-
+        
         return ActionResult(
             success=completed_action.success or False,
             message=completed_action.result or "Action completed",
             container_id=request.container_id,
             action=request.action,
         )
-
+    
     # No agent online - try direct execution via collector
     success, message = await collector.execute_action(
-        request.host,
-        request.container_id,
+        request.host, 
+        request.container_id, 
         request.action.value
     )
-
+    
     return ActionResult(
         success=success,
         message=message,
@@ -2954,7 +2930,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
 
                 # ── Gate: Build → Test ──
                 _bt_cfg = pipeline_state.get_transition_config(repo_name, "build_to_test")
-                _bt_mode = _bt_cfg.get("mode") if _bt_cfg else None
+                _bt_mode = _bt_cfg.get("mode", "auto_with_success") if _bt_cfg else "auto_with_success"
                 if _bt_mode == "manual":
                     logger.info("Pipeline: build→test manual gate, stopping", repo=repo_name)
                     pipeline_state.record_gate(repo_name, "build_to_test", False, "Manual transition — waiting for user approval", version=built_version)
@@ -2977,12 +2953,6 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                         logger.info("Pipeline: gate build→test approved", repo=repo_name, reason=reason[:100])
                     else:
                         pipeline_state.record_gate(repo_name, "build_to_test", True, "Agent mode but no LLM configured, auto-approved", version=built_version)
-                elif _bt_mode is None:
-                    logger.info("Pipeline: build→test no mode configured, falling back to manual gate", repo=repo_name)
-                    pipeline_state.record_gate(repo_name, "build_to_test", False, "No transition mode configured — falling back to manual", version=built_version)
-                    _set_pipeline(repo_name, "build", "gate_rejected", built_version,
-                                  build_id=build_id, test_id=None, deploy_id=None, log_lines=build_action.output_lines)
-                    return
                 # else: "auto" or "auto_with_success" — proceed (success already checked above)
 
             else:
@@ -3017,7 +2987,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
 
             # ── Gate: Test → Deploy ──
             _td_cfg = pipeline_state.get_transition_config(repo_name, "test_to_deploy")
-            _td_mode = _td_cfg.get("mode") if _td_cfg else None
+            _td_mode = _td_cfg.get("mode", "auto_with_success") if _td_cfg else "auto_with_success"
             if _td_mode == "manual":
                 logger.info("Pipeline: test→deploy manual gate, stopping", repo=repo_name)
                 pipeline_state.record_gate(repo_name, "test_to_deploy", False, "Manual transition — waiting for user approval", version=built_version)
@@ -3040,12 +3010,6 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                     logger.info("Pipeline: gate test→deploy approved", repo=repo_name, reason=reason[:100])
                 else:
                     pipeline_state.record_gate(repo_name, "test_to_deploy", True, "Agent mode but no LLM configured, auto-approved", version=built_version)
-            elif _td_mode is None:
-                logger.info("Pipeline: test→deploy no mode configured, falling back to manual gate", repo=repo_name)
-                pipeline_state.record_gate(repo_name, "test_to_deploy", False, "No transition mode configured — falling back to manual", version=built_version)
-                _set_pipeline(repo_name, "test", "gate_rejected", built_version,
-                              build_id=build_id, test_id=test_id, deploy_id=None, log_lines=test_action.output_lines)
-                return
             # else: "auto" or "auto_with_success" — proceed (success already checked above)
 
             # ── Step 3: Deploy ──
@@ -3135,7 +3099,7 @@ async def auto_build_poller():
         if latest_sha != state["last_sha"] and not state.get("building"):
             # Check version_to_build transition config — skip if manual
             _vb_cfg = pipeline_state.get_transition_config(name, "version_to_build")
-            _vb_mode = _vb_cfg.get("mode") if _vb_cfg else None
+            _vb_mode = _vb_cfg.get("mode", "auto_with_success") if _vb_cfg else "auto_with_success"
             if _vb_mode == "manual":
                 logger.info("Auto-build skipped (version→build set to manual)", repo=name)
                 state["last_sha"] = latest_sha
@@ -3231,7 +3195,7 @@ async def set_transition_config(repo_name: str, transition: str, request: Reques
     if transition not in valid:
         return JSONResponse({"error": "Invalid transition"}, status_code=400)
     body = await request.json()
-    mode = body.get("mode", "auto")
+    mode = body.get("mode", "auto_with_success")
     valid_modes = {"auto", "auto_with_success", "agent", "manual"}
     if mode not in valid_modes:
         return JSONResponse({"error": f"Invalid mode. Valid: {', '.join(sorted(valid_modes))}"}, status_code=400)
@@ -3402,7 +3366,10 @@ async def terminal_websocket(
         if not token:
             await websocket.close(code=4001, reason="Missing token")
             return
-        decode_token(token, settings.auth.jwt_secret)
+        payload = decode_token(token, settings.auth.jwt_secret)
+        if payload.get("role") != "admin":
+            await websocket.close(code=4003, reason="Admin access required")
+            return
     except jwt.PyJWTError as e:
         logger.warning("Terminal WebSocket auth failed", error=str(e))
         await websocket.close(code=4001, reason="Invalid token")
@@ -3441,11 +3408,18 @@ async def _handle_ssh_terminal(websocket, host_config, cols, rows, session_id):
     import asyncssh
     from pathlib import Path
 
+    # Resolve known_hosts setting for terminal SSH
+    known_hosts_setting = ()
+    if host_config.ssh_known_hosts_path:
+        if host_config.ssh_known_hosts_path.lower() == "none":
+            known_hosts_setting = None
+        else:
+            known_hosts_setting = host_config.ssh_known_hosts_path
     options = {
         "host": host_config.hostname,
         "port": host_config.port,
         "username": host_config.username,
-        "known_hosts": None,
+        "known_hosts": known_hosts_setting,
     }
     if host_config.ssh_key_path:
         key_path = Path(host_config.ssh_key_path).expanduser()

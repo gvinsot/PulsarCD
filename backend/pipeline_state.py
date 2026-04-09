@@ -420,7 +420,7 @@ class PipelineStateManager:
         valid_modes = {"auto", "auto_with_success", "agent", "manual"}
         if transition not in valid_transitions:
             return
-        mode = config.get("mode", "auto")
+        mode = config.get("mode", "auto_with_success")
         if mode not in valid_modes:
             return
         entry = self.get_or_create(repo_name)

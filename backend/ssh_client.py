@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+import shlex
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -66,11 +67,19 @@ class SSHClient:
             
         async with self._lock:
             if not self._is_connection_open():
+                # Resolve known_hosts: None disables verification, a path uses
+                # a specific file, default (empty) auto-discovers ~/.ssh/known_hosts
+                known_hosts_setting = ()
+                if self.config.ssh_known_hosts_path:
+                    if self.config.ssh_known_hosts_path.lower() == "none":
+                        known_hosts_setting = None  # explicitly disabled
+                    else:
+                        known_hosts_setting = self.config.ssh_known_hosts_path
                 options = {
                     "host": self.config.hostname,
                     "port": self.config.port,
                     "username": self.config.username,
-                    "known_hosts": None,  # Disable host key checking
+                    "known_hosts": known_hosts_setting,
                 }
                 
                 if self.config.ssh_key_path:
@@ -157,7 +166,7 @@ class SSHClient:
 
         # Batch inspect all containers in one command (much faster than N commands)
         # Using JSON array output for all containers at once
-        inspect_cmd = f"docker inspect {' '.join(container_ids)}"
+        inspect_cmd = f"docker inspect {' '.join(shlex.quote(cid) for cid in container_ids)}"
         inspect_stdout, inspect_stderr, inspect_code = await self.run_command(inspect_cmd)
 
         if inspect_code != 0:
@@ -225,7 +234,7 @@ class SSHClient:
     
     async def get_container_stats(self, container_id: str, container_name: str) -> Optional[ContainerStats]:
         """Get container resource statistics."""
-        cmd = f"docker stats {container_id} --no-stream --format '{{{{json .}}}}'"
+        cmd = f"docker stats {shlex.quote(container_id)} --no-stream --format '{{{{json .}}}}'"
         stdout, stderr, code = await self.run_command(cmd)
         
         if code != 0:
@@ -359,13 +368,13 @@ class SSHClient:
             compose_service: Optional compose service name
             task_id: Optional Swarm task ID (unused for SSH, included for API compatibility)
         """
-        cmd = f"docker logs {container_id} --timestamps"
+        cmd = f"docker logs {shlex.quote(container_id)} --timestamps"
         if since:
             # Fetch ALL logs since timestamp - don't use tail to avoid missing logs
-            cmd += f" --since {since.isoformat()}"
+            cmd += f" --since {shlex.quote(since.isoformat())}"
         elif tail:
             # First fetch - limit to recent logs
-            cmd += f" --tail {tail}"
+            cmd += f" --tail {int(tail)}"
         # else: fetch all logs (no limit) - rare case
         cmd += " 2>&1"
         
@@ -403,13 +412,14 @@ class SSHClient:
     
     async def execute_container_action(self, container_id: str, action: ContainerAction) -> Tuple[bool, str]:
         """Execute an action on a container."""
+        safe_id = shlex.quote(container_id)
         cmd_map = {
-            ContainerAction.START: f"docker start {container_id}",
-            ContainerAction.STOP: f"docker stop {container_id}",
-            ContainerAction.RESTART: f"docker restart {container_id}",
-            ContainerAction.PAUSE: f"docker pause {container_id}",
-            ContainerAction.UNPAUSE: f"docker unpause {container_id}",
-            ContainerAction.REMOVE: f"docker rm -f {container_id}",
+            ContainerAction.START: f"docker start {safe_id}",
+            ContainerAction.STOP: f"docker stop {safe_id}",
+            ContainerAction.RESTART: f"docker restart {safe_id}",
+            ContainerAction.PAUSE: f"docker pause {safe_id}",
+            ContainerAction.UNPAUSE: f"docker unpause {safe_id}",
+            ContainerAction.REMOVE: f"docker rm -f {safe_id}",
         }
         
         cmd = cmd_map.get(action)
@@ -442,7 +452,7 @@ class SSHClient:
                 continue
             
             # Get services for this stack
-            services_cmd = f"docker stack services {stack_name} --format '{{.Name}}'"
+            services_cmd = f"docker stack services {shlex.quote(stack_name)} --format '{{.Name}}'"
             services_out, _, services_code = await self.run_command(services_cmd)
             
             if services_code == 0:
@@ -464,8 +474,8 @@ class SSHClient:
             Tuple of (success, output/error)
         """
         # Build command - properly quote each argument
-        cmd_args = ' '.join(f"'{arg}'" if ' ' in arg else arg for arg in command)
-        cmd = f"docker exec {container_id} {cmd_args}"
+        cmd_args = ' '.join(shlex.quote(arg) for arg in command)
+        cmd = f"docker exec {shlex.quote(container_id)} {cmd_args}"
 
         stdout, stderr, code = await self.run_command(cmd)
 
@@ -476,7 +486,7 @@ class SSHClient:
 
     async def remove_stack(self, stack_name: str) -> Tuple[bool, str]:
         """Remove a Docker Swarm stack."""
-        cmd = f"docker stack rm {stack_name}"
+        cmd = f"docker stack rm {shlex.quote(stack_name)}"
         stdout, stderr, code = await self.run_command(cmd)
         
         if code == 0:
@@ -486,7 +496,7 @@ class SSHClient:
 
     async def remove_service(self, service_name: str) -> Tuple[bool, str]:
         """Remove a Docker Swarm service."""
-        cmd = f"docker service rm {service_name}"
+        cmd = f"docker service rm {shlex.quote(service_name)}"
         stdout, stderr, code = await self.run_command(cmd)
         
         if code == 0:
@@ -507,7 +517,7 @@ class SSHClient:
         logger.info("[SSH-CLIENT] update_service_image called", service=service_name, tag=new_tag)
         
         # Get current image
-        get_image_cmd = f"docker service inspect {service_name} --format '{{{{.Spec.TaskTemplate.ContainerSpec.Image}}}}'"
+        get_image_cmd = f"docker service inspect {shlex.quote(service_name)} --format '{{{{.Spec.TaskTemplate.ContainerSpec.Image}}}}'"
         stdout, stderr, code = await self.run_command(get_image_cmd)
         logger.info("[SSH-CLIENT] Got current image", code=code, stdout=stdout[:200] if stdout else 'None', stderr=stderr[:200] if stderr else '')
         
@@ -540,7 +550,7 @@ class SSHClient:
         # Update service with new image
         # IMPORTANT: --with-registry-auth propagates registry credentials to all swarm nodes
         # Without this, workers cannot pull images from private registries
-        update_cmd = f"docker service update --image {new_image} --with-registry-auth --force {service_name}"
+        update_cmd = f"docker service update --image {shlex.quote(new_image)} --with-registry-auth --force {shlex.quote(service_name)}"
         logger.info("[SSH-CLIENT] Running update command", command=update_cmd)
         stdout, stderr, code = await self.run_command(update_cmd)
         
@@ -563,7 +573,7 @@ class SSHClient:
         are unavailable (e.g., service not fully deployed).
         """
         cmd = (
-            f"docker service ps {service_name} --no-trunc "
+            f"docker service ps {shlex.quote(service_name)} --no-trunc "
             f"--format '{{{{.ID}}}}\t{{{{.Node}}}}\t{{{{.DesiredState}}}}\t{{{{.CurrentState}}}}\t{{{{.Error}}}}\t{{{{.Image}}}}'"
         )
         stdout, stderr, code = await self.run_command(cmd)
@@ -607,7 +617,7 @@ class SSHClient:
 
     async def get_service_logs(self, service_name: str, tail: int = 200) -> List[dict]:
         """Get logs for a Docker Swarm service."""
-        cmd = f"docker service logs --tail {tail} --timestamps {service_name}"
+        cmd = f"docker service logs --tail {int(tail)} --timestamps {shlex.quote(service_name)}"
         stdout, stderr, code = await self.run_command(cmd)
         
         if code != 0:

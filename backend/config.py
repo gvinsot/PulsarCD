@@ -28,6 +28,9 @@ class HostConfig(BaseModel):
     port: int = 22
     username: str = "root"
     ssh_key_path: Optional[str] = None
+    # Path to known_hosts file for SSH host key verification.
+    # If empty, uses ~/.ssh/known_hosts. Set to "none" to disable (NOT recommended).
+    ssh_known_hosts_path: Optional[str] = None
     
     # Connection mode (choose one):
     # - "ssh": Connect via SSH (default for remote hosts)
