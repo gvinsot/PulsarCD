@@ -16,6 +16,20 @@ from .config import GitHubConfig
 
 logger = structlog.get_logger()
 
+
+def _shell_quote_path(path: str) -> str:
+    """Quote a file-system path for shell use, preserving ``~/`` tilde expansion.
+
+    ``shlex.quote("~/repos")`` produces ``'~/repos'`` which prevents the
+    shell from expanding ``~``.  This helper keeps the ``~/`` prefix
+    unquoted so the remote (or local) shell can expand it, while still
+    quoting the rest of the path to handle spaces and special characters.
+    """
+    if path.startswith("~/"):
+        return "~/" + shlex.quote(path[2:])
+    return shlex.quote(path)
+
+
 # Cache TTLs
 STARRED_REPOS_CACHE_TTL = timedelta(minutes=1)
 BRANCHES_CACHE_TTL = timedelta(minutes=5)
@@ -1165,7 +1179,7 @@ class StackDeployer:
             # Build command with optional branch/tag/commit parameters
             # Pass absolute repo_path to avoid path computation mismatch
             # Script format: build-push.sh <folder> <version> [branch/tag] [commit] [--no-cache]
-            build_cmd = f"cd {shlex.quote(scripts_path)} && bash build-push.sh {shlex.quote(repo_path)} {shlex.quote(version)}"
+            build_cmd = f"cd {_shell_quote_path(scripts_path)} && bash build-push.sh {_shell_quote_path(repo_path)} {shlex.quote(version)}"
             if checkout_ref:
                 build_cmd += f" {shlex.quote(checkout_ref)}"
                 if commit:
@@ -1260,7 +1274,7 @@ class StackDeployer:
 
             # Pass absolute repo_path to avoid path computation mismatch
             # Script format: deploy-service.sh <folder> <version> [branch/tag]
-            deploy_cmd = f"cd {shlex.quote(scripts_path)} && bash deploy-service.sh {shlex.quote(repo_path)} {shlex.quote(deploy_version)}"
+            deploy_cmd = f"cd {_shell_quote_path(scripts_path)} && bash deploy-service.sh {_shell_quote_path(repo_path)} {shlex.quote(deploy_version)}"
             if checkout_ref:
                 deploy_cmd += f" {shlex.quote(checkout_ref)}"
 
@@ -1334,7 +1348,7 @@ class StackDeployer:
             repo_path = f"{repos_path}/{repo_name}"
 
             # Script format: test.sh <folder> [branch/tag] [commit]
-            test_cmd = f"cd {shlex.quote(scripts_path)} && bash test.sh {shlex.quote(repo_path)}"
+            test_cmd = f"cd {_shell_quote_path(scripts_path)} && bash test.sh {_shell_quote_path(repo_path)}"
             if checkout_ref:
                 test_cmd += f" {shlex.quote(checkout_ref)}"
                 if commit:

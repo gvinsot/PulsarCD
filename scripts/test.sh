@@ -329,6 +329,10 @@ log_info "Building the 'test' service..."
 
 cd "$DEVOPS_PATH"
 
+# Clean up stale containers/networks from previous interrupted runs
+# (prevents "container is not connected to the network" errors)
+docker compose -f "$COMPOSE_FILE" down --remove-orphans 2>/dev/null || true
+
 if ! docker compose -f "$COMPOSE_FILE" build test; then
     log_error "Test build failed!"
 
@@ -354,6 +358,9 @@ echo ""
 
 TEST_EXIT_CODE=0
 docker compose -f "$COMPOSE_FILE" run --rm test || TEST_EXIT_CODE=$?
+
+# Clean up containers and networks after test run
+docker compose -f "$COMPOSE_FILE" down --remove-orphans 2>/dev/null || true
 
 echo ""
 
