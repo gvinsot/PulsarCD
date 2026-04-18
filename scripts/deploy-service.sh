@@ -574,7 +574,7 @@ echo ""
 log_info "Deploying stack: $STACK_NAME"
 
 # Deploy the stack (rolling update if it already exists)
-docker stack deploy -c "$DEPLOY_COMPOSE" "$STACK_NAME" --with-registry-auth || {
+docker stack deploy -c "$DEPLOY_COMPOSE" "$STACK_NAME" --with-registry-auth --prune || {
     log_error "Failed to deploy stack!"
     rm -f "$DEPLOY_COMPOSE"
     exit 1
