@@ -36,17 +36,21 @@ mcp_read = FastMCP(
 mcp_actions = FastMCP(
     name="PulsarCD Actions",
     instructions=(
-        "PulsarCD action tools for building, testing and deploying Docker stacks. "
+        "PulsarCD action tools for building, testing, deploying Docker stacks, "
+        "and running CLI commands on hosts.\n\n"
         "Use build_stack to build a Docker image from a GitHub repository, "
         "test_stack to run the test suite, "
-        "and deploy_stack to deploy a stack to Docker Swarm. "
-        "Each tool accepts a version parameter to choose which version number "
-        "to build, test or deploy. "
-        "The version format is semver: MAJOR.MINOR or MAJOR.MINOR.PATCH "
-        "(e.g. '1.0', '2.1.3'). Tags may optionally be prefixed with 'v' "
-        "(e.g. 'v1.2.0'). "
+        "deploy_stack to deploy a stack to Docker Swarm, "
+        "and run_command to execute shell commands on a host (e.g. Docker/Swarm CLI).\n\n"
+        "Each build/test/deploy tool accepts a version parameter (semver: "
+        "MAJOR.MINOR or MAJOR.MINOR.PATCH, e.g. '1.0', '2.1.3'). "
+        "Tags may optionally be prefixed with 'v' (e.g. 'v1.2.0'). "
         "All return an action_id — use get_action_status (on the read MCP) "
-        "to track progress."
+        "to track progress.\n\n"
+        "run_command executes any shell command on the target host. "
+        "By default it runs on the Swarm manager node. Use this for Docker "
+        "Swarm operations like 'docker service ls', 'docker node ls', "
+        "'docker stack ps <stack>', etc."
     ),
     stateless_http=True,
     json_response=True,
@@ -612,7 +616,112 @@ async def get_action_status(action_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Helper
+# Tool 9: run_command
+# ---------------------------------------------------------------------------
+_RUN_CMD_DOCS = """
+Execute a shell command on a host machine.
+
+By default the command runs on the **Swarm manager** node, giving you full
+access to Docker Swarm CLI operations.  You can optionally target a specific
+host by name.
+
+Examples:
+  run_command(command="docker service ls")
+  run_command(command="docker node ls")
+  run_command(command="docker stack ps mystack")
+  run_command(command="docker service logs --tail 50 mystack_api")
+  run_command(command="df -h")
+  run_command(command="docker system df")
+
+Parameters:
+- command   The shell command to execute (required).
+- host      Target host name (optional — defaults to the Swarm manager).
+- timeout   Max execution time in seconds (1–120, default 30).
+
+Returns JSON with: success, exit_code, stdout, stderr, host, command.
+Output is capped at 50 000 characters to avoid overwhelming the context.
+"""
+
+
+@mcp_actions.tool(description=_RUN_CMD_DOCS)
+async def run_command(
+    command: str,
+    host: Optional[str] = None,
+    timeout: int = 30,
+) -> str:
+    """Execute a shell command on a host."""
+    from .api import collector, settings
+
+    # ── Resolve target host ──────────────────────────────────────────────
+    target_host = host
+    if not target_host:
+        # Default to Swarm manager
+        for h in settings.hosts:
+            if h.swarm_manager:
+                target_host = h.name
+                break
+    if not target_host:
+        # Fallback to first available client
+        target_host = next(iter(collector.clients.keys()), None)
+
+    if not target_host:
+        return json.dumps({"error": "No host available"})
+
+    client = collector.clients.get(target_host)
+    if not client:
+        available = list(collector.clients.keys())
+        return json.dumps({
+            "error": f"Host '{target_host}' not found",
+            "available_hosts": available,
+        })
+
+    # ── Clamp timeout ────────────────────────────────────────────────────
+    timeout = max(1, min(timeout, 120))
+
+    # ── Execute ──────────────────────────────────────────────────────────
+    logger.info("MCP run_command", command=command[:200], host=target_host, timeout=timeout)
+    MAX_OUTPUT = 50_000
+
+    try:
+        stdout, stderr, exit_code = await asyncio.wait_for(
+            client.run_command(command),
+            timeout=timeout,
+        )
+
+        # Truncate long outputs
+        if len(stdout) > MAX_OUTPUT:
+            stdout = stdout[:MAX_OUTPUT] + f"\n... (truncated, {len(stdout)} chars total)"
+        if len(stderr) > MAX_OUTPUT:
+            stderr = stderr[:MAX_OUTPUT] + f"\n... (truncated, {len(stderr)} chars total)"
+
+        return json.dumps({
+            "success": exit_code == 0,
+            "exit_code": exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "host": target_host,
+            "command": command,
+        })
+
+    except asyncio.TimeoutError:
+        return json.dumps({
+            "success": False,
+            "error": f"Command timed out after {timeout}s",
+            "host": target_host,
+            "command": command,
+        })
+    except Exception as exc:
+        logger.error("MCP run_command failed", command=command[:200], host=target_host, error=str(exc))
+        return json.dumps({
+            "success": False,
+            "error": str(exc),
+            "host": target_host,
+            "command": command,
+        })
+
+
+# ---------------------------------------------------------------------------
+# Helpers
 # ---------------------------------------------------------------------------
 def _get_deployer_and_host():
     """Get a StackDeployer instance and the target host name."""
