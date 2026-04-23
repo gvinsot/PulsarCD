@@ -97,4 +97,16 @@ def parse_nvidia_smi_csv(stdout: str) -> Tuple[Optional[float], Optional[float],
                      mem_total_mb=round(mem_total_total, 1))
         return avg_util, mem_used_total, mem_total_total
 
+    # All lines were [N/A] or unparseable — not a failure, just no usable GPU data
     return None, None, None
+
+
+def has_nvidia_na_values(stdout: str) -> bool:
+    """Check if nvidia-smi output contains only [N/A] values (no real GPU data)."""
+    for line in stdout.strip().split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if "[N/A]" in line:
+            return True
+    return False

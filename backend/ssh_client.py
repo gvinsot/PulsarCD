@@ -353,31 +353,58 @@ class SSHClient:
         return utils.parse_io_string(io_str)
     
     async def get_host_metrics(self) -> HostMetrics:
-        """Get host-level resource metrics."""
+        """Get host-level resource metrics.
+
+        Each metric source (CPU, memory, disk, GPU) is collected independently
+        so that a failure in one does not prevent the others from being reported.
+        """
+        cpu_percent = 0.0
+        mem_total = 0.0
+        mem_used = 0.0
+        mem_percent = 0.0
+        disk_total = 0.0
+        disk_used = 0.0
+        disk_percent = 0.0
+        gpu_percent = None
+        gpu_mem_used = None
+        gpu_mem_total = None
+
         # CPU usage
-        cpu_cmd = "grep 'cpu ' /proc/stat | awk '{usage=($2+$4)*100/($2+$4+$5)} END {print usage}'"
-        cpu_out, _, _ = await self.run_command(cpu_cmd)
-        cpu_percent = float(cpu_out.strip()) if cpu_out.strip() else 0.0
-        
+        try:
+            cpu_cmd = "grep 'cpu ' /proc/stat | awk '{usage=($2+$4)*100/($2+$4+$5)} END {print usage}'"
+            cpu_out, _, _ = await self.run_command(cpu_cmd)
+            cpu_percent = float(cpu_out.strip()) if cpu_out.strip() else 0.0
+        except Exception as e:
+            logger.warning("Failed to collect CPU metrics", host=self.config.name, error=str(e))
+
         # Memory
-        mem_cmd = "free -m | grep Mem"
-        mem_out, _, _ = await self.run_command(mem_cmd)
-        mem_parts = mem_out.split()
-        mem_total = float(mem_parts[1]) if len(mem_parts) > 1 else 0.0
-        mem_used = float(mem_parts[2]) if len(mem_parts) > 2 else 0.0
-        mem_percent = (mem_used / mem_total * 100) if mem_total > 0 else 0.0
-        
+        try:
+            mem_cmd = "free -m | grep Mem"
+            mem_out, _, _ = await self.run_command(mem_cmd)
+            mem_parts = mem_out.split()
+            mem_total = float(mem_parts[1]) if len(mem_parts) > 1 else 0.0
+            mem_used = float(mem_parts[2]) if len(mem_parts) > 2 else 0.0
+            mem_percent = (mem_used / mem_total * 100) if mem_total > 0 else 0.0
+        except Exception as e:
+            logger.warning("Failed to collect memory metrics", host=self.config.name, error=str(e))
+
         # Disk
-        disk_cmd = "df -BG / | tail -1"
-        disk_out, _, _ = await self.run_command(disk_cmd)
-        disk_parts = disk_out.split()
-        disk_total = float(disk_parts[1].replace("G", "")) if len(disk_parts) > 1 else 0.0
-        disk_used = float(disk_parts[2].replace("G", "")) if len(disk_parts) > 2 else 0.0
-        disk_percent = float(disk_parts[4].replace("%", "")) if len(disk_parts) > 4 else 0.0
-        
+        try:
+            disk_cmd = "df -BG / | tail -1"
+            disk_out, _, _ = await self.run_command(disk_cmd)
+            disk_parts = disk_out.split()
+            disk_total = float(disk_parts[1].replace("G", "")) if len(disk_parts) > 1 else 0.0
+            disk_used = float(disk_parts[2].replace("G", "")) if len(disk_parts) > 2 else 0.0
+            disk_percent = float(disk_parts[4].replace("%", "")) if len(disk_parts) > 4 else 0.0
+        except Exception as e:
+            logger.warning("Failed to collect disk metrics", host=self.config.name, error=str(e))
+
         # GPU (AMD rocm-smi first, then NVIDIA nvidia-smi)
-        gpu_percent, gpu_mem_used, gpu_mem_total = await self._get_gpu_metrics()
-        
+        try:
+            gpu_percent, gpu_mem_used, gpu_mem_total = await self._get_gpu_metrics()
+        except Exception as e:
+            logger.debug("Failed to collect GPU metrics", host=self.config.name, error=str(e))
+
         return HostMetrics(
             host=self.config.name,
             timestamp=datetime.utcnow(),
@@ -394,25 +421,35 @@ class SSHClient:
         )
     
     async def _get_gpu_metrics(self) -> Tuple[Optional[float], Optional[float], Optional[float]]:
-        """Get GPU metrics using rocm-smi (AMD) or nvidia-smi (NVIDIA)."""
+        """Get GPU metrics using rocm-smi (AMD) or nvidia-smi (NVIDIA).
+
+        Returns (None, None, None) when no GPU is available. Errors are caught
+        internally so they never propagate to the caller.
+        """
         # Try AMD GPU first (rocm-smi with CSV format - includes all info in one call)
-        rocm_cmd = "rocm-smi --showuse --showmeminfo vram --csv 2>/dev/null"
-        rocm_out, rocm_err, rocm_code = await self.run_command(rocm_cmd)
-        logger.debug("rocm-smi output", returncode=rocm_code, stdout=rocm_out, stderr=rocm_err)
-        
-        if rocm_code == 0 and rocm_out.strip():
-            gpu_percent, gpu_mem_used, gpu_mem_total = utils.parse_rocm_smi_csv(rocm_out)
-            if gpu_percent is not None or gpu_mem_used is not None:
-                return gpu_percent, gpu_mem_used, gpu_mem_total
-        
+        try:
+            rocm_cmd = "rocm-smi --showuse --showmeminfo vram --csv 2>/dev/null"
+            rocm_out, rocm_err, rocm_code = await self.run_command(rocm_cmd)
+            logger.debug("rocm-smi output", returncode=rocm_code, stdout=rocm_out, stderr=rocm_err)
+
+            if rocm_code == 0 and rocm_out.strip():
+                gpu_percent, gpu_mem_used, gpu_mem_total = utils.parse_rocm_smi_csv(rocm_out)
+                if gpu_percent is not None or gpu_mem_used is not None:
+                    return gpu_percent, gpu_mem_used, gpu_mem_total
+        except Exception as e:
+            logger.debug("rocm-smi collection failed", host=self.config.name, error=str(e))
+
         # Fallback to NVIDIA GPU
-        nvidia_cmd = "nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null"
-        nvidia_out, _, nvidia_code = await self.run_command(nvidia_cmd)
-        logger.debug("nvidia-smi output", returncode=nvidia_code, stdout=nvidia_out)
-        
-        if nvidia_code == 0 and nvidia_out.strip():
-            return utils.parse_nvidia_smi_csv(nvidia_out)
-        
+        try:
+            nvidia_cmd = "nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits 2>/dev/null"
+            nvidia_out, _, nvidia_code = await self.run_command(nvidia_cmd)
+            logger.debug("nvidia-smi output", returncode=nvidia_code, stdout=nvidia_out)
+
+            if nvidia_code == 0 and nvidia_out.strip():
+                return utils.parse_nvidia_smi_csv(nvidia_out)
+        except Exception as e:
+            logger.debug("nvidia-smi collection failed", host=self.config.name, error=str(e))
+
         return None, None, None
     
     async def get_container_logs(

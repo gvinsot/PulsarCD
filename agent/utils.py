@@ -31,10 +31,15 @@ from shared.log_utils import (  # noqa: F401
 from shared.gpu_utils import (  # noqa: F401
     parse_rocm_smi_csv,
     parse_nvidia_smi_csv,
+    has_nvidia_na_values,
 )
 
 
 # ============== Agent-only helpers ==============
+
+# Track GPU availability to avoid repeating warnings every collection cycle
+_gpu_warning_logged = False
+
 
 def run_host_command(cmd: List[str], timeout: int = 5) -> subprocess.CompletedProcess:
     """Execute a command with timeout.
@@ -61,6 +66,7 @@ def get_gpu_metrics() -> Tuple[Optional[float], Optional[float], Optional[float]
         Tuple of (gpu_percent, vram_used_mb, vram_total_mb)
         All values are None if no GPU is detected or metrics cannot be collected.
     """
+    global _gpu_warning_logged
     gpu_tool_found = False
     nvidia_error = None
     rocm_error = None
@@ -78,21 +84,23 @@ def get_gpu_metrics() -> Tuple[Optional[float], Optional[float], Optional[float]
         if result.returncode == 0 and result.stdout.strip():
             gpu_percent, mem_used, mem_total = parse_nvidia_smi_csv(result.stdout)
             if gpu_percent is not None:
+                _gpu_warning_logged = False
                 logger.debug("NVIDIA GPU metrics collected", gpu_percent=gpu_percent, mem_used_mb=mem_used, mem_total_mb=mem_total)
                 return gpu_percent, mem_used, mem_total
+            elif has_nvidia_na_values(result.stdout):
+                logger.debug("nvidia-smi reports [N/A] values, no usable GPU on this host")
             else:
                 nvidia_error = f"Parsing failed - stdout: {result.stdout[:200]}"
-                logger.warning("nvidia-smi returned data but parsing failed",
-                              stdout=result.stdout[:200],
-                              hint="Check if nvidia-smi output format has changed")
+                logger.debug("nvidia-smi returned data but parsing produced no results",
+                             stdout=result.stdout[:200])
         elif result.returncode != 0:
             nvidia_error = f"Command failed with code {result.returncode}"
-            logger.warning("nvidia-smi command failed",
-                          returncode=result.returncode,
-                          stderr=result.stderr[:200] if result.stderr else "no error output")
+            logger.debug("nvidia-smi command failed",
+                         returncode=result.returncode,
+                         stderr=result.stderr[:200] if result.stderr else "no error output")
 
-    except FileNotFoundError:
-        logger.debug("nvidia-smi not found in PATH, trying rocm-smi")
+    except (FileNotFoundError, PermissionError):
+        logger.debug("nvidia-smi not available, trying rocm-smi")
     except subprocess.TimeoutExpired:
         nvidia_error = "Command timed out after 5 seconds"
         logger.warning("nvidia-smi command timed out after 5 seconds")
@@ -114,23 +122,25 @@ def get_gpu_metrics() -> Tuple[Optional[float], Optional[float], Optional[float]
         if result.returncode == 0 and result.stdout.strip():
             gpu_percent, mem_used, mem_total = parse_rocm_smi_csv(result.stdout)
             if gpu_percent is not None or mem_used is not None:
+                _gpu_warning_logged = False
                 return gpu_percent, mem_used, mem_total
             else:
                 rocm_error = f"Parsing failed - stdout: {result.stdout[:300]}"
-                logger.warning("rocm-smi returned data but parsing failed",
-                              stdout=result.stdout[:500],
-                              hint="Check if rocm-smi output format has changed")
+                logger.debug("rocm-smi returned data but parsing produced no results",
+                             stdout=result.stdout[:500])
         elif result.returncode != 0:
-            rocm_error = f"Command failed with code {result.returncode}: {result.stderr[:200] if result.stderr else 'no error'}"
-            logger.warning("rocm-smi command failed",
-                          returncode=result.returncode,
-                          stderr=result.stderr[:200] if result.stderr else "no error output")
+            rocm_error = f"Command failed with code {result.returncode}"
+            logger.debug("rocm-smi command failed",
+                         returncode=result.returncode,
+                         stderr=result.stderr[:200] if result.stderr else "no error output")
 
-    except FileNotFoundError:
+    except (FileNotFoundError, PermissionError):
         if not gpu_tool_found:
-            logger.warning("No GPU monitoring tools found - neither nvidia-smi nor rocm-smi are available in PATH")
+            if not _gpu_warning_logged:
+                logger.info("No GPU monitoring tools found (nvidia-smi / rocm-smi not available)")
+                _gpu_warning_logged = True
         else:
-            logger.debug("rocm-smi not found in PATH")
+            logger.debug("rocm-smi not available")
     except subprocess.TimeoutExpired:
         rocm_error = "Command timed out after 5 seconds"
         logger.warning("rocm-smi command timed out after 5 seconds")
@@ -139,8 +149,10 @@ def get_gpu_metrics() -> Tuple[Optional[float], Optional[float], Optional[float]
         logger.warning("rocm-smi failed with unexpected error", error=str(e), error_type=type(e).__name__)
 
     if gpu_tool_found and (nvidia_error or rocm_error):
-        logger.warning("GPU tools found but failed to collect metrics",
-                      nvidia_error=nvidia_error, rocm_error=rocm_error)
+        if not _gpu_warning_logged:
+            logger.warning("GPU tools found but failed to collect metrics",
+                          nvidia_error=nvidia_error, rocm_error=rocm_error)
+            _gpu_warning_logged = True
 
     return None, None, None
 
@@ -170,7 +182,7 @@ def get_gpu_process_metrics() -> List[Dict[str, Any]]:
                         processes[pid] = {"pid": pid, "gpu_memory_used_mb": mem_mb, "gpu_sm_percent": None}
                     except ValueError:
                         continue
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except (FileNotFoundError, PermissionError, subprocess.TimeoutExpired):
         return []
     except Exception as e:
         logger.debug("nvidia-smi query-compute-apps failed", error=str(e))
