@@ -3403,6 +3403,26 @@ a.btn {
     background: rgba(255, 255, 255, 0.12);
 }
 
+.pipeline-stop-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    cursor: pointer;
+    color: var(--status-error);
+    opacity: 0.7;
+    transition: opacity 0.15s, background 0.15s, transform 0.15s;
+    margin-left: 2px;
+    flex-shrink: 0;
+}
+.pipeline-stop-btn:hover {
+    opacity: 1;
+    background: rgba(239, 68, 68, 0.2);
+    transform: scale(1.15);
+}
+
 .pipeline-arrow {
     color: var(--text-muted);
     font-size: 0.7rem;

@@ -4222,6 +4222,7 @@ function renderStacksList() {
                             ${skipBuild ? `<span class="step-icon">–</span>` : stepIcon(buildStep)}
                             <span>Build</span>
                             ${!skipBuild && buildActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${buildActionId}', 'Build Logs', '${escapeHtml(repo.name)}')" title="View build logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
+                            ${buildStep === 'running' && buildActionId ? `<span class="pipeline-stop-btn" onclick="event.stopPropagation(); cancelAction('${buildActionId}')" title="Stop build"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="10" height="10"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></span>` : ''}
                         </div>
                         <span class="pipeline-transition-btn ${_gateArrowClass(pipeline, 'build', buildStep, testStep)}${gateBuildTest ? ' has-gate' : ''}${_transitionModeClass(pipeline, 'build_to_test')}" onclick="event.stopPropagation(); openTransitionConfig('${escapeHtml(repo.name)}', 'build_to_test')" title="Build → Test transition (click to configure)">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
@@ -4231,6 +4232,7 @@ function renderStacksList() {
                             ${stepIcon(testStep)}
                             <span>Test</span>
                             ${testActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${testActionId}', 'Test Logs', '${escapeHtml(repo.name)}')" title="View test logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
+                            ${testStep === 'running' && testActionId ? `<span class="pipeline-stop-btn" onclick="event.stopPropagation(); cancelAction('${testActionId}')" title="Stop test"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="10" height="10"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></span>` : ''}
                         </div>
                         <span class="pipeline-transition-btn ${_gateArrowClass(pipeline, 'test', testStep, deployStep)}${gateTestDeploy ? ' has-gate' : ''}${_transitionModeClass(pipeline, 'test_to_deploy')}" onclick="event.stopPropagation(); openTransitionConfig('${escapeHtml(repo.name)}', 'test_to_deploy')" title="Test → Deploy transition (click to configure)">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
@@ -4240,6 +4242,7 @@ function renderStacksList() {
                             ${stepIcon(deployStep)}
                             <span>Deploy</span>
                             ${deployActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${deployActionId}', 'Deploy Logs', '${escapeHtml(repo.name)}')" title="View deploy logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
+                            ${deployStep === 'running' && deployActionId ? `<span class="pipeline-stop-btn" onclick="event.stopPropagation(); cancelAction('${deployActionId}')" title="Stop deploy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="10" height="10"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></span>` : ''}
                         </div>
                     </div>
 
@@ -6165,6 +6168,12 @@ function openActionLogs(actionId, actionType, repoName) {
     title.textContent = `${actionType}: ${repoName}`;
     content.innerHTML = '<div class="loading-placeholder">Loading logs...</div>';
 
+    // Show Stop button if this action is currently active (running)
+    const stopBtn = document.getElementById('action-logs-stop-btn');
+    if (stopBtn) {
+        stopBtn.style.display = _activeActions[actionId] ? '' : 'none';
+    }
+
     modal.classList.add('active');
 
     startActionLogsPoll(actionId);
@@ -6206,6 +6215,13 @@ function analyzeActionLogs() {
     document.getElementById('task-submit-btn').textContent = 'Send Task';
 
     document.getElementById('create-task-modal').classList.add('active');
+}
+
+async function cancelCurrentActionLogs() {
+    if (!currentActionLogsId) return;
+    await cancelAction(currentActionLogsId);
+    const stopBtn = document.getElementById('action-logs-stop-btn');
+    if (stopBtn) stopBtn.style.display = 'none';
 }
 
 function stopActionLogsPoll() {
@@ -6262,6 +6278,8 @@ async function startActionLogsPoll(actionId) {
                 statusLine.textContent = `--- ${data.status.toUpperCase()} ---`;
                 content.appendChild(statusLine);
                 content.scrollTop = content.scrollHeight;
+                const _stopBtn = document.getElementById('action-logs-stop-btn');
+                if (_stopBtn) _stopBtn.style.display = 'none';
                 es.close();
                 actionLogsEventSource = null;
             }
@@ -6331,6 +6349,8 @@ async function startActionLogsFallbackPoll(actionId) {
                 statusLine.textContent = `--- ${data.status.toUpperCase()} ---`;
                 content.appendChild(statusLine);
                 content.scrollTop = content.scrollHeight;
+                const _stopBtn2 = document.getElementById('action-logs-stop-btn');
+                if (_stopBtn2) _stopBtn2.style.display = 'none';
                 return; // done
             }
         } catch (e) {

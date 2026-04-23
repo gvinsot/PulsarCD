@@ -2600,7 +2600,24 @@ async def cancel_action(action_id: str) -> Dict[str, Any]:
 
     if action.status == "running":
         action.status = "cancelled"
-    
+
+    # Update pipeline state so UI reflects cancellation immediately
+    kwargs = {}
+    if action.action_type == "build":
+        kwargs["build_id"] = action_id
+    elif action.action_type == "test":
+        kwargs["test_id"] = action_id
+    elif action.action_type == "deploy":
+        kwargs["deploy_id"] = action_id
+    _set_pipeline(
+        action.repo_name,
+        action.action_type,
+        "failed",
+        pipeline_state.get_legacy(action.repo_name).get("version", ""),
+        log_lines=action.output_lines,
+        **kwargs,
+    )
+
     return {"success": True, "message": "Action cancelled"}
 
 
