@@ -667,6 +667,55 @@ a.btn {
     overflow-y: auto;
 }
 
+/* System Errors */
+.system-errors-card {
+    height: auto;
+    flex-shrink: 0;
+    overflow: visible;
+    margin-bottom: 16px;
+}
+.system-error-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    margin-bottom: 6px;
+}
+.system-error-item:last-child { margin-bottom: 0; }
+.system-error-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.8rem;
+}
+.system-error-category {
+    font-weight: 700;
+    color: var(--status-warning, #f59e0b);
+    min-width: 60px;
+}
+.system-error-type {
+    color: var(--text-secondary);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.system-error-age {
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.system-error-message {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 /* Containers View */
 #containers-view.active {
     flex-direction: column;

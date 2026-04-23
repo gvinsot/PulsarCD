@@ -125,6 +125,9 @@ class Agent:
                 "OpenSearch self-test FAILED — logs will NOT be indexed! "
                 "Check OpenSearch connectivity, index mappings, and disk space."
             )
+            await self.action_poller.report_system_error(
+                "opensearch", "SelfTestFailed",
+                "OpenSearch self-test failed — logs will not be indexed")
 
         self._running = True
 
@@ -207,6 +210,8 @@ class Agent:
             except Exception as e:
                 logger.error("Log collection error", error=str(e),
                              error_type=type(e).__name__, cycle=cycle)
+                await self.action_poller.report_system_error(
+                    "log_collection", type(e).__name__, str(e))
 
             await asyncio.sleep(self.config.log_interval)
 
@@ -248,6 +253,8 @@ class Agent:
 
             except Exception as e:
                 logger.error("Metrics collection error", error=str(e))
+                await self.action_poller.report_system_error(
+                    "metrics_collection", type(e).__name__, str(e))
 
             await asyncio.sleep(self.config.metrics_interval)
 

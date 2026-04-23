@@ -73,6 +73,23 @@ class ActionPoller:
             logger.error("Unexpected error polling actions", error=str(e))
             return []
 
+    async def report_system_error(self, category: str, error_type: str, error: str):
+        """Report a system-level error to the backend for dashboard visibility."""
+        session = await self._get_session()
+        url = f"{self.backend_url}/api/agent/system-error"
+        payload = {
+            "agent_id": self.agent_id,
+            "category": category,
+            "error_type": error_type,
+            "error": str(error)[:1000],
+        }
+        try:
+            async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                if response.status != 200:
+                    logger.debug("Failed to report system error", status=response.status)
+        except Exception:
+            pass
+
     async def send_result(self, action_id: str, success: bool, output: str):
         """Send action result back to backend."""
         session = await self._get_session()

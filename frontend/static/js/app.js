@@ -473,6 +473,10 @@ function _agentHistoryIcon(type) {
         failure_error: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
         recurring_handled: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>`,
         recurring_error: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
+        recurring_detected: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`,
+        recurring_cooldown: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`,
+        log_analysis: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`,
+        log_analysis_error: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
         chat: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`,
     };
     return icons[type] || icons.chat;
@@ -492,6 +496,14 @@ function _agentHistoryTitle(entry) {
             return `Recurring error handled (${entry.count || 0}x) — ${entry.label || entry.services || entry.projects || ''}`;
         case 'recurring_error':
             return `Recurring error handling failed — ${entry.label || entry.services || entry.projects || ''}`;
+        case 'log_analysis':
+            return `Log analysis completed — ${entry.project || ''}`;
+        case 'log_analysis_error':
+            return `Log analysis failed — ${entry.project || ''}`;
+        case 'recurring_detected':
+            return `Recurring error detected (${entry.count || 0}x) — ${entry.label || entry.services || entry.projects || ''}`;
+        case 'recurring_cooldown':
+            return `Recurring error skipped (cooldown) — ${entry.label || entry.services || entry.projects || ''}`;
         case 'chat':
             return `Chat: ${(entry.message || '').substring(0, 60)}`;
         default:
@@ -516,6 +528,16 @@ function _agentHistoryDetail(entry) {
     if (entry.type === 'gate_decision' || entry.type === 'gate_error') {
         const params = [entry.repo, entry.transition, entry.version].filter(Boolean);
         if (params.length) parts.push('Params: ' + params.join(' / '));
+    }
+    if (entry.type === 'log_analysis' || entry.type === 'log_analysis_error') {
+        if (entry.project) parts.push('Project: ' + entry.project);
+    }
+    if (entry.type === 'recurring_detected' || entry.type === 'recurring_cooldown') {
+        const params = [];
+        if (entry.projects) params.push('Stack: ' + entry.projects);
+        if (entry.services) params.push('Services: ' + entry.services);
+        if (entry.count) params.push(entry.count + 'x');
+        if (params.length) parts.push(params.join(' / '));
     }
     const detail = entry.response || entry.reason || entry.error || '';
     if (detail) parts.push(detail);
@@ -1570,6 +1592,7 @@ async function loadDashboard() {
         loadMemoryChart().catch(e => console.error('Failed to load memory chart:', e)),
         loadVramChart().catch(e => console.error('Failed to load vram chart:', e)),
         loadRecurringErrors().catch(e => console.error('Failed to load recurring errors:', e)),
+        loadSystemErrors().catch(e => console.error('Failed to load system errors:', e)),
     ]);
 }
 
@@ -1670,6 +1693,51 @@ function searchRecurringError() {
             searchLogs();
         }
     }, 100);
+}
+
+async function loadSystemErrors() {
+    const data = await apiGet('/dashboard/system-errors?limit=10');
+    const el = document.getElementById('system-errors-list');
+    if (!el) return;
+
+    const card = el.closest('.system-errors-card');
+    if (!data || data.length === 0) {
+        if (card) card.style.display = 'none';
+        return;
+    }
+
+    const categoryLabels = {
+        llm: 'LLM',
+        mcp: 'MCP Discovery',
+        mcp_tool: 'MCP Tool',
+        agent: 'Agent',
+        opensearch: 'OpenSearch',
+        error_detector: 'Error Detector',
+        host_agent: 'Host Agent',
+    };
+
+    el.innerHTML = data.map(e => {
+        const cat = categoryLabels[e.category] || e.category;
+        const age = formatRelativeTime(e.timestamp);
+        const ctx = [];
+        if (e.model) ctx.push(e.model);
+        if (e.server) ctx.push(e.server);
+        if (e.tool) ctx.push(e.tool);
+        if (e.action) ctx.push(e.action);
+        if (e.repo) ctx.push(e.repo);
+        if (e.stage) ctx.push(e.stage);
+        const ctxStr = ctx.length ? ' — ' + escapeHtml(ctx.join(', ')) : '';
+        return `
+        <div class="system-error-item">
+            <div class="system-error-header">
+                <span class="system-error-category">${escapeHtml(cat)}</span>
+                <span class="system-error-type">${escapeHtml(e.error_type || '')}</span>
+                <span class="system-error-age">${age}</span>
+            </div>
+            <div class="system-error-message">${escapeHtml((e.error || '').substring(0, 200))}${ctxStr}</div>
+        </div>`;
+    }).join('');
+    if (card) card.style.display = '';
 }
 
 async function refreshDashboard() {

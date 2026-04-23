@@ -57,6 +57,7 @@ _NOTIFICATION_COOLDOWN = timedelta(hours=1)
 _MAX_ITERATIONS = 25  # More iterations with context compaction
 _MAX_OUTPUT_BYTES = 64 * 1024  # 64 KB for error output in prompts
 _MAX_HISTORY = 100  # Max entries in agent history
+_MAX_SYSTEM_ERRORS = 50  # Max system errors in ring buffer
 # Maximum input tokens for the initial prompt (system + user messages).
 # The LLM context window is shared between input and output; this budget
 # ensures the prompt leaves enough room for tool-calling iterations and the
@@ -318,6 +319,8 @@ class LLMAgent:
         self._history: List[Dict[str, Any]] = self._load_history()
         # Shared HTTP session — avoids "Too many open files" from per-call sessions
         self._session: Optional[aiohttp.ClientSession] = None
+        # System errors ring buffer — tracks LLM/MCP/infrastructure failures
+        self._system_errors: List[Dict[str, Any]] = []
         logger.info("LLM agent initialized",
                      chat_url=self._llm_chat_url,
                      model=self._llm_model,
@@ -373,6 +376,23 @@ class LLMAgent:
     def get_history(self) -> List[Dict[str, Any]]:
         """Return agent action history (newest first)."""
         return list(reversed(self._history))
+
+    def _report_system_error(self, category: str, error_type: str, error: str, **context) -> None:
+        """Record a system-level error (LLM, MCP, infrastructure)."""
+        entry = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "category": category,
+            "error_type": error_type,
+            "error": error[:1000],
+            **{k: v for k, v in context.items() if v is not None},
+        }
+        self._system_errors.append(entry)
+        if len(self._system_errors) > _MAX_SYSTEM_ERRORS:
+            self._system_errors = self._system_errors[-_MAX_SYSTEM_ERRORS:]
+
+    def get_system_errors(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Return recent system errors (newest first)."""
+        return list(reversed(self._system_errors[-limit:]))
 
     def _build_error_history_context(
         self, repo_name: str = "", fingerprint: str = "",
@@ -627,6 +647,9 @@ class LLMAgent:
                 logger.warning("Failed to discover MCP tools",
                                server=server.name, url=server_url,
                                error_type=type(e).__name__, error=str(e))
+                self._report_system_error(
+                    "mcp", type(e).__name__, str(e),
+                    server=server.name, url=server_url)
 
         # Only cache if all servers responded — retry failed servers next time
         if all_servers_ok:
@@ -681,6 +704,8 @@ class LLMAgent:
         except Exception as e:
             logger.warning("MCP tool call failed",
                            tool=name, error_type=type(e).__name__, error=str(e))
+            self._report_system_error(
+                "mcp_tool", type(e).__name__, str(e), tool=name)
             return f"Error calling tool '{name}': {e}"
 
     def _compute_max_output_tokens(self, messages: List[dict], tools_tokens: int = 0) -> int:
@@ -772,6 +797,9 @@ class LLMAgent:
                                      max_tokens=max_output,
                                      msg_count=len(messages),
                                      body=body[:1000])
+                        self._report_system_error(
+                            "llm", f"HTTP {resp.status}", body_short,
+                            model=self._llm_model, url=self._llm_chat_url)
                         # If tools caused the error, retry without them
                         if use_tools and resp.status in (400, 404):
                             logger.warning(
@@ -786,6 +814,9 @@ class LLMAgent:
             except Exception as e:
                 logger.error("LLM API request failed",
                              error_type=type(e).__name__, error=str(e))
+                self._report_system_error(
+                    "llm", type(e).__name__, str(e),
+                    model=self._llm_model, url=self._llm_chat_url)
                 return f"LLM request failed: {e}"
 
             choice = data.get("choices", [{}])[0]
@@ -925,6 +956,9 @@ class LLMAgent:
         except Exception as e:
             self._record("failure_error", stage=stage, repo=repo_name,
                          version=version, error=str(e))
+            self._report_system_error(
+                "agent", type(e).__name__, str(e),
+                action="handle_failure", stage=stage, repo=repo_name)
             logger.error("LLM agent error during failure handling",
                          stage=stage, repo=repo_name,
                          error_type=type(e).__name__, error=str(e))
@@ -963,6 +997,9 @@ class LLMAgent:
             return result or ""
         except Exception as e:
             self._record("log_analysis_error", project=project, error=str(e))
+            self._report_system_error(
+                "agent", type(e).__name__, str(e),
+                action="handle_log_analysis", project=project)
             logger.error("LLM agent error during log analysis",
                          project=project,
                          error_type=type(e).__name__, error=str(e))
@@ -1066,6 +1103,10 @@ class LLMAgent:
             self._record("recurring_error", services=services_list,
                          projects=projects_list, label=stack_service_label,
                          count=pattern.count, error=str(e))
+            self._report_system_error(
+                "agent", type(e).__name__, str(e),
+                action="handle_recurring_error",
+                fingerprint=pattern.fingerprint[:16])
             logger.error("LLM agent error during recurring error handling",
                          fingerprint=pattern.fingerprint,
                          error_type=type(e).__name__, error=str(e))
@@ -1139,6 +1180,9 @@ class LLMAgent:
         except Exception as e:
             self._record("gate_error", transition=transition, repo=repo_name,
                          version=version, error=str(e))
+            self._report_system_error(
+                "agent", type(e).__name__, str(e),
+                action="evaluate_gate", transition=transition, repo=repo_name)
             logger.error("LLM gate evaluation failed, auto-approving",
                          transition=transition, repo=repo_name,
                          error_type=type(e).__name__, error=str(e))

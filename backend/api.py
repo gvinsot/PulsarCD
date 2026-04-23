@@ -61,6 +61,9 @@ async def _notify_agent_failure(stage: str, repo_name: str, version: str, error_
         logger.error("LLM agent failure handling error",
                      stage=stage, repo=repo_name,
                      error_type=type(e).__name__, error=str(e))
+        llm_agent._report_system_error(
+            "agent", type(e).__name__, str(e),
+            action="notify_agent_failure", stage=stage, repo=repo_name)
 
 
 # ============== Background Actions (Build/Deploy) ==============
@@ -713,6 +716,14 @@ async def get_recurring_errors(limit: int = Query(default=5, ge=1, le=50)) -> Li
     if not error_detector:
         return []
     return error_detector._notification_history[:limit]
+
+
+@app.get("/api/dashboard/system-errors")
+async def get_system_errors(limit: int = Query(default=20, ge=1, le=100)) -> List[Dict[str, Any]]:
+    """Return recent system-level errors (LLM, MCP, infrastructure failures)."""
+    if not llm_agent:
+        return []
+    return llm_agent.get_system_errors(limit=limit)
 
 
 @app.get("/api/admin/error-detector-status")
@@ -3262,6 +3273,24 @@ async def post_agent_result(
         raise HTTPException(status_code=404, detail="Action not found")
 
     return {"status": "ok", "action_id": action_id}
+
+
+@app.post("/api/agent/system-error")
+async def post_agent_system_error(request: Request):
+    """Receive a system error report from a host agent."""
+    body = await request.json()
+    agent_id = body.get("agent_id", "unknown")
+    category = body.get("category", "host_agent")
+    error_type = body.get("error_type", "Unknown")
+    error = body.get("error", "")
+    if llm_agent:
+        llm_agent._report_system_error(
+            category, error_type, error,
+            agent_id=agent_id)
+    logger.warning("Host agent system error reported",
+                   agent_id=agent_id, category=category,
+                   error_type=error_type, error=error[:200])
+    return {"status": "ok"}
 
 
 @app.get("/api/agents")

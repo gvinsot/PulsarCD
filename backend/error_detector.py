@@ -133,6 +133,9 @@ class RecurringErrorDetector:
       `pattern_ttl_hours` of inactivity (default 12h)
     - When a pattern hits the threshold (count >= min_occurrences),
       delegates to the LLM agent for investigation; re-notifies at most once per hour
+
+    System errors (scan failures, OpenSearch errors, LLM delegation errors)
+    are reported to the LLM agent's system error tracker when available.
     """
 
     # Messages matching these patterns are PulsarCD's own internal logs
@@ -265,6 +268,10 @@ class RecurringErrorDetector:
                 await self._scan()
             except Exception as e:
                 logger.error("Error detector scan failed", error=str(e))
+                if self._llm_agent and hasattr(self._llm_agent, '_report_system_error'):
+                    self._llm_agent._report_system_error(
+                        "error_detector", type(e).__name__, str(e),
+                        action="scan")
 
             await asyncio.sleep(self._scan_interval)
 
@@ -551,6 +558,10 @@ class RecurringErrorDetector:
             return filtered
         except Exception as e:
             logger.error("Error detector: failed to fetch errors", error=str(e))
+            if self._llm_agent and hasattr(self._llm_agent, '_report_system_error'):
+                self._llm_agent._report_system_error(
+                    "opensearch", type(e).__name__, str(e),
+                    action="fetch_errors")
             return []
 
     # ------------------------------------------------------------------
@@ -747,3 +758,8 @@ class RecurringErrorDetector:
             logger.error("LLM agent error for recurring error",
                          fingerprint=pattern.fingerprint,
                          error_type=type(e).__name__, error=str(e))
+            if self._llm_agent and hasattr(self._llm_agent, '_report_system_error'):
+                self._llm_agent._report_system_error(
+                    "agent", type(e).__name__, str(e),
+                    action="notify_recurring_error",
+                    fingerprint=pattern.fingerprint[:16])
