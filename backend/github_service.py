@@ -81,7 +81,8 @@ class GitHubService:
             }
             if token:
                 headers["Authorization"] = f"token {token}"
-            self._session = aiohttp.ClientSession(headers=headers)
+            connector = aiohttp.TCPConnector(limit=20, limit_per_host=20)
+            self._session = aiohttp.ClientSession(headers=headers, connector=connector)
             self._session_token = token
         return self._session
 
@@ -456,24 +457,25 @@ class GitHubService:
                     if tag_info["created_at"] is None:
                         tags_needing_dates.append((tag_info, tag_data["commit"]["url"]))
                 
-                # Only fetch dates for tags not in cache (in parallel)
+                # Only fetch dates for tags not in cache (limited concurrency)
                 if tags_needing_dates:
                     logger.debug("Fetching dates for uncached tags", count=len(tags_needing_dates))
-                    
+                    sem = asyncio.Semaphore(5)
+
                     async def fetch_commit_date(tag_info, commit_url):
-                        try:
-                            async with session.get(commit_url) as commit_response:
-                                if commit_response.status == 200:
-                                    commit_data = await commit_response.json()
-                                    date = commit_data.get("commit", {}).get("committer", {}).get("date")
-                                    if date:
-                                        tag_info["created_at"] = date
-                                        # Add to cache (SHA is immutable so this never expires)
-                                        date_cache[tag_info["sha"]] = date
-                                        self._tag_date_cache_dirty = True
-                        except Exception as e:
-                            logger.debug("Could not fetch commit date for tag", tag=tag_info["name"], error=str(e))
-                    
+                        async with sem:
+                            try:
+                                async with session.get(commit_url) as commit_response:
+                                    if commit_response.status == 200:
+                                        commit_data = await commit_response.json()
+                                        date = commit_data.get("commit", {}).get("committer", {}).get("date")
+                                        if date:
+                                            tag_info["created_at"] = date
+                                            date_cache[tag_info["sha"]] = date
+                                            self._tag_date_cache_dirty = True
+                            except Exception as e:
+                                logger.debug("Could not fetch commit date for tag", tag=tag_info["name"], error=str(e))
+
                     await asyncio.gather(*[fetch_commit_date(t, url) for t, url in tags_needing_dates])
                     
                     # Save cache if we fetched new dates

@@ -3091,9 +3091,14 @@ async def auto_build_poller():
 
     # Track last known pushed_at per repo to cheaply skip unchanged ones
     _pushed_at_cache: dict[str, str] = {}
+    _repo_sem = asyncio.Semaphore(3)
 
     async def _check_repo(repo: dict):
         """Check a single repo for new commits. Designed to run concurrently."""
+        async with _repo_sem:
+            await _check_repo_inner(repo)
+
+    async def _check_repo_inner(repo: dict):
         owner, name, ssh_url = repo["owner"], repo["name"], repo["ssh_url"]
 
         try:

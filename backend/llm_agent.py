@@ -341,7 +341,8 @@ class LLMAgent:
     async def _get_session(self) -> aiohttp.ClientSession:
         """Return the shared HTTP session, creating it if needed."""
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
+            connector = aiohttp.TCPConnector(limit=10, limit_per_host=10)
+            self._session = aiohttp.ClientSession(connector=connector)
         return self._session
 
     async def close(self) -> None:

@@ -52,15 +52,19 @@ class DockerAPIClient:
         if self._closing:
             return None
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(connector=self._connector)
+            self._session = aiohttp.ClientSession(
+                connector=self._connector, connector_owner=False
+            )
         return self._session
 
     async def close(self):
-        """Close the client session."""
+        """Close the client session and connector."""
         self._closing = True
         if self._session and not self._session.closed:
             await self._session.close()
             self._session = None
+        if self._connector and not self._connector.closed:
+            await self._connector.close()
 
     async def _request(self, method: str, endpoint: str, **kwargs) -> Tuple[Any, int]:
         """Make HTTP request to Docker API."""
