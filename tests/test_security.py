@@ -792,11 +792,20 @@ class TestH4AgentToolPolicy:
         from backend.config_file import tool_denial_reason
         assert tool_denial_reason(tool) is not None
 
+    # The only tools allowed on mcp_actions without being on the denylist.
+    # They are the read-only status/log readers, duplicated from the read
+    # server so a client that mounts only /ai/actions can still follow the
+    # actions it started. Neither reaches a host: they read in-memory action
+    # state and the persisted pipeline logs. Anything else on that server
+    # reaches the Swarm manager over SSH and must stay denied.
+    _READ_ONLY_ACTIONS_TOOLS = {"get_action_status", "get_action_logs"}
+
     def test_every_privileged_mcp_tool_is_denied_by_default(self):
         """The denylist must not drift from the tools the actions server exposes.
 
-        Every tool on mcp_actions reaches the Swarm manager over SSH, so one
-        missing from DANGEROUS_TOOL_NAMES is a prompt-injection path to RCE.
+        Every tool on mcp_actions but the read-only duplicates reaches the Swarm
+        manager over SSH, so one missing from DANGEROUS_TOOL_NAMES is a
+        prompt-injection path to RCE.
         """
         from backend.config_file import tool_denial_reason
         try:
@@ -806,6 +815,10 @@ class TestH4AgentToolPolicy:
         names = [tool.name for tool in asyncio.run(mcp_actions.list_tools())]
         assert names, "the actions MCP server registered no tool"
         for name in names:
+            if name in self._READ_ONLY_ACTIONS_TOOLS:
+                assert tool_denial_reason(name) is None, (
+                    f"{name} is declared read-only but the policy denies it")
+                continue
             assert tool_denial_reason(name) is not None, (
                 f"{name} is exposed by the privileged MCP server but the default "
                 f"policy lets the LLM agent call it")

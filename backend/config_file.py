@@ -44,7 +44,9 @@ class MCPServerConfig(BaseModel):
 # them reaches the Swarm manager over SSH, so a tool missing here is a path to
 # arbitrary code execution that prompt injection can steer the agent onto.
 # tests/test_security.py pins the two lists together -- add the new tool here
-# whenever one is registered on mcp_actions.
+# whenever one is registered on mcp_actions.  DANGEROUS_TOOL_KEYWORDS below is
+# no safety net here: "trigger_pipeline", "cancel_action",
+# "set_transition_config", "create_tag" and "*_stack_env" match none of them.
 DANGEROUS_TOOL_NAMES: List[str] = [
     "run_command",
     "build_stack",
@@ -53,6 +55,20 @@ DANGEROUS_TOOL_NAMES: List[str] = [
     # and runs `bash test.sh`, i.e. the repository's own docker compose "test"
     # target: it is a shell, and no keyword below matches its name.
     "test_stack",
+    # Runs the whole build -> test -> deploy chain, so it is a superset of the
+    # three tools above.
+    "trigger_pipeline",
+    # Mutates the git history the pipeline builds from.
+    "create_tag",
+    # Rewrites the approval gates: switching a transition to "auto" is how an
+    # injected instruction would remove the human from the loop.
+    "set_transition_config",
+    # Aborts a running build or deploy, potentially mid-rollout.
+    "cancel_action",
+    # Not a mutation, but a stack .env holds deployment secrets and this reads
+    # it whole -- the exfiltration path a log-line injection would aim for.
+    "get_stack_env",
+    "set_stack_env",
 ]
 
 # Any tool whose name contains one of these fragments is treated as dangerous.

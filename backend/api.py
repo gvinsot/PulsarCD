@@ -330,8 +330,12 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 
 
 # Mount MCP servers with authentication middleware
-# Read MCP: /ai/mcp (list_stacks, list_containers, list_computers, logs, get_action_status)
-# Actions MCP: /ai/actions/mcp (build_stack, test_stack, deploy_stack, run_command)
+# Read MCP: /ai/mcp (stacks, containers, hosts, logs, tags, pipeline state,
+#                    action status/logs, health summary)
+# Actions MCP: /ai/actions/mcp (trigger_pipeline, build/test/deploy_stack,
+#                    create_tag, set_transition_config, cancel_action,
+#                    get/set_stack_env, run_command). Every tool added here must
+#                    also be listed in config_file.DANGEROUS_TOOL_NAMES.
 if _mcp_available:
     app.mount("/ai/actions", MCPAuthMiddleware(get_mcp_actions_app(), require_admin=True))
     app.mount("/ai", MCPAuthMiddleware(get_mcp_read_app(), require_admin=False))
