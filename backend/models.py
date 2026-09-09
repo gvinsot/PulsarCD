@@ -93,6 +93,7 @@ class LogSearchQuery(BaseModel):
     hosts: List[str] = []
     containers: List[str] = []
     compose_projects: List[str] = []
+    compose_services: List[str] = []
     levels: List[str] = []
     http_status_min: Optional[int] = None
     http_status_max: Optional[int] = None

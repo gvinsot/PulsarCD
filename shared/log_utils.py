@@ -75,27 +75,63 @@ def parse_size_mb(size_str: str) -> float:
 
 LOG_LEVELS = ["CRITICAL", "FATAL", "ERROR", "WARN", "WARNING", "INFO", "DEBUG", "TRACE"]
 
+# Longest first, so the alternation cannot settle on "WARN" inside "WARNING".
+_LEVEL_ALT = "|".join(sorted(LOG_LEVELS, key=len, reverse=True))
+
+# A bracketed level, tolerating the padding structlog's console renderer emits
+# ("[info     ]"). The previous pattern required "[INFO]" exactly, so every
+# padded line fell through to the free scan below.
+_BRACKET_LEVEL_RE = re.compile(r'\[\s*(\w+)\s*\]')
+
+# A leading timestamp, removed before looking for a prefix level.
+_LEADING_TIMESTAMP_RE = re.compile(
+    r'^\s*(?:\d{4}[-/]\d{2}[-/]\d{2}[T ]\S*\s+|\d{2}:\d{2}:\d{2}\S*\s+)?'
+)
+
+# A level printed as the line's prefix, followed by a separator:
+# "INFO:backend.api:...", "ERROR - msg", "WARN | msg".
+_PREFIX_LEVEL_RE = re.compile(rf'({_LEVEL_ALT})\b\s*[:\-|]')
+
+
+def _normalise_level(level: str) -> str:
+    return "WARN" if level == "WARNING" else level
+
 
 def detect_log_level(message: str) -> Optional[str]:
-    """Detect log level from message content.
+    """Detect the log level of a container log line.
 
-    Looks for common log level patterns in the message.
-    Returns normalized level name (WARNING -> WARN).
+    The precedence is the point of this function: the level the emitter
+    *printed* outranks a level word that merely occurs in the text. Without
+    that, an INFO line reading "Error pattern threshold reached" was indexed as
+    ERROR, and a WARNING carrying git's "fatal: ambiguous argument" inside an
+    error= field was indexed as FATAL — which is how the platform's own INFO
+    logs came to dominate the dashboard's error counters.
+
+    Returns the normalized level name (WARNING -> WARN), or None.
     """
     # Strip ANSI escape codes first — they break word-boundary matching
     msg_upper = strip_ansi(message).upper()
 
-    # Check for level in brackets first (e.g., "[ERROR]", "[info]")
-    bracket_match = re.search(r'\[(\w+)\]', msg_upper)
-    if bracket_match:
-        level = bracket_match.group(1)
-        if level in LOG_LEVELS:
-            return level.replace("WARNING", "WARN")
+    # 1. Bracketed level, padding included. Every bracketed token is examined,
+    #    so the level is found whether it comes before or after the logger name
+    #    ("[warning  ] ... [__MAIN__]" and "[__MAIN__] ... [WARNING]").
+    for token in _BRACKET_LEVEL_RE.findall(msg_upper):
+        if token in LOG_LEVELS:
+            return _normalise_level(token)
 
-    # Check for level followed by separator (e.g., "ERROR:", "INFO -")
+    # 2. Level as a prefix, once any leading timestamp is skipped.
+    prefix_match = _PREFIX_LEVEL_RE.match(
+        _LEADING_TIMESTAMP_RE.sub("", msg_upper, count=1)
+    )
+    if prefix_match:
+        return _normalise_level(prefix_match.group(1))
+
+    # 3. Fallback: the level word anywhere in the line, in the historical order
+    #    of precedence. Emitters with no fixed shape ("-> AI Error: fetch
+    #    failed") stay classified, so nothing detected before stops being.
     for level in LOG_LEVELS:
         if re.search(rf'\b{level}\b', msg_upper):
-            return level.replace("WARNING", "WARN")
+            return _normalise_level(level)
 
     return None
 

@@ -930,3 +930,81 @@ class TestSwarmProxyShellRefusal:
         assert success is False
         assert "worker-2" in message
         manager.run_shell_command.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# search_logs: the compose_services filter must reach OpenSearch
+# ---------------------------------------------------------------------------
+
+class TestSearchLogsServiceFilter:
+    """Regression: compose_services was applied to the returned page only.
+
+    It never reached the query, so `total` and the aggregations counted every
+    service — and a size=0 aggregation request, which returns no hits to
+    post-filter, was not filtered at all: the caller asked for one service,
+    got the whole cluster back, and had no way to notice.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_filter_reaches_the_search_query(self):
+        try:
+            from backend import mcp_server
+        except Exception:
+            pytest.skip("MCP support not installed in this environment")
+        from backend.models import LogSearchResult
+
+        recorded = {}
+
+        class _OpenSearch:
+            async def search_logs(self, query):
+                recorded["query"] = query
+                return LogSearchResult(total=0, hits=[], aggregations={})
+
+        with patch.object(api_module, "opensearch", _OpenSearch()):
+            await mcp_server.search_logs(
+                compose_services="agent, swarm-manager", size=0, last_hours=1
+            )
+
+        assert recorded["query"].compose_services == ["agent", "swarm-manager"]
+
+    @pytest.mark.asyncio
+    async def test_the_query_builder_emits_a_terms_clause(self):
+        from backend.models import LogSearchQuery
+        from backend.opensearch_client import OpenSearchClient
+
+        captured = {}
+
+        class _Client:
+            async def search(self, index, body):
+                captured["body"] = body
+                return {"hits": {"hits": [], "total": {"value": 0}}}
+
+        client = OpenSearchClient.__new__(OpenSearchClient)
+        client.logs_index = "pulsarcd-logs"
+        client._client = _Client()
+
+        await client.search_logs(LogSearchQuery(compose_services=["agent"]))
+
+        filters = captured["body"]["query"]["bool"]["filter"]
+        assert {"terms": {"compose_service": ["agent"]}} in filters
+
+    @pytest.mark.asyncio
+    async def test_no_service_means_no_clause(self):
+        from backend.models import LogSearchQuery
+        from backend.opensearch_client import OpenSearchClient
+
+        captured = {}
+
+        class _Client:
+            async def search(self, index, body):
+                captured["body"] = body
+                return {"hits": {"hits": [], "total": {"value": 0}}}
+
+        client = OpenSearchClient.__new__(OpenSearchClient)
+        client.logs_index = "pulsarcd-logs"
+        client._client = _Client()
+
+        await client.search_logs(LogSearchQuery())
+
+        filters = captured["body"]["query"]["bool"]["filter"]
+        assert not any("compose_service" in str(f) for f in filters)

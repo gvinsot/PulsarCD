@@ -731,6 +731,7 @@ async def search_logs(
         hosts=[h.strip() for h in hosts.split(",") if h.strip()] if hosts else [],
         containers=[c.strip() for c in containers.split(",") if c.strip()] if containers else [],
         compose_projects=projects,
+        compose_services=[s.strip() for s in compose_services.split(",") if s.strip()] if compose_services else [],
         levels=[lv.strip().upper() for lv in levels.split(",") if lv.strip()] if levels else [],
         http_status_min=http_status_min,
         http_status_max=http_status_max,
@@ -745,12 +746,6 @@ async def search_logs(
 
     result = await opensearch.search_logs(search_query)
 
-    # Post-filter by compose_service (not a LogSearchQuery field)
-    hits_raw = result.hits
-    if compose_services:
-        svc_set = {s.strip() for s in compose_services.split(",") if s.strip()}
-        hits_raw = [h for h in hits_raw if h.compose_service in svc_set]
-
     hits = [
         {
             "timestamp": h.timestamp.isoformat(),
@@ -762,7 +757,7 @@ async def search_logs(
             "http_status": h.http_status,
             "message": h.message[:500],
         }
-        for h in hits_raw
+        for h in result.hits
     ]
     return json.dumps(
         {

@@ -641,6 +641,13 @@ class OpenSearchClient:
         if query.compose_projects:
             filter_clauses.append({"terms": {"compose_project": query.compose_projects}})
         
+        # Compose service filter. It belongs here, in the query: filtering
+        # the returned page instead left `total` and the aggregations
+        # counting every service, and a size=0 aggregation request — which
+        # returns no hits to post-filter — was not filtered at all.
+        if query.compose_services:
+            filter_clauses.append({"terms": {"compose_service": query.compose_services}})
+        
         # Level filter
         if query.levels:
             filter_clauses.append({"terms": {"level": query.levels}})

@@ -86,6 +86,43 @@ class TestDetectLogLevel:
     def test_critical(self):
         assert detect_log_level("CRITICAL failure") == "CRITICAL"
 
+    # ── the printed level outranks a level word in the text ──────────────────
+    # These are real lines from the platform's own log store. Each used to be
+    # indexed one or two levels too high, which is what filled the dashboard's
+    # error counters with PulsarCD's own INFO logs.
+
+    def test_padded_structlog_level_beats_the_word_error_in_the_message(self):
+        """structlog pads the level: "[info     ]", not "[INFO]"."""
+        line = ("2026-09-09T12:00:51Z [info     ] Error pattern threshold "
+                "reached, notifying")
+        assert detect_log_level(line) == "INFO"
+
+    def test_a_warning_carrying_gits_fatal_is_not_fatal(self):
+        """git writes "fatal:" into an error= field of an ordinary warning."""
+        line = ('WARNING:backend.github_service:2026-09-09T09:27:38Z '
+                '[warning  ] Failed to update repo '
+                'error="fatal: ambiguous argument \'HEAD\'"')
+        assert detect_log_level(line) == "WARN"
+
+    def test_logger_name_prefix_does_not_hide_the_level(self):
+        line = ("INFO:backend.error_detector:2026-09-09T12:06:51Z [info     ] "
+                "Error detector periodic summary")
+        assert detect_log_level(line) == "INFO"
+
+    def test_a_bracketed_level_after_the_logger_name_is_still_found(self):
+        assert detect_log_level("[__main__] [WARNING] something") == "WARN"
+
+    def test_nginx_style_still_works(self):
+        line = '2026/09/09 09:59:46 [error] 38#38: *6262 open() failed'
+        assert detect_log_level(line) == "ERROR"
+
+    def test_an_emitter_without_a_fixed_shape_is_still_classified(self):
+        """The free scan stays as the fallback, so nothing stops being found."""
+        assert detect_log_level("-> AI Error: fetch failed") == "ERROR"
+
+    def test_a_level_after_a_timestamp_is_a_prefix(self):
+        assert detect_log_level("2026-09-09T09:03:54Z ERROR - boom") == "ERROR"
+
 
 # ── detect_http_status ───────────────────────────────────────────────────────
 
