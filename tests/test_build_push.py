@@ -60,7 +60,16 @@ printf '\n' >> "$DOCKER_LOG"
 case "$*" in
   "buildx inspect"*) echo 'Platforms: linux/amd64, linux/arm64*' ;;
   "manifest inspect "*) [ "$3" = "$EXISTING_IMAGE" ]; exit $? ;;
-  "buildx bake "*) [ "$FAIL_COMMAND" != bake ]; exit $? ;;
+  "buildx bake "*)
+    allowed=false
+    for arg in "$@"; do
+      [ "$arg" = "--allow=fs.read=$(cd .. && pwd)" ] && allowed=true
+    done
+    if [ "$allowed" != true ]; then
+      echo 'ERROR: additional privileges requested: Read access to path ..' >&2
+      exit 1
+    fi
+    [ "$FAIL_COMMAND" != bake ]; exit $? ;;
   "buildx imagetools create "*) [ "$FAIL_COMMAND" != tag ]; exit $? ;;
   "push "*) [ "$FAIL_COMMAND" != push ]; exit $? ;;
 esac
@@ -110,6 +119,16 @@ exit 0
         self.assertTrue(any(c[:2] == ["buildx", "bake"] for c in calls))
         compose, = [c for c in calls if c[0] == "compose"]
         self.assertNotIn("stt-server", compose)
+
+    def test_bake_can_read_parent_context_with_spaces(self):
+        result, calls = self.run_build()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        bake, = [c for c in calls if c[:2] == ["buildx", "bake"]]
+        compose_path = bake[bake.index("-f") + 1]
+        repo_path = compose_path.rsplit("/devops/", 1)[0]
+        self.assertIn(" ", repo_path)
+        self.assertEqual([arg for arg in bake if arg.startswith("--allow")],
+                         [f"--allow=fs.read={repo_path}"])
 
     def test_per_service_arm_platform_overrides_global(self):
         result, calls = self.run_build(platforms="linux/amd64")

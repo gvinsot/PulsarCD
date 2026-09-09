@@ -772,6 +772,9 @@ for img in $IMAGES_TO_BUILD; do
         # target and context. The selected builder routes arm64 to its ARM node.
         # Publish the exact compose tag, never an unrelated :latest image.
         BUILDX_CMD=(docker buildx bake --builder "$BUILDER_NAME" -f "$COMPOSE_PATH"
+            # Compose contexts such as .. are outside the devops working
+            # directory. Grant read access to this repository for this build.
+            "--allow=fs.read=$REPO_PATH"
             --set "$SVC_NAME.platform=$IMG_PLATFORMS"
             --set "$SVC_NAME.tags=$RESOLVED_IMG" --push)
         [ "$NO_CACHE" = "--no-cache" ] && BUILDX_CMD+=(--no-cache)
