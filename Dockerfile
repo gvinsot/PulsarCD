@@ -51,6 +51,9 @@ COPY pytest.ini ./
 # Copy test files
 COPY tests/ ./tests/
 COPY scripts/build-push.sh ./scripts/build-push.sh
+# Build contexts may come from a Windows checkout, while these tests run Bash
+# on Linux. Match the script's Linux line endings and validate it at build time.
+RUN sed -i 's/\r$//' scripts/build-push.sh && bash -n scripts/build-push.sh
 
 # Run tests on container start
 CMD ["python", "-m", "pytest", "tests/", "-v", "--tb=short", "-p", "no:warnings"]

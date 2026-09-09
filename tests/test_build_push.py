@@ -147,7 +147,7 @@ exit 0
         for failure in ("bake", "tag", "push"):
             with self.subTest(failure=failure):
                 result, _ = self.run_build(failure=failure)
-                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertNotIn("Build Complete!", result.stdout)
 
 
