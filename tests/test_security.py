@@ -173,7 +173,7 @@ def mcp_api_key(client):
 
 
 class TestC3MCPAuthorization:
-    """The actions MCP server exposes run_command: admins (or the service key)."""
+    """The actions MCP server deploys and tears down: admins (or the service key)."""
 
     def test_actions_server_refuses_a_viewer_jwt(self, client):
         resp = _mcp_client(True).get("/mcp", headers=_headers("viewer"))
@@ -249,7 +249,7 @@ class TestC3MCPAuthorization:
         assert token not in json.dumps(events, default=str)
 
     def test_a_revoked_token_does_not_work_on_mcp(self, client):
-        """M3 must also cover the MCP surface: run_command is a shell."""
+        """M3 must also cover the MCP surface: it deploys to the Swarm."""
         headers = _headers("admin", epoch=1)
         with patch.object(api_module, "user_manager", _um(999)):
             resp = _mcp_client(True).get("/mcp", headers=headers)
@@ -797,15 +797,15 @@ class TestH4AgentToolPolicy:
     # server so a client that mounts only /ai/actions can still follow the
     # actions it started. Neither reaches a host: they read in-memory action
     # state and the persisted pipeline logs. Anything else on that server
-    # reaches the Swarm manager over SSH and must stay denied.
+    # mutates the deployment and must stay denied.
     _READ_ONLY_ACTIONS_TOOLS = {"get_action_status", "get_action_logs"}
 
     def test_every_privileged_mcp_tool_is_denied_by_default(self):
         """The denylist must not drift from the tools the actions server exposes.
 
-        Every tool on mcp_actions but the read-only duplicates reaches the Swarm
-        manager over SSH, so one missing from DANGEROUS_TOOL_NAMES is a
-        prompt-injection path to RCE.
+        Every tool on mcp_actions but the read-only duplicates changes what runs
+        on the Swarm, so one missing from DANGEROUS_TOOL_NAMES is a
+        prompt-injection path into the deployment.
         """
         from backend.config_file import tool_denial_reason
         try:
@@ -1505,3 +1505,144 @@ class TestH3BootstrapPassword:
                     "PULSARCD_AUTH__AGENT_KEY"):
             assert f"${{{var}:-" not in text, f"{var} still has a default fallback"
             assert f"${{{var}:?" in text, f"{var} is not declared as required"
+
+
+# ===========================================================================
+# The actions MCP server exposes no shell, and hands back no secret value
+# ===========================================================================
+
+def _mcp_tool_names(server_attr: str):
+    try:
+        from backend import mcp_server
+    except Exception:
+        pytest.skip("MCP support not installed in this environment")
+    server = getattr(mcp_server, server_attr)
+    return [tool.name for tool in asyncio.run(server.list_tools())]
+
+
+class TestNoShellOnTheActionsServer:
+    """run_command was arbitrary code execution on the Swarm manager.
+
+    Holding the MCP API key (a machine credential, exempt from the role check)
+    meant a shell on the node that owns every SSH key and the Docker socket, and
+    it bypassed the pipeline entirely: no version recorded, no gate evaluated,
+    no audit trail. It is replaced by named operations that can each be denied
+    on their own.
+    """
+
+    def test_the_actions_server_has_no_shell_tool(self):
+        assert "run_command" not in _mcp_tool_names("mcp_actions")
+
+    @pytest.mark.parametrize("tool", ["container_action", "update_service_image",
+                                      "remove_service", "remove_stack"])
+    def test_targeted_operations_replace_it(self, tool):
+        assert tool in _mcp_tool_names("mcp_actions")
+
+    def test_the_read_server_can_check_a_rollout_converged(self):
+        """Without it, "did the deploy land" needed `docker service ps`."""
+        assert "get_service_tasks" in _mcp_tool_names("mcp_read")
+
+    def test_no_tool_on_either_server_takes_a_free_form_command(self):
+        try:
+            from backend.mcp_server import mcp_actions, mcp_read
+        except Exception:
+            pytest.skip("MCP support not installed in this environment")
+        for server in (mcp_actions, mcp_read):
+            for tool in asyncio.run(server.list_tools()):
+                params = (tool.inputSchema or {}).get("properties", {})
+                assert "command" not in params, f"{tool.name} takes a command"
+
+
+class TestStackEnvNeverReturnsValues:
+    """A stack .env holds the deployment's secrets.
+
+    Whatever an MCP tool returns lands in an LLM context window, gets quoted
+    into answers and summarised into tasks -- and agent conversations are
+    logged into the store any viewer account can search. get_stack_env used to
+    return the file whole.
+    """
+
+    SECRETS = ("hunter2-hunter2", "ghp_realtoken")
+
+    @pytest.fixture
+    def env_file(self, monkeypatch):
+        from backend.github_service import StackDeployer
+
+        state = {"content": (
+            "# deployment secrets\n"
+            "PULSARCD_AUTH__PASSWORD=hunter2-hunter2\n"
+            "export REGISTRY_TOKEN=ghp_realtoken\n"
+            "\n"
+            "TRAEFIK_HOST=logs.example.org\n"
+        )}
+
+        class _Repos:
+            async def get_starred_repos(self):
+                return [{"name": "myrepo", "owner": "o",
+                         "ssh_url": "git@github.com:o/myrepo.git"}]
+
+        async def _get(self, repo_name):
+            return True, state["content"]
+
+        async def _save(self, repo_name, content):
+            state["content"] = content
+            return True, "File saved successfully"
+
+        monkeypatch.setattr(api_module, "github_service", _Repos())
+        monkeypatch.setattr(StackDeployer, "get_env_file", _get)
+        monkeypatch.setattr(StackDeployer, "save_env_file", _save)
+        return state
+
+    async def test_get_stack_env_lists_keys_without_values(self, env_file):
+        from backend.mcp_server import get_stack_env
+        raw = await get_stack_env("myrepo")
+        payload = json.loads(raw)
+        assert [v["key"] for v in payload["variables"]] == [
+            "PULSARCD_AUTH__PASSWORD", "REGISTRY_TOKEN", "TRAEFIK_HOST"]
+        for secret in self.SECRETS:
+            assert secret not in raw
+        # The length is kept: it is what confirms a write landed.
+        assert payload["variables"][0]["chars"] == len("hunter2-hunter2")
+
+    async def test_set_stack_env_patches_one_key_and_keeps_the_rest(self, env_file):
+        from backend.mcp_server import set_stack_env
+        payload = json.loads(await set_stack_env("myrepo", updates={"TRAEFIK_HOST": "qa.example.org"}))
+        assert payload["updated"] == ["TRAEFIK_HOST"]
+        content = env_file["content"]
+        assert "TRAEFIK_HOST=qa.example.org" in content
+        # Whole-file replacement is what used to drop the other variables.
+        assert "PULSARCD_AUTH__PASSWORD=hunter2-hunter2" in content
+        assert "export REGISTRY_TOKEN=ghp_realtoken" in content
+        assert "# deployment secrets" in content
+
+    async def test_set_stack_env_never_echoes_a_value_back(self, env_file):
+        from backend.mcp_server import set_stack_env
+        raw = await set_stack_env("myrepo", updates={"NEW_SECRET": "s3cr3t-value"})
+        assert "s3cr3t-value" not in raw
+        assert json.loads(raw)["added"] == ["NEW_SECRET"]
+        assert "NEW_SECRET=s3cr3t-value" in env_file["content"]
+
+    async def test_set_stack_env_unsets_a_key(self, env_file):
+        from backend.mcp_server import set_stack_env
+        payload = json.loads(await set_stack_env("myrepo", unset=["REGISTRY_TOKEN"]))
+        assert payload["removed"] == ["REGISTRY_TOKEN"]
+        assert "REGISTRY_TOKEN" not in env_file["content"]
+        assert "TRAEFIK_HOST=logs.example.org" in env_file["content"]
+
+    @pytest.mark.parametrize("value", ["a\nINJECTED=1", "a\rINJECTED=1"])
+    async def test_a_newline_in_a_value_cannot_declare_another_variable(self, env_file, value):
+        from backend.mcp_server import set_stack_env
+        payload = json.loads(await set_stack_env("myrepo", updates={"TRAEFIK_HOST": value}))
+        assert "single-line" in payload["error"]
+        assert "INJECTED" not in env_file["content"]
+
+    @pytest.mark.parametrize("key", ["BAD KEY", "PATH;id", "9LEADING", ""])
+    async def test_an_invalid_variable_name_is_refused(self, env_file, key):
+        from backend.mcp_server import set_stack_env
+        payload = json.loads(await set_stack_env("myrepo", updates={key: "x"}))
+        assert "Invalid variable name" in payload["error"]
+
+    async def test_an_unknown_stack_is_refused_before_any_read(self, env_file):
+        from backend.mcp_server import get_stack_env
+        payload = json.loads(await get_stack_env("not-a-stack"))
+        assert "Unknown stack" in payload["error"]

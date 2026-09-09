@@ -45,9 +45,12 @@ class MCPServerConfig(BaseModel):
 # arbitrary code execution that prompt injection can steer the agent onto.
 # tests/test_security.py pins the two lists together -- add the new tool here
 # whenever one is registered on mcp_actions.  DANGEROUS_TOOL_KEYWORDS below is
-# no safety net here: "trigger_pipeline", "cancel_action",
-# "set_transition_config", "create_tag" and "*_stack_env" match none of them.
+# no safety net here: "trigger_pipeline", "cancel_action", "container_action",
+# "set_transition_config" and "*_stack_env" match none of them.
 DANGEROUS_TOOL_NAMES: List[str] = [
+    # PulsarCD no longer exposes a shell tool, but the name stays denied: the
+    # agent also talks to MCP servers this repository does not control, and
+    # "run_command" is what such a tool is called.
     "run_command",
     "build_stack",
     "deploy_stack",
@@ -58,15 +61,27 @@ DANGEROUS_TOOL_NAMES: List[str] = [
     # Runs the whole build -> test -> deploy chain, so it is a superset of the
     # three tools above.
     "trigger_pipeline",
-    # Mutates the git history the pipeline builds from.
+    # Mutates the git history the pipeline builds from. Retired from the MCP
+    # surface (trigger_pipeline tags what it ships) -- kept denied for the same
+    # reason as run_command.
     "create_tag",
     # Rewrites the approval gates: switching a transition to "auto" is how an
     # injected instruction would remove the human from the loop.
     "set_transition_config",
     # Aborts a running build or deploy, potentially mid-rollout.
     "cancel_action",
-    # Not a mutation, but a stack .env holds deployment secrets and this reads
-    # it whole -- the exfiltration path a log-line injection would aim for.
+    # Runtime operations on what is already deployed. They no longer go through
+    # a shell, but they take a service down or change the image it runs, which
+    # is exactly what an injected instruction would ask for. "container_action"
+    # matches no keyword below; the other three do, and are named here anyway so
+    # an allowlist cannot re-enable them.
+    "container_action",
+    "update_service_image",
+    "remove_service",
+    "remove_stack",
+    # Stack .env access. get_stack_env no longer returns values, but the key
+    # names alone map the deployment, and set_stack_env changes what the next
+    # deploy runs with.
     "get_stack_env",
     "set_stack_env",
 ]

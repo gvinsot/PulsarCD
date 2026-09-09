@@ -333,9 +333,10 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 # Read MCP: /ai/mcp (stacks, containers, hosts, logs, tags, pipeline state,
 #                    action status/logs, health summary)
 # Actions MCP: /ai/actions/mcp (trigger_pipeline, build/test/deploy_stack,
-#                    create_tag, set_transition_config, cancel_action,
-#                    get/set_stack_env, run_command). Every tool added here must
-#                    also be listed in config_file.DANGEROUS_TOOL_NAMES.
+#                    set_transition_config, cancel_action, get/set_stack_env,
+#                    container_action, update_service_image, remove_service,
+#                    remove_stack). Every tool added here must also be listed in
+#                    config_file.DANGEROUS_TOOL_NAMES.
 if _mcp_available:
     app.mount("/ai/actions", MCPAuthMiddleware(get_mcp_actions_app(), require_admin=True))
     app.mount("/ai", MCPAuthMiddleware(get_mcp_read_app(), require_admin=False))
@@ -1065,9 +1066,11 @@ async def admin_llm_test(request: Request):
         f"from PulsarCD (search_logs, list_containers, list_computers, "
         f"get_log_metadata, get_action_status, list_stacks) "
         f"and from PulsarTeam (create_task, etc.).\n"
-        f"Infrastructure-mutating tools (build_stack, test_stack, deploy_stack, "
-        f"run_command) are NOT available here: the platform policy refuses them "
-        f"unless error_handling.allow_dangerous_tools is enabled.\n"
+        f"Infrastructure-mutating tools (trigger_pipeline, build_stack, "
+        f"test_stack, deploy_stack, container_action, update_service_image, "
+        f"remove_service, remove_stack) are NOT available here: the platform "
+        f"policy refuses them unless error_handling.allow_dangerous_tools is "
+        f"enabled.\n"
         f"Use the appropriate tools to answer questions. "
         f"For example, if the user asks about errors, call search_logs. "
         f"If they ask about container status, call list_containers.\n"

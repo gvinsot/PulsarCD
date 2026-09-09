@@ -10,7 +10,7 @@ import json
 import re
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Dict, List, Optional
 
 import structlog
 from mcp.server.fastmcp import FastMCP
@@ -36,7 +36,10 @@ mcp_read = FastMCP(
         "3. get_pipeline_status(repo_name) and get_transition_config(repo_name) "
         "show where the pipeline stands and which gates are automatic.\n"
         "4. get_action_status / get_action_logs follow a running build, test or deploy.\n"
-        "5. get_health_summary() after a deploy tells you whether it broke anything."
+        "5. get_service_tasks(service) shows the Swarm task states, the "
+        "docker service ps view: a deploy whose command returned successfully "
+        "but never converged shows up here as failed or restarting tasks.\n"
+        "6. get_health_summary() after a deploy tells you whether it broke anything."
     ),
     stateless_http=True,
     json_response=True,
@@ -45,28 +48,28 @@ mcp_read = FastMCP(
 mcp_actions = FastMCP(
     name="PulsarCD Actions",
     instructions=(
-        "PulsarCD action tools for building, testing, deploying Docker stacks, "
-        "and running CLI commands on hosts.\n\n"
-        "Use build_stack to build a Docker image from a GitHub repository, "
-        "test_stack to run the test suite, "
-        "deploy_stack to deploy a stack to Docker Swarm, "
-        "and run_command to execute shell commands on a host (e.g. Docker/Swarm CLI).\n\n"
+        "PulsarCD action tools: ship a stack through the pipeline, and operate "
+        "what is already deployed.\n\n"
         "PREFER trigger_pipeline: it runs build -> test -> (QA) -> deploy as one "
         "tracked pipeline, tags the commit and honours the per-project gates. "
-        "Use build_stack / test_stack / deploy_stack only to re-run a single stage. "
-        "Never deploy to the Swarm with run_command: a stack deployed that way has "
-        "no pipeline state, no version record and no audit trail.\n\n"
-        "repo_name alone identifies a stack — ssh_url is resolved server-side from "
-        "the starred repositories and only needs to be passed to override it.\n\n"
+        "Use build_stack / test_stack / deploy_stack only to re-run a single "
+        "stage, to promote a QA build to production, or to roll back "
+        "(deploy_stack with the previous tag).\n\n"
+        "Operating what already runs: container_action bounces a single "
+        "container, update_service_image rolls one service to another tag, "
+        "remove_service and remove_stack tear down. Check the outcome with "
+        "get_service_tasks on the read server: an action that returned "
+        "successfully has not necessarily converged.\n\n"
+        "There is no shell tool here on purpose. Every tool is a named "
+        "operation that records pipeline state and leaves an audit trail; a "
+        "stack deployed by hand has neither.\n\n"
+        "repo_name alone identifies a stack, ssh_url is resolved server-side "
+        "from the starred repositories and only needs to be passed to override "
+        "it.\n\n"
         "Each build/test/deploy tool accepts a version parameter (semver: "
         "MAJOR.MINOR or MAJOR.MINOR.PATCH, e.g. '1.0', '2.1.3'). "
         "Tags may optionally be prefixed with 'v' (e.g. 'v1.2.0'). "
-        "All return an action_id — use get_action_status (on the read MCP) "
-        "to track progress.\n\n"
-        "run_command executes any shell command on the target host. "
-        "By default it runs on the Swarm manager node. Use this for Docker "
-        "Swarm operations like 'docker service ls', 'docker node ls', "
-        "'docker stack ps <stack>', etc."
+        "All return an action_id, use get_action_status to track progress."
     ),
     stateless_http=True,
     json_response=True,
@@ -124,34 +127,6 @@ async def _resolve_repo(repo_name: str, ssh_url: Optional[str] = None):
 def _raise_unknown_stack(repo_name: str, known):
     listed = ", ".join(known[:30]) if known else "(none)"
     raise ValueError(f"Unknown stack '{repo_name}'. Known stacks: {listed}")
-
-
-async def _run_host_command(client, command: str):
-    """Run a shell command on a host client, normalising the two return shapes.
-
-    Host clients do not share one signature: ``SSHClient`` exposes
-    ``run_command`` -> ``(stdout, stderr, exit_code)``, ``DockerAPIClient`` only
-    ``run_shell_command`` -> ``(success, output)`` (with stderr merged into the
-    output), and ``SwarmProxyClient`` refuses outright. Calling ``run_command``
-    unconditionally is why this tool died with
-    ``'DockerAPIClient' object has no attribute 'run_command'`` on a cluster
-    whose manager is reached over the Docker API rather than SSH.
-
-    Returns ``(stdout, stderr, exit_code)`` in every case.
-    """
-    runner = getattr(client, "run_command", None)
-    if runner is not None:
-        return await runner(command)
-
-    shell = getattr(client, "run_shell_command", None)
-    if shell is None:
-        raise RuntimeError(
-            f"Host client {type(client).__name__} cannot run shell commands"
-        )
-    success, output = await shell(command)
-    # stderr stays empty on purpose: run_shell_command already appended it to
-    # the output, and splitting it back out would be guesswork.
-    return output, "", 0 if success else 1
 
 
 def _api_error(exc: Exception) -> str:
@@ -856,146 +831,6 @@ mcp_actions.tool(description=_ACTION_STATUS_DOCS)(get_action_status)
 
 
 # ---------------------------------------------------------------------------
-# Tool 9: run_command
-# ---------------------------------------------------------------------------
-_RUN_CMD_DOCS = """
-Execute a shell command on a host machine.
-
-By default the command runs on the **Swarm manager** node, giving you full
-access to Docker Swarm CLI operations.  You can optionally target a specific
-host by name.
-
-Examples:
-  run_command(command="docker service ls")
-  run_command(command="docker node ls")
-  run_command(command="docker stack ps mystack")
-  run_command(command="docker service logs --tail 50 mystack_api")
-  run_command(command="df -h")
-  run_command(command="docker system df")
-
-Parameters:
-- command   The shell command to execute (required).
-- host      Target host name (optional — defaults to the Swarm manager).
-- timeout   Max execution time in seconds (1–120, default 30).
-
-Where the command actually runs depends on how the host is configured:
-- SSH host        on that machine, over SSH.
-- Docker-API host on the machine running PulsarCD itself, not on the remote
-                  Docker daemon — the API carries Docker calls, not a shell. So
-                  `docker service ls` only works if the PulsarCD container has
-                  the Docker CLI and a socket. `stderr` comes back empty on
-                  these hosts: it is merged into `stdout`.
-- Swarm worker    refused. A worker is reached through the manager's API and a
-                  shell command cannot be routed to it; run it on the manager.
-
-This is not a deployment tool. Deploying a stack by hand here leaves no
-pipeline state, no version record and no audit trail — use trigger_pipeline.
-
-Returns JSON with: success, exit_code, stdout, stderr, host, command.
-Output is capped at 50 000 characters to avoid overwhelming the context.
-"""
-
-
-@mcp_actions.tool(description=_RUN_CMD_DOCS)
-async def run_command(
-    command: str,
-    host: Optional[str] = None,
-    timeout: int = 30,
-) -> str:
-    """Execute a shell command on a host."""
-    from .api import collector, settings
-
-    # ── Resolve target host ──────────────────────────────────────────────
-    target_host = host
-    if not target_host:
-        # Default to Swarm manager
-        for h in settings.hosts:
-            if h.swarm_manager:
-                target_host = h.name
-                break
-    if not target_host:
-        # Fallback to first available client
-        target_host = next(iter(collector.clients.keys()), None)
-
-    if not target_host:
-        return json.dumps({"error": "No host available"})
-
-    client = collector.clients.get(target_host)
-    if not client:
-        available = list(collector.clients.keys())
-        return json.dumps({
-            "error": f"Host '{target_host}' not found",
-            "available_hosts": available,
-        })
-
-    # ── Clamp timeout ────────────────────────────────────────────────────
-    timeout = max(1, min(timeout, 120))
-
-    # ── Execute ──────────────────────────────────────────────────────────
-    # The command text is logged ONCE and every later line refers to it by
-    # correlation id: an admin command routinely carries a secret in an argument
-    # (`docker login -p ...`, `curl -H "Authorization: ..."`), and this stdout is
-    # indexed in the log store that every viewer account can search. Repeating
-    # the payload would widen that exposure without adding audit value.
-    run_id = uuid.uuid4().hex[:12]
-    logger.info("MCP run_command", run_id=run_id, command=command[:200],
-                host=target_host, timeout=timeout)
-    MAX_OUTPUT = 50_000
-
-    try:
-        stdout, stderr, exit_code = await asyncio.wait_for(
-            _run_host_command(client, command),
-            timeout=timeout,
-        )
-
-        # Truncate long outputs
-        if len(stdout) > MAX_OUTPUT:
-            stdout = stdout[:MAX_OUTPUT] + f"\n... (truncated, {len(stdout)} chars total)"
-        if len(stderr) > MAX_OUTPUT:
-            stderr = stderr[:MAX_OUTPUT] + f"\n... (truncated, {len(stderr)} chars total)"
-
-        # Audit trail: record the outcome of every command executed on a host.
-        logger.info(
-            "MCP run_command completed",
-            run_id=run_id,
-            host=target_host,
-            exit_code=exit_code,
-        )
-
-        return json.dumps({
-            "success": exit_code == 0,
-            "exit_code": exit_code,
-            "stdout": stdout,
-            "stderr": stderr,
-            "host": target_host,
-            "command": command,
-        })
-
-    except asyncio.TimeoutError:
-        logger.warning(
-            "MCP run_command timed out",
-            run_id=run_id,
-            host=target_host,
-            timeout=timeout,
-        )
-        return json.dumps({
-            "success": False,
-            "error": f"Command timed out after {timeout}s",
-            "host": target_host,
-            "command": command,
-        })
-    except Exception as exc:
-        logger.error("MCP run_command failed", run_id=run_id, host=target_host,
-                     error=str(exc))
-        return json.dumps({
-            "success": False,
-            "error": str(exc),
-            "host": target_host,
-            "command": command,
-        })
-
-
-# ---------------------------------------------------------------------------
 # Tool 10: get_action_logs  (registered on both servers)
 # ---------------------------------------------------------------------------
 _ACTION_LOGS_DOCS = """
@@ -1356,8 +1191,8 @@ Run the full PulsarCD pipeline for a stack: build -> test -> (QA) -> deploy.
 This is the preferred way to ship. It is the only path that tags the commit,
 records the version in the pipeline state, honours the per-project gates
 (see get_transition_config) and leaves an auditable trail. Chaining
-build_stack / test_stack / deploy_stack by hand bypasses the gates; deploying
-with run_command bypasses everything.
+build_stack / test_stack / deploy_stack by hand bypasses the gates, and
+update_service_image changes what runs without recording a version at all.
 
 Provide exactly one of:
 - tag     An existing tag to build and deploy (format vX.Y.Z or vX.Y).
@@ -1408,40 +1243,6 @@ async def trigger_pipeline(
         {**data, "follow_with": f"get_pipeline_status(repo_name='{repo_name}')"},
         default=str,
     )
-
-
-# ---------------------------------------------------------------------------
-# Tool 20: create_tag  (actions)
-# ---------------------------------------------------------------------------
-@mcp_actions.tool(
-    description=(
-        "Create a git tag on a commit. Only needed to tag a commit without "
-        "building it — trigger_pipeline(commit=...) already tags what it ships. "
-        "Use get_next_version to pick the tag name."
-    )
-)
-async def create_tag(repo_name: str, tag: str, commit: str) -> str:
-    """Tag a commit on GitHub."""
-    from .api import github_service
-
-    if not github_service or not github_service.is_configured():
-        return json.dumps({"error": "GitHub integration not configured"})
-    if not _TAG_RE.match(tag):
-        return json.dumps({"error": f"Invalid tag format: '{tag}'. Expected vX.Y.Z"})
-    if not _SHA_RE.match(commit):
-        return json.dumps({"error": f"Invalid commit hash format: '{commit}'"})
-
-    try:
-        owner, _ = await _resolve_repo(repo_name)
-    except ValueError as exc:
-        return json.dumps({"error": str(exc)})
-
-    is_valid, error_msg = await github_service.validate_commit(owner, repo_name, commit)
-    if not is_valid:
-        return json.dumps({"error": error_msg})
-
-    result = await github_service.create_tag(owner, repo_name, tag, commit)
-    return json.dumps({"repo": repo_name, **result}, default=str)
 
 
 # ---------------------------------------------------------------------------
@@ -1525,15 +1326,88 @@ async def cancel_action(action_id: str) -> str:
 # holds secrets, which is why GET /api/stacks/{repo}/env is admin-only too
 # (_ADMIN_ONLY_GET_RE in api.py). Exposing them on the read server would hand
 # every viewer JWT the deployment secrets.
+#
+# Neither tool ever returns a value. The MCP client is an LLM: whatever these
+# tools return lands in a context window, gets summarised into a task, quoted
+# in a chat answer, and -- because agent conversations are logged -- indexed in
+# the very log store a viewer account can search. Reading the file whole was
+# the shortest exfiltration path in the product, and no caller needed it: the
+# only legitimate uses are "does KEY exist" and "set KEY to this", which the
+# key listing and the patch below cover without a value ever coming back.
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _split_env_line(line: str):
+    """Return ``(prefix, key, value)`` for an assignment line, else ``None``.
+
+    ``prefix`` is the literal ``export `` when the line carries one, so a
+    rewritten line keeps the shape the operator wrote.
+    """
+    body = line.strip()
+    if not body or body.startswith("#"):
+        return None
+    prefix = ""
+    if body.startswith("export "):
+        prefix, body = "export ", body[len("export "):].lstrip()
+    key, sep, value = body.partition("=")
+    key = key.strip()
+    if not sep or not _ENV_KEY_RE.match(key):
+        return None
+    return prefix, key, value
+
+
+def _patch_env(content: str, updates: Dict[str, str], unset: List[str]):
+    """Apply a key -> value patch to a .env file, preserving everything else.
+
+    Comments, blank lines, ordering and unrelated variables survive untouched:
+    only the lines whose key was named are rewritten. Returns
+    ``(new_content, updated, added, removed)``.
+    """
+    drop = set(unset)
+    out, updated, removed, seen = [], [], [], set()
+
+    for line in (content or "").splitlines():
+        parsed = _split_env_line(line)
+        if parsed is None:
+            out.append(line)
+            continue
+        prefix, key, _value = parsed
+        if key in drop:
+            removed.append(key)
+            continue
+        if key in updates:
+            out.append(f"{prefix}{key}={updates[key]}")
+            updated.append(key)
+            seen.add(key)
+            continue
+        out.append(line)
+
+    # A key the file did not define is appended rather than silently dropped.
+    added = [k for k in updates if k not in seen]
+    if added:
+        if out and out[-1].strip():
+            out.append("")
+        out.extend(f"{k}={updates[k]}" for k in added)
+
+    new_content = "\n".join(out)
+    if new_content and not new_content.endswith("\n"):
+        new_content += "\n"
+    return new_content, sorted(set(updated)), added, sorted(set(removed))
+
+
 @mcp_actions.tool(
     description=(
-        "Read the .env file used when deploying a stack. Contains secrets — do "
-        "not echo it into logs, tasks or any message you would not send to an "
-        "admin."
+        "List the variables of the .env file a stack is deployed with.\n"
+        "Values are never returned: each entry gives the key and the length of "
+        "its value, which is what you need to check that a variable exists and "
+        "that a set_stack_env write landed. A stack .env holds deployment "
+        "secrets and this output ends up in a context window, so there is no "
+        "option to reveal them -- read them in the web UI if you must.\n"
+        "Change a variable with set_stack_env."
     )
 )
 async def get_stack_env(repo_name: str) -> str:
-    """Read a stack's .env file."""
+    """List a stack's .env variables, values redacted."""
     from .api import settings
     from .github_service import StackDeployer
 
@@ -1546,21 +1420,66 @@ async def get_stack_env(repo_name: str) -> str:
     success, content = await deployer.get_env_file(repo_name)
     if not success:
         return json.dumps({"error": content})
-    return json.dumps({"repo": repo_name, "content": content})
+
+    variables = []
+    for line in (content or "").splitlines():
+        parsed = _split_env_line(line)
+        if parsed is None:
+            continue
+        _prefix, key, value = parsed
+        variables.append({"key": key, "value": "<redacted>", "chars": len(value.strip())})
+
+    return json.dumps({
+        "repo": repo_name,
+        "variables": variables,
+        "count": len(variables),
+        "note": "Values are redacted: use set_stack_env to change one.",
+    })
 
 
 @mcp_actions.tool(
     description=(
-        "Replace the .env file used when deploying a stack. The content is "
-        "written whole, so read it with get_stack_env first and send the full "
-        "file back with your change applied — passing a partial file drops every "
-        "variable you left out. Takes effect on the next deploy."
+        "Patch the .env file a stack is deployed with. Only the keys you name "
+        "are touched -- comments, ordering and every other variable are left "
+        "exactly as they are.\n"
+        "- updates: {\"KEY\": \"value\"} rewrites the key in place, or appends "
+        "it when the file does not define it yet.\n"
+        "- unset: [\"KEY\"] deletes those assignments.\n"
+        "Values must be single-line and are written verbatim (quote them "
+        "yourself if the value needs quotes). Takes effect on the next deploy: "
+        "the running stack is not restarted."
     )
 )
-async def set_stack_env(repo_name: str, content: str) -> str:
-    """Write a stack's .env file."""
+async def set_stack_env(
+    repo_name: str,
+    updates: Optional[Dict[str, str]] = None,
+    unset: Optional[List[str]] = None,
+) -> str:
+    """Patch a stack's .env file, key by key."""
     from .api import settings
     from .github_service import StackDeployer
+
+    updates = dict(updates or {})
+    unset = list(unset or [])
+    if not updates and not unset:
+        return json.dumps({"error": "Nothing to do: pass 'updates' and/or 'unset'"})
+
+    for key, value in updates.items():
+        if not _ENV_KEY_RE.match(key or ""):
+            return json.dumps({"error": f"Invalid variable name: '{key}'"})
+        # A newline in a value would end the assignment and let the rest of the
+        # string define further variables -- the .env equivalent of an
+        # injection, reachable from any text the model was fed.
+        if "\n" in str(value) or "\r" in str(value):
+            return json.dumps({"error": f"Value for '{key}' must be single-line"})
+        updates[key] = str(value)
+    for key in unset:
+        if not _ENV_KEY_RE.match(key or ""):
+            return json.dumps({"error": f"Invalid variable name: '{key}'"})
+
+    both = sorted(set(updates) & set(unset))
+    if both:
+        return json.dumps({"error": f"Keys in both updates and unset: {', '.join(both)}"})
 
     try:
         await _resolve_repo(repo_name)
@@ -1568,11 +1487,180 @@ async def set_stack_env(repo_name: str, content: str) -> str:
         return json.dumps({"error": str(exc)})
 
     deployer = StackDeployer(settings.github, None)
-    success, message = await deployer.save_env_file(repo_name, content)
+    success, content = await deployer.get_env_file(repo_name)
+    if not success:
+        return json.dumps({"error": content})
+
+    new_content, updated, added, removed = _patch_env(content, updates, unset)
+    missing = [k for k in unset if k not in removed]
+
+    if not updated and not added and not removed:
+        return json.dumps({
+            "success": True,
+            "repo": repo_name,
+            "unchanged": True,
+            "message": (f"No variable matched: {', '.join(missing)}" if missing
+                        else "Nothing to change"),
+        })
+
+    success, message = await deployer.save_env_file(repo_name, new_content)
     if not success:
         return json.dumps({"error": message})
-    logger.info("MCP stack env updated", repo=repo_name, bytes=len(content))
-    return json.dumps({"success": True, "repo": repo_name, "message": message})
+
+    # Keys only: the values are the secrets this tool exists to keep out of the
+    # log store.
+    logger.info("MCP stack env patched", repo=repo_name,
+                updated=updated, added=added, removed=removed)
+    return json.dumps({
+        "success": True,
+        "repo": repo_name,
+        "updated": updated,
+        "added": added,
+        "removed": removed,
+        "not_found": missing,
+        "message": message,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Tool 25: get_service_tasks  (read)
+# ---------------------------------------------------------------------------
+@mcp_read.tool(
+    description=(
+        "Task states of a Docker Swarm service, i.e. `docker service ps "
+        "<service> --no-trunc`: running, pending, failed and shutdown tasks "
+        "with their error messages.\n"
+        "This is how you check that a deploy actually converged. "
+        "get_action_status only says the deploy command returned; a service "
+        "that cannot pull its image or crashes on boot shows up here as "
+        "repeated failed tasks while the deploy still reads as 'completed'.\n"
+        "service_name is the Swarm service name, normally '<stack>_<service>' "
+        "-- list_containers shows the names in use."
+    )
+)
+async def get_service_tasks(service_name: str, host: Optional[str] = None) -> str:
+    """Read the Swarm task states of one service."""
+    from .api import get_service_tasks as _api_get_service_tasks
+
+    try:
+        data = await _api_get_service_tasks(service_name=service_name, host=host)
+    except Exception as exc:
+        return _api_error(exc)
+    return json.dumps(data, default=str)
+
+
+# ---------------------------------------------------------------------------
+# Tools 26-29: runtime operations  (actions)
+# ---------------------------------------------------------------------------
+# These replace the shell tool this server used to expose. A named operation
+# can be authorised, logged and reasoned about; run_command could not -- it was
+# arbitrary code execution on the Swarm manager, which made every other control
+# on this server (the gates, the pipeline state, the agent denylist) advisory:
+# one command bypassed all of them and left no version record behind.
+_CONTAINER_ACTIONS = ("start", "stop", "restart", "pause", "unpause", "remove")
+
+
+@mcp_actions.tool(
+    description=(
+        "Act on ONE container: start | stop | restart | pause | unpause | "
+        "remove.\n"
+        "- host and container_id come from list_containers.\n"
+        "This bounces a single container. On a Swarm service the scheduler "
+        "recreates the task from the same image, so use it to restart "
+        "something wedged -- not to change what is deployed, which is "
+        "deploy_stack (whole stack) or update_service_image (one service)."
+    )
+)
+async def container_action(host: str, container_id: str, action: str) -> str:
+    """Start / stop / restart / pause / unpause / remove a container."""
+    from .api import execute_container_action
+    from .models import ActionRequest, ContainerAction
+
+    verb = (action or "").strip().lower()
+    if verb not in _CONTAINER_ACTIONS:
+        return json.dumps({
+            "error": f"Invalid action '{action}'. Expected one of: {', '.join(_CONTAINER_ACTIONS)}"
+        })
+
+    try:
+        result = await execute_container_action(
+            ActionRequest(host=host, container_id=container_id, action=ContainerAction(verb))
+        )
+    except Exception as exc:
+        return _api_error(exc)
+
+    payload = result.model_dump() if hasattr(result, "model_dump") else result
+    logger.info("MCP container action", host=host, container=container_id[:12],
+                action=verb,
+                success=payload.get("success") if isinstance(payload, dict) else None)
+    return json.dumps(payload, default=str)
+
+
+@mcp_actions.tool(
+    description=(
+        "Roll ONE Swarm service to another image tag (`docker service update "
+        "--image`), without redeploying the whole stack.\n"
+        "- service_name is normally '<stack>_<service>'; tag is the image tag.\n"
+        "This does NOT go through the pipeline: no version is recorded, so "
+        "get_deployed_tags keeps reporting the last deployed version until the "
+        "next real deploy. Use it to unstick one service; ship a version with "
+        "trigger_pipeline or deploy_stack."
+    )
+)
+async def update_service_image(service_name: str, tag: str, host: Optional[str] = None) -> str:
+    """Update the image tag of one Swarm service."""
+    from .api import update_service_image as _api_update_service_image
+
+    try:
+        data = await _api_update_service_image(service_name=service_name, tag=tag, host=host)
+    except Exception as exc:
+        return _api_error(exc)
+    logger.info("MCP service image updated", service=service_name, tag=tag, host=host)
+    return json.dumps(data, default=str)
+
+
+@mcp_actions.tool(
+    description=(
+        "Remove ONE Swarm service (`docker service rm`). The rest of its stack "
+        "keeps running. Bring it back with deploy_stack, which recreates the "
+        "whole stack."
+    )
+)
+async def remove_service(service_name: str, host: Optional[str] = None) -> str:
+    """Remove a Swarm service."""
+    from .api import remove_service as _api_remove_service
+
+    try:
+        data = await _api_remove_service(service_name=service_name, host=host)
+    except Exception as exc:
+        return _api_error(exc)
+    logger.info("MCP service removed", service=service_name, host=host)
+    return json.dumps(data, default=str)
+
+
+@mcp_actions.tool(
+    description=(
+        "Remove a whole deployed stack from the Swarm (`docker stack rm`): "
+        "every service of the stack goes down.\n"
+        "- stack_name accepts the repository name and normalises it to the "
+        "stack name the deploy used.\n"
+        "- host defaults to the Swarm manager.\n"
+        "Images, git tags and pipeline history are untouched, so "
+        "trigger_pipeline or deploy_stack brings the stack back."
+    )
+)
+async def remove_stack(stack_name: str, host: Optional[str] = None) -> str:
+    """Remove a deployed stack from the Swarm."""
+    from .api import remove_stack as _api_remove_stack
+
+    try:
+        data = await _api_remove_stack(stack_name=stack_name, host=host)
+    except Exception as exc:
+        return _api_error(exc)
+    # Not stack=: structlog reserves that key for exception stacks and would
+    # render the value as a traceback block.
+    logger.info("MCP stack removed", stack_name=stack_name, host=host)
+    return json.dumps(data, default=str)
 
 
 # ---------------------------------------------------------------------------

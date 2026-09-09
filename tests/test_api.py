@@ -909,53 +909,19 @@ class TestSecurityHeaders:
 
 
 # ---------------------------------------------------------------------------
-# MCP run_command against the different host client shapes
+# Swarm workers refuse to run a shell command through the manager
 # ---------------------------------------------------------------------------
 
-class TestRunHostCommand:
-    """Regression: the MCP tool called client.run_command() unconditionally.
+class TestSwarmProxyShellRefusal:
+    """A worker is reached through the manager's API, not through a shell.
 
-    Only SSHClient has it. Against a Docker-API manager the tool failed with
-    "'DockerAPIClient' object has no attribute 'run_command'", which took out
-    the only escape hatch on the actions server.
+    Nothing on the MCP surface runs shell commands any more, but the collector
+    still exposes run_shell_command and routing a worker's command to the
+    manager would report the manager's state as the worker's.
     """
-
-    @staticmethod
-    def _helper():
-        try:
-            from backend.mcp_server import _run_host_command
-        except Exception:
-            pytest.skip("MCP support not installed in this environment")
-        return _run_host_command
-
-    @pytest.mark.asyncio
-    async def test_ssh_shaped_client_keeps_its_three_tuple(self):
-        client = MagicMock()
-        client.run_command = AsyncMock(return_value=("out", "err", 3))
-        assert await self._helper()(client, "id") == ("out", "err", 3)
-
-    @pytest.mark.asyncio
-    async def test_docker_api_shaped_client_is_adapted(self):
-        client = MagicMock(spec=["run_shell_command"])
-        client.run_shell_command = AsyncMock(return_value=(True, "hello"))
-        # stderr stays empty: run_shell_command already merged it into output.
-        assert await self._helper()(client, "echo hello") == ("hello", "", 0)
-
-    @pytest.mark.asyncio
-    async def test_a_failing_shell_command_reports_a_non_zero_exit_code(self):
-        client = MagicMock(spec=["run_shell_command"])
-        client.run_shell_command = AsyncMock(return_value=(False, "boom"))
-        assert await self._helper()(client, "false") == ("boom", "", 1)
-
-    @pytest.mark.asyncio
-    async def test_a_client_with_neither_method_raises_a_clear_error(self):
-        client = MagicMock(spec=[])
-        with pytest.raises(RuntimeError, match="cannot run shell commands"):
-            await self._helper()(client, "id")
 
     @pytest.mark.asyncio
     async def test_swarm_worker_refuses_instead_of_running_on_the_manager(self):
-        """Routing a worker's shell command to the manager would misreport."""
         from backend.host_client import SwarmProxyClient
         manager = MagicMock()
         manager.config = MagicMock(name="mgr")

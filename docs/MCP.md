@@ -6,12 +6,8 @@ PulsarCD exposes two [MCP (Model Context Protocol)](https://modelcontextprotocol
 
 | Server | URL | Description |
 |--------|-----|-------------|
-| **Read** | `/ai/mcp` | Read-only tools: stacks, containers, hosts, logs, tags and versions, pipeline state, action status and logs, health summary |
-| **Actions** | `/ai/actions/mcp` | Write tools: trigger the pipeline, build / test / deploy, tag, configure gates, read and write a stack `.env`, run a shell command. **Admin JWT (or the MCP API key) only** |
-
-A client that mounts only the actions server can still follow what it starts:
-`get_action_status` and `get_action_logs` are registered on **both** servers.
-Everything else on the read server requires mounting it.
+| **Read** | `/ai/mcp` | Read-only tools: inventory, logs, tags, pipeline state, action status, Swarm task states |
+| **Actions** | `/ai/actions/mcp` | Tools that change the deployment: pipeline, build/test/deploy, runtime operations, stack `.env`. **Admin JWT (or the MCP API key) only** |
 
 ## Authentication
 
@@ -30,8 +26,8 @@ Both servers accept two token types:
   and rotate it if it ever reaches a log.
 - **JWT token** — the same token used by the web UI, with two conditions:
   - `/ai/actions/mcp` requires `role == "admin"`. A `viewer` JWT gets
-    `403 {"error": "Admin role required for this MCP server"}` — its tools reach
-    the Swarm manager over SSH. `/ai/mcp` accepts any authenticated role.
+    `403 {"error": "Admin role required for this MCP server"}` — its tools change
+    what runs on the Swarm. `/ai/mcp` accepts any authenticated role.
   - Revocation is enforced on both mounts: after a password change, a role change
     or an account deletion the token is refused with
     `401 {"error": "Token has been revoked"}`, exactly as on the HTTP API.
@@ -47,91 +43,126 @@ Both servers accept two token types:
 
 ### Read server (`/ai/mcp`)
 
+#### Inventory
+
 | Tool | Description |
 |------|-------------|
-| `list_stacks` | List available stacks (starred GitHub repositories) |
+| `list_stacks` | List available stacks (GitHub repositories) |
 | `list_containers` | List all Docker containers and their states across all hosts. Accepts optional `host` and `status` filters |
 | `list_computers` | List all monitored hosts including discovered Swarm nodes. Returns names and the Swarm flag only: hostname/port/username are admin-only infrastructure detail and this server accepts any role |
+| `get_service_tasks` | Task states of one Swarm service — the `docker service ps` view, including failed and shutdown tasks. This is what tells you a deploy actually **converged**: `get_action_status` only says the deploy command returned |
+
+#### Logs and health
+
+| Tool | Description |
+|------|-------------|
 | `get_log_metadata` | Discover available hosts, services, containers and log levels in the log store. Call this first before searching logs |
 | `search_logs` | Search logs with filters (query, project, service, host, level, time range) or raw OpenSearch queries |
-| `get_action_status` | Check the status of a background build/test/deploy action by its `action_id`. Falls back to the persisted pipeline state after a restart |
-| `get_action_logs` | Read the captured output of an action (`offset` / `limit`, tail-biased). `get_action_status` only carries 5 lines — use this to diagnose a failure |
-| `list_actions` | List recent background actions, newest first, with optional `status` and `repo_name` filters. Finds the `action_id` of a stage started by `trigger_pipeline` |
-| `get_deployed_tags` | What actually runs: deployed production tags, QA tags, and the latest tag built per stack. Use it to confirm a deploy landed and to pick a rollback target |
-| `list_tags` | Git tags of a stack, newest first — the versions available to `deploy_stack(tag=...)` |
-| `get_next_version` | The version the next build would take (latest tag, patch incremented) |
-| `get_untagged_commits` | Commits with no tag, i.e. what has not shipped yet |
-| `get_pipeline_status` | Pipeline state (stage, status, versions, per-stage `action_id`) for one stack or all of them |
-| `get_transition_config` | Gate configuration per transition (`version_to_build`, `build_to_test`, `test_to_deploy`), the `qa_enabled` flag, and the last gate decision |
-| `get_health_summary` | Post-deploy check in one call: container/host counts, 24h errors, 4xx/5xx, CPU/memory/GPU load, recurring error patterns and recent system errors |
+| `get_health_summary` | Post-deploy check in one call: container/host counts, 24h error, warning and HTTP 4xx/5xx totals, CPU/memory/GPU load, recurring error patterns |
+
+#### Releases and pipeline
+
+| Tool | Description |
+|------|-------------|
+| `get_deployed_tags` | What actually runs in production and QA versus the latest tag built |
+| `list_tags` | Recent tags of a repository |
+| `get_untagged_commits` | Commits not shipped yet |
+| `get_next_version` | The version a build would take |
+| `get_pipeline_status` | Current stage of the pipeline and the action id running it |
+| `get_transition_config` | Which gates are automatic, agent-evaluated or manual |
+| `list_actions` | Recent background actions, newest first, filterable by status and repo |
+| `get_action_status` | Status of a background action by `action_id` (also on the actions server) |
+| `get_action_logs` | Output of a background action, with offset/limit paging (also on the actions server) |
 
 ### Actions server (`/ai/actions/mcp`)
 
+#### Shipping a version
+
 | Tool | Description |
 |------|-------------|
-| `trigger_pipeline` | **Preferred way to ship.** Runs build → test → (QA) → deploy as one pipeline from a `tag`, or from a `commit` which it tags with the next version first. Honours the per-project gates. Returns `{status, repo, tag, version}` — no `action_id`: follow it with `get_pipeline_status` |
-| `build_stack` | Build a Docker image from a GitHub repository. `version` defaults to the next patch version rather than a literal. Returns an `action_id` |
-| `test_stack` | Run the test suite for a stack. Returns an `action_id` |
-| `deploy_stack` | Deploy a stack to Docker Swarm. `qa=true` targets the isolated QA environment. `deploy_stack(repo_name, tag=<previous>)` is also the rollback path. With neither `version` nor `tag`, deploys what the pipeline last built (else the latest tag) rather than a literal `1.0`. Returns an `action_id` |
-| `cancel_action` | Cancel a running build/test/deploy by `action_id` |
-| `create_tag` | Tag a commit. Only needed to tag without building — `trigger_pipeline(commit=...)` already tags what it ships |
-| `set_transition_config` | Set a transition's gate `mode` (`auto`, `auto_with_success`, `agent`, `manual`) and `qa_enabled`. An omitted `qa_enabled` **preserves** the current value, unlike the REST route which resets it to false |
-| `get_stack_env` / `set_stack_env` | Read and replace the `.env` used at deploy time. `set_stack_env` writes the file whole, so read it first and send it back complete. They live here, not on the read server, because a stack `.env` holds secrets — the same reason `GET /api/stacks/{repo}/env` is admin-only |
-| `run_command` | Run a shell command on a host (the Swarm manager by default). This is arbitrary code execution — it is why the whole server is admin-only. **Never deploy with it**: a stack deployed this way has no pipeline state, no version record and no audit trail |
+| `trigger_pipeline` | **The preferred way to ship.** Runs build → test → (QA) → deploy as one tracked pipeline from a `tag` or a `commit`, tags the commit, records the version and honours the per-project gates |
+| `build_stack` | Build a Docker image from a repository. Re-runs a single stage; `version` defaults to the next patch after the latest tag |
+| `test_stack` | Run the test suite for a stack |
+| `deploy_stack` | Deploy a stack to Docker Swarm. `qa=true` deploys to the isolated QA environment. This is also how you **roll back** (`tag=<previous tag>`) and how you **promote a QA build to production** |
+| `cancel_action` | Cancel a running build/test/deploy |
+| `set_transition_config` | Set the gate mode of one pipeline transition (`auto`, `auto_with_success`, `agent`, `manual`) and toggle the QA stage |
 
-`run_command` does not run in the same place on every host. On an **SSH** host it
-runs on that machine. On a **Docker-API** host it runs on the machine running
-PulsarCD, not on the remote Docker daemon — the API carries Docker calls, not a
-shell — and `stderr` comes back empty because that code path merges it into
-`stdout`. On a **Swarm worker** (reached through the manager's API) it is
-refused rather than silently executed on the manager. The tool used to call
-`run_command()` on every client, which only `SSHClient` implements, so it failed
-outright with `'DockerAPIClient' object has no attribute 'run_command'` on a
-Docker-API manager.
+#### Operating what is already deployed
 
-Every tool on this server **except** the two read-only duplicates
-(`get_action_status`, `get_action_logs`) is on the LLM agent's unconditional
-denylist (`backend/config_file.py: DANGEROUS_TOOL_NAMES`): the agent refuses to
-call them even when they are listed in `error_handling.allowed_tools`, unless
+| Tool | Description |
+|------|-------------|
+| `container_action` | `start`, `stop`, `restart`, `pause`, `unpause` or `remove` **one** container |
+| `update_service_image` | Roll one Swarm service to another image tag without redeploying the stack. Does **not** go through the pipeline: no version is recorded |
+| `remove_service` | Remove one Swarm service |
+| `remove_stack` | Remove a whole deployed stack (`docker stack rm`). Images, tags and pipeline history are untouched, so `deploy_stack` brings it back |
+
+#### Stack configuration
+
+| Tool | Description |
+|------|-------------|
+| `get_stack_env` | List the variables of a stack's `.env` — **keys and value lengths only**. Values are never returned |
+| `set_stack_env` | Patch a stack's `.env` key by key (`updates` / `unset`). Comments, ordering and untouched variables survive |
+
+### Two deliberate absences
+
+**There is no shell tool.** `run_command` used to execute arbitrary commands on
+the Swarm manager. Holding the MCP API key — a machine credential exempt from
+the role check — therefore meant a shell on the node that owns every SSH key and
+the Docker socket, and every other control on this server (the gates, the
+pipeline state, the agent denylist) was advisory: one command bypassed all of
+them and left no version record behind. The operations people actually ran
+through it are now named tools that can each be authorised, logged and denied on
+their own, and `get_service_tasks` covers the diagnostic use.
+
+**There is no `create_tag`.** `trigger_pipeline(commit=…)` already tags what it
+ships, which is the only tagging that leaves a coherent pipeline state.
+
+### Agent denylist
+
+Every tool on the actions server is on the LLM agent's unconditional denylist
+(`backend/config_file.py: DANGEROUS_TOOL_NAMES`): the agent refuses to call them
+even when they are listed in `error_handling.allowed_tools`, unless
 `error_handling.allow_dangerous_tools` is explicitly enabled. Any tool added to
-this server must be added to that list too — a tool the agent can reach is a tool
-a prompt injection in a log line can reach. `DANGEROUS_TOOL_KEYWORDS` is no
-safety net: `trigger_pipeline`, `cancel_action`, `set_transition_config`,
-`create_tag` and `*_stack_env` match none of its keywords.
-`tests/test_security.py::test_every_privileged_mcp_tool_is_denied_by_default`
-pins the two lists together.
+that server must be added to the list too — a tool the agent can reach is a tool
+a prompt injection in a log line can reach. `tests/test_security.py` pins the two
+lists together.
 
-`build_stack`, `test_stack` and `deploy_stack` run in the background and return an `action_id`. Use `get_action_status` / `get_action_logs` to track progress.
-
-### Identifying a stack
-
-`repo_name` alone identifies a stack on every tool. `ssh_url` is resolved
-server-side from the starred repositories and only needs to be passed to
-override it; when passed it must match the registered URL. It used to be
-required, which allowed a `repo_name` / `ssh_url` pair that nothing
-cross-checked — and worse, the owner was regex-parsed out of that URL, so a URL
-the regex did not match silently skipped branch and commit validation instead of
-failing.
+`build_stack`, `test_stack`, `deploy_stack` and the pipeline run in the
+background and return an `action_id`. Use `get_action_status` / `get_action_logs`
+to track progress.
 
 ## Client Configuration Examples
 
-### Claude Desktop / Claude Code
+### Claude Code
 
-Add both servers in your MCP settings:
+```bash
+claude mcp add --transport http pulsarcd-read \
+  https://your-host/ai/mcp \
+  --header "Authorization: Bearer <your-mcp-api-key>"
+
+claude mcp add --transport http pulsarcd-actions \
+  https://your-host/ai/actions/mcp \
+  --header "Authorization: Bearer <your-mcp-api-key>"
+```
+
+Use the ASCII-only form of the key: non-ASCII bytes in an HTTP header value are
+rejected by some clients.
+
+### Claude Desktop
 
 ```json
 {
   "mcpServers": {
     "pulsarcd": {
       "type": "streamable-http",
-      "url": "https://your-host:8000/ai/mcp",
+      "url": "https://your-host/ai/mcp",
       "headers": {
         "Authorization": "Bearer <your-mcp-api-key>"
       }
     },
     "pulsarcd-actions": {
       "type": "streamable-http",
-      "url": "https://your-host:8000/ai/actions/mcp",
+      "url": "https://your-host/ai/actions/mcp",
       "headers": {
         "Authorization": "Bearer <your-mcp-api-key>"
       }
@@ -140,21 +171,22 @@ Add both servers in your MCP settings:
 }
 ```
 
-### Typical Workflow
+## Typical Workflow
 
-**Ship a change** — always through the pipeline, never through `run_command`:
+### Ship a version
 
-1. `get_untagged_commits("myrepo")` — what has not shipped yet
-2. `get_transition_config("myrepo")` — check which gates are automatic before assuming the run completes on its own
-3. `trigger_pipeline("myrepo", commit="<sha>")` — tags with the next version and runs build → test → (QA) → deploy
-4. `get_pipeline_status("myrepo")` — current stage and its `action_id`; `get_action_logs(action_id)` on failure
-5. `get_deployed_tags()` — confirm the new version is actually running
-6. `get_health_summary()` then `search_logs(github_project="myrepo", levels="ERROR", last_hours=1)` — confirm nothing broke
+1. `get_untagged_commits(repo_name)` — what is not shipped yet.
+2. `trigger_pipeline(repo_name, commit=…)` — build, test, QA, deploy under the project's gates.
+3. `get_pipeline_status(repo_name)` — current stage and its `action_id`; `get_action_logs(action_id)` to read a failure.
+4. After a QA deploy the pipeline stops on a manual gate: promote with `deploy_stack(repo_name, tag=…)`.
+5. `get_service_tasks(service)` — check the rollout converged, then `get_health_summary()` and `search_logs(...)`.
 
-**Roll back**: `list_tags("myrepo")` to find the previous version, then
-`deploy_stack("myrepo", tag="v1.2.3")`.
+### Roll back
 
-**Investigate logs**:
+`list_tags(repo_name)` → `deploy_stack(repo_name, tag=<previous tag>)` → `get_service_tasks(service)`.
 
-1. `get_log_metadata()` to discover available services and hosts
-2. `search_logs(github_project="myrepo", last_hours=24)` to browse recent logs
+### Investigate
+
+1. `get_log_metadata()` to discover available services and hosts.
+2. `search_logs(github_project="myrepo", last_hours=24)`.
+3. `get_service_tasks(service)` when a service is restarting; `container_action(host, container_id, "restart")` to bounce one container.
