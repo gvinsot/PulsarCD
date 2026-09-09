@@ -77,7 +77,17 @@ Both servers accept two token types:
 | `create_tag` | Tag a commit. Only needed to tag without building — `trigger_pipeline(commit=...)` already tags what it ships |
 | `set_transition_config` | Set a transition's gate `mode` (`auto`, `auto_with_success`, `agent`, `manual`) and `qa_enabled`. An omitted `qa_enabled` **preserves** the current value, unlike the REST route which resets it to false |
 | `get_stack_env` / `set_stack_env` | Read and replace the `.env` used at deploy time. `set_stack_env` writes the file whole, so read it first and send it back complete. They live here, not on the read server, because a stack `.env` holds secrets — the same reason `GET /api/stacks/{repo}/env` is admin-only |
-| `run_command` | Run a shell command on a host (the Swarm manager by default). This is arbitrary code execution on that node — it is why the whole server is admin-only. **Never deploy with it**: a stack deployed this way has no pipeline state, no version record and no audit trail |
+| `run_command` | Run a shell command on a host (the Swarm manager by default). This is arbitrary code execution — it is why the whole server is admin-only. **Never deploy with it**: a stack deployed this way has no pipeline state, no version record and no audit trail |
+
+`run_command` does not run in the same place on every host. On an **SSH** host it
+runs on that machine. On a **Docker-API** host it runs on the machine running
+PulsarCD, not on the remote Docker daemon — the API carries Docker calls, not a
+shell — and `stderr` comes back empty because that code path merges it into
+`stdout`. On a **Swarm worker** (reached through the manager's API) it is
+refused rather than silently executed on the manager. The tool used to call
+`run_command()` on every client, which only `SSHClient` implements, so it failed
+outright with `'DockerAPIClient' object has no attribute 'run_command'` on a
+Docker-API manager.
 
 Every tool on this server **except** the two read-only duplicates
 (`get_action_status`, `get_action_logs`) is on the LLM agent's unconditional

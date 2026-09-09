@@ -126,6 +126,34 @@ def _raise_unknown_stack(repo_name: str, known):
     raise ValueError(f"Unknown stack '{repo_name}'. Known stacks: {listed}")
 
 
+async def _run_host_command(client, command: str):
+    """Run a shell command on a host client, normalising the two return shapes.
+
+    Host clients do not share one signature: ``SSHClient`` exposes
+    ``run_command`` -> ``(stdout, stderr, exit_code)``, ``DockerAPIClient`` only
+    ``run_shell_command`` -> ``(success, output)`` (with stderr merged into the
+    output), and ``SwarmProxyClient`` refuses outright. Calling ``run_command``
+    unconditionally is why this tool died with
+    ``'DockerAPIClient' object has no attribute 'run_command'`` on a cluster
+    whose manager is reached over the Docker API rather than SSH.
+
+    Returns ``(stdout, stderr, exit_code)`` in every case.
+    """
+    runner = getattr(client, "run_command", None)
+    if runner is not None:
+        return await runner(command)
+
+    shell = getattr(client, "run_shell_command", None)
+    if shell is None:
+        raise RuntimeError(
+            f"Host client {type(client).__name__} cannot run shell commands"
+        )
+    success, output = await shell(command)
+    # stderr stays empty on purpose: run_shell_command already appended it to
+    # the output, and splitting it back out would be guesswork.
+    return output, "", 0 if success else 1
+
+
 def _api_error(exc: Exception) -> str:
     """Render an api.py handler failure as the JSON error shape tools return."""
     detail = getattr(exc, "detail", None)
@@ -850,6 +878,19 @@ Parameters:
 - host      Target host name (optional — defaults to the Swarm manager).
 - timeout   Max execution time in seconds (1–120, default 30).
 
+Where the command actually runs depends on how the host is configured:
+- SSH host        on that machine, over SSH.
+- Docker-API host on the machine running PulsarCD itself, not on the remote
+                  Docker daemon — the API carries Docker calls, not a shell. So
+                  `docker service ls` only works if the PulsarCD container has
+                  the Docker CLI and a socket. `stderr` comes back empty on
+                  these hosts: it is merged into `stdout`.
+- Swarm worker    refused. A worker is reached through the manager's API and a
+                  shell command cannot be routed to it; run it on the manager.
+
+This is not a deployment tool. Deploying a stack by hand here leaves no
+pipeline state, no version record and no audit trail — use trigger_pipeline.
+
 Returns JSON with: success, exit_code, stdout, stderr, host, command.
 Output is capped at 50 000 characters to avoid overwhelming the context.
 """
@@ -903,7 +944,7 @@ async def run_command(
 
     try:
         stdout, stderr, exit_code = await asyncio.wait_for(
-            client.run_command(command),
+            _run_host_command(client, command),
             timeout=timeout,
         )
 

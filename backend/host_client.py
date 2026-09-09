@@ -37,6 +37,12 @@ class HostClientProtocol(Protocol):
     ) -> List[LogEntry]: ...
     async def execute_container_action(self, container_id: str, action: ContainerAction) -> Tuple[bool, str]: ...
     async def exec_command(self, container_id: str, command: List[str]) -> Tuple[bool, str]: ...
+    # Declared here so the two implementations stay in step: SSHClient also
+    # offers run_command() -> (stdout, stderr, exit_code), DockerAPIClient does
+    # not, and callers that assumed run_command() existed on every client broke
+    # with AttributeError against a Docker-API host.  run_shell_command is the
+    # shape every client supports; it merges stderr into the output.
+    async def run_shell_command(self, command: str) -> Tuple[bool, str]: ...
     async def remove_stack(self, stack_name: str) -> Tuple[bool, str]: ...
     async def remove_service(self, service_name: str) -> Tuple[bool, str]: ...
     async def update_service_image(self, service_name: str, new_tag: str) -> Tuple[bool, str]: ...
@@ -199,6 +205,21 @@ class SwarmProxyClient:
     async def exec_command(self, container_id: str, command: List[str]) -> Tuple[bool, str]:
         """Execute command in container via manager."""
         return await self._manager.exec_command(container_id, command)
+
+    async def run_shell_command(self, command: str) -> Tuple[bool, str]:
+        """Refuse: a host shell command cannot be proxied to a worker node.
+
+        Every other method here delegates to the manager because the Swarm API
+        routes it to the right node.  A shell command has no such routing: it
+        would run on the manager's machine while the caller asked for this
+        node.  Failing is the only honest answer -- silently running elsewhere
+        would make `run_command(host="worker-2")` report the manager's state.
+        """
+        return False, (
+            f"Host '{self._node_hostname}' is a Swarm worker reached through the "
+            f"manager's API; shell commands cannot be routed to it. Run the "
+            f"command on the Swarm manager instead."
+        )
 
     async def remove_stack(self, stack_name: str) -> Tuple[bool, str]:
         """Remove stack via manager."""
