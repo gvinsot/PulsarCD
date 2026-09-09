@@ -23,6 +23,8 @@
 #   2. Build all images defined in devops/docker-compose.swarm.yml
 #   3. Tag the git repo with semantic version (e.g., v1.0.42)
 #   4. Tag and push Docker images with the version
+#      When services share an image repository with different source tags,
+#      release tags include that variant (e.g. cuda-arm64-1.0.42, rocm-1.0.42).
 #
 
 set -e
@@ -176,6 +178,19 @@ get_images_from_compose() {
             echo "$img" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g'
         fi
     done
+}
+
+# Distinct builds in one repository (e.g. :rocm and :cuda-arm64) must not
+# overwrite each other's release tags or satisfy each other's skip check.
+image_version_tag() {
+    local image="$1" version="$2" other
+    for other in $IMAGES; do
+        if [ "${other%:*}" = "${image%:*}" ] && [ "$other" != "$image" ]; then
+            printf '%s:%s-%s\n' "${image%:*}" "${image##*:}" "$version"
+            return
+        fi
+    done
+    printf '%s:%s\n' "${image%:*}" "$version"
 }
 
 # ============================================================================
@@ -429,6 +444,7 @@ VERSION="$SCRIPT_VERSION"
 
 # Export build-time variables so envsubst/compose can resolve them
 export REGISTRY_URL="${REGISTRY_URL:-$REGISTRY}"
+export REGISTRY
 export REPO_NAME="${REPO_NAME:-$(basename "$REPO_PATH")}"
 export VERSION="${VERSION}"
 export DOCKER_REGISTRY_URL="${DOCKER_REGISTRY_URL:-$REGISTRY}"
@@ -574,7 +590,6 @@ if [ "$NO_CACHE" = "--no-cache" ]; then
     log_info "Building with --no-cache (forced fresh build)"
 fi
 
-# Helper: extract build context/dockerfile/target for a given image from compose
 # Service that carries an image. The batch build below needs the names, not the
 # images: told to build nothing in particular, compose rebuilds every service of
 # the file — including those already built for another architecture, which then
@@ -599,41 +614,6 @@ _get_service_name_for_image() {
     END {
         # exit above still runs END: without the flag the name is printed twice.
         if (!found && current_image == target_img && service != "") print service
-    }
-    '
-}
-
-_get_service_build_info() {
-    local img="$1"
-    envsubst < "$COMPOSE_PATH" | awk -v target_img="$img" '
-    /^[[:space:]]{2}[a-zA-Z][a-zA-Z0-9_-]*:[[:space:]]*$/ {
-        if (current_image == target_img && context != "") {
-            printf "%s|%s|%s", context, dockerfile, target
-            found = 1; exit
-        }
-        current_image = ""; context = "."; dockerfile = "Dockerfile"; target = ""
-    }
-    /^[[:space:]]{4}image:[[:space:]]*/ {
-        img_line = $0; gsub(/^[[:space:]]+image:[[:space:]]*/, "", img_line); gsub(/[[:space:]]*$/, "", img_line)
-        gsub(/"/, "", img_line); gsub(/\047/, "", img_line)
-        current_image = img_line
-    }
-    /^[[:space:]]{6}context:[[:space:]]*/ {
-        ctx = $0; gsub(/^[[:space:]]+context:[[:space:]]*/, "", ctx); gsub(/[[:space:]]*$/, "", ctx)
-        context = ctx
-    }
-    /^[[:space:]]{6}dockerfile:[[:space:]]*/ {
-        df = $0; gsub(/^[[:space:]]+dockerfile:[[:space:]]*/, "", df); gsub(/[[:space:]]*$/, "", df)
-        dockerfile = df
-    }
-    /^[[:space:]]{6}target:[[:space:]]*/ {
-        tgt = $0; gsub(/^[[:space:]]+target:[[:space:]]*/, "", tgt); gsub(/[[:space:]]*$/, "", tgt)
-        target = tgt
-    }
-    END {
-        if (!found && current_image == target_img && context != "") {
-            printf "%s|%s|%s", context, dockerfile, target
-        }
     }
     '
 }
@@ -711,7 +691,7 @@ for img in $IMAGES; do
         RESOLVED_IMG=$(echo "$RESOLVED_IMG" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g')
     fi
     BASE_IMAGE="${RESOLVED_IMG%:*}"
-    TARGET_TAG="${BASE_IMAGE}:${FULL_VERSION}"
+    TARGET_TAG=$(image_version_tag "$RESOLVED_IMG" "$FULL_VERSION")
 
     if [ "$NO_CACHE" != "--no-cache" ] && docker manifest inspect "$TARGET_TAG" >/dev/null 2>&1; then
         log_success "Image $TARGET_TAG already exists in registry — skipping build"
@@ -781,31 +761,26 @@ for img in $IMAGES_TO_BUILD; do
 
     if [ -n "$IMG_PLATFORMS" ]; then
         # ── Multi-arch build using docker buildx ──
-        SERVICE_BUILD_INFO=$(_get_service_build_info "$img")
-
-        BUILD_CONTEXT=$(echo "$SERVICE_BUILD_INFO" | cut -d'|' -f1)
-        BUILD_DOCKERFILE=$(echo "$SERVICE_BUILD_INFO" | cut -d'|' -f2)
-        BUILD_TARGET=$(echo "$SERVICE_BUILD_INFO" | cut -d'|' -f3)
-
-        if [[ "$BUILD_CONTEXT" != /* ]]; then
-            BUILD_CONTEXT="$DEVOPS_PATH/$BUILD_CONTEXT"
+        SVC_NAME=$(_get_service_name_for_image "$RESOLVED_IMG")
+        if [ -z "$SVC_NAME" ]; then
+            log_error "Cannot find the compose service for $RESOLVED_IMG"
+            BUILD_FAILED=true
+            break
         fi
 
-        BUILDX_CMD="docker buildx build --platform $IMG_PLATFORMS"
-        BUILDX_CMD+=" -f $BUILD_CONTEXT/$BUILD_DOCKERFILE"
-        [ -n "$BUILD_TARGET" ] && BUILDX_CMD+=" --target $BUILD_TARGET"
-        BUILDX_CMD+=" -t ${BASE_IMAGE}:latest"
-        BUILDX_CMD+=" --push"
-        [ -n "$BUILD_ARGS" ] && BUILDX_CMD+=" $BUILD_ARGS"
-        BUILDX_CMD+=" $BUILD_CONTEXT"
+        # Bake reads the complete Compose build, including args, empty values,
+        # target and context. The selected builder routes arm64 to its ARM node.
+        # Publish the exact compose tag, never an unrelated :latest image.
+        BUILDX_CMD=(docker buildx bake --builder "$BUILDER_NAME" -f "$COMPOSE_PATH"
+            --set "$SVC_NAME.platform=$IMG_PLATFORMS"
+            --set "$SVC_NAME.tags=$RESOLVED_IMG" --push)
+        [ "$NO_CACHE" = "--no-cache" ] && BUILDX_CMD+=(--no-cache)
+        BUILDX_CMD+=("$SVC_NAME")
 
-        log_info "Building multi-arch: $BASE_IMAGE"
+        log_info "Building multi-arch: $RESOLVED_IMG"
         log_info "  Platforms: $IMG_PLATFORMS"
-        log_info "  Context: $BUILD_CONTEXT"
-        log_info "  Dockerfile: $BUILD_DOCKERFILE"
-        [ -n "$BUILD_TARGET" ] && log_info "  Target: $BUILD_TARGET"
 
-        if ! eval $BUILDX_CMD; then
+        if ! (cd "$DEVOPS_PATH" && "${BUILDX_CMD[@]}"); then
             log_error "Multi-arch build failed for $BASE_IMAGE!"
             BUILD_FAILED=true
             break
@@ -873,49 +848,29 @@ for img in $IMAGES_TO_BUILD; do
         RESOLVED_IMG=$(echo "$RESOLVED_IMG" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g')
     fi
     BASE_IMAGE="${RESOLVED_IMG%:*}"
-    SOURCE_TAG="${RESOLVED_IMG##*:}"
     # Resolved key: the map is built from the compose file read through
     # envsubst, so it is keyed by "registry.../name:tag", never by the raw
     # "${REGISTRY}/name:tag" this loop iterates over. Looking it up unresolved
     # always missed, and every image silently fell back to the global list.
     IMG_PLATFORMS="${IMAGE_PLATFORMS[$RESOLVED_IMG]:-$BUILD_PLATFORMS}"
 
-    if [ -n "$IMG_PLATFORMS" ]; then
-        # Multi-arch: images already pushed by buildx, add version tags via imagetools
-        log_info "Creating multi-arch tags for $BASE_IMAGE"
-        docker buildx imagetools create -t "${BASE_IMAGE}:${FULL_VERSION}" "${BASE_IMAGE}:${SOURCE_TAG}" \
-            && log_success "Tagged: ${BASE_IMAGE}:${FULL_VERSION}" \
-            || log_error "Failed to tag ${BASE_IMAGE}:${FULL_VERSION}"
-        docker buildx imagetools create -t "${BASE_IMAGE}:${VERSION}" "${BASE_IMAGE}:${SOURCE_TAG}" \
-            && log_success "Tagged: ${BASE_IMAGE}:${VERSION}" \
-            || log_error "Failed to tag ${BASE_IMAGE}:${VERSION}"
-        docker buildx imagetools create -t "${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}" "${BASE_IMAGE}:${SOURCE_TAG}" \
-            && log_success "Tagged: ${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}" \
-            || log_error "Failed to tag ${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}"
-    else
-        # Single-arch: tag locally then push
-        BUILT_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^${BASE_IMAGE}:" | head -1)
-        if [ -z "$BUILT_IMAGE" ]; then
-            BUILT_IMAGE=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep "^${BASE_IMAGE}" | head -1)
+    # Tag only the exact image just built. Listing local images and taking the
+    # first repository match can select another architecture or an older build.
+    for tag_version in "$FULL_VERSION" "$VERSION" "$CURRENT_COMMIT_SHORT"; do
+        TARGET_TAG=$(image_version_tag "$RESOLVED_IMG" "$tag_version")
+        [ "$TARGET_TAG" = "$RESOLVED_IMG" ] && continue
+        if [ -n "$IMG_PLATFORMS" ]; then
+            docker buildx imagetools create -t "$TARGET_TAG" "$RESOLVED_IMG"
+        else
+            docker tag "$RESOLVED_IMG" "$TARGET_TAG"
+            docker push "$TARGET_TAG"
         fi
-        if [ -z "$BUILT_IMAGE" ]; then
-            log_warning "Could not find built image for $BASE_IMAGE, skipping tags"
-            continue
-        fi
-
-        log_info "Tagging $BUILT_IMAGE"
-        docker tag "$BUILT_IMAGE" "${BASE_IMAGE}:${FULL_VERSION}"
-        docker tag "$BUILT_IMAGE" "${BASE_IMAGE}:${VERSION}"
-        docker tag "$BUILT_IMAGE" "${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}"
-
-        docker push "${BASE_IMAGE}:${FULL_VERSION}" || log_error "Failed to push ${BASE_IMAGE}:${FULL_VERSION}"
-        docker push "${BASE_IMAGE}:${VERSION}" || log_error "Failed to push ${BASE_IMAGE}:${VERSION}"
-        docker push "${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}" || log_error "Failed to push ${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}"
-        if [ "$SOURCE_TAG" != "$FULL_VERSION" ] && [ "$SOURCE_TAG" != "$VERSION" ] && [ "$SOURCE_TAG" != "$CURRENT_COMMIT_SHORT" ]; then
-            docker push "${BASE_IMAGE}:${SOURCE_TAG}" || log_warning "Could not push ${BASE_IMAGE}:${SOURCE_TAG}"
-        fi
-        log_success "Tagged and pushed: $BASE_IMAGE"
+        log_success "Published: $TARGET_TAG"
+    done
+    if [ -z "$IMG_PLATFORMS" ]; then
+        docker push "$RESOLVED_IMG"
     fi
+    log_success "Built and pushed: $RESOLVED_IMG"
 done
 
 log_success "All images tagged and pushed!"
@@ -989,8 +944,9 @@ for img in $IMAGES; do
     fi
     
     BASE_IMAGE="${RESOLVED_IMG%:*}"
-    echo "  - ${BASE_IMAGE}:${FULL_VERSION}"
-    echo "  - ${BASE_IMAGE}:${VERSION}"
-    echo "  - ${BASE_IMAGE}:${CURRENT_COMMIT_SHORT}"
+    echo "  - $RESOLVED_IMG"
+    for tag_version in "$FULL_VERSION" "$VERSION" "$CURRENT_COMMIT_SHORT"; do
+        echo "  - $(image_version_tag "$RESOLVED_IMG" "$tag_version")"
+    done
 done
 echo ""
