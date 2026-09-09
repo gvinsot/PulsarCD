@@ -19,6 +19,7 @@ BASH = str(GIT_BASH) if GIT_BASH.exists() else shutil.which("bash")
 @unittest.skipUnless(BASH, "Bash is required")
 class BuildPushTests(unittest.TestCase):
     def run_build(self, *, existing="", failure="", platforms="", no_cache=False):
+        self.assertTrue(SCRIPT.is_file(), f"Build script missing from test environment: {SCRIPT}")
         with tempfile.TemporaryDirectory(prefix="build push ") as directory:
             root = Path(directory)
             repo = root / "repo"

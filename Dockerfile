@@ -34,6 +34,11 @@ COPY frontend/ ./frontend/
 # ============================================================================
 FROM base AS test
 
+# The build-script tests execute Bash and its text-processing tools; git and
+# Docker are stubbed, but envsubst and awk run for real.
+RUN apt-get update && apt-get install -y --no-install-recommends bash gawk gettext-base \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install test dependencies
 RUN pip install --no-cache-dir pytest pytest-asyncio "httpx>=0.23.0,<0.28.0"
 
@@ -45,6 +50,7 @@ COPY pytest.ini ./
 
 # Copy test files
 COPY tests/ ./tests/
+COPY scripts/build-push.sh ./scripts/build-push.sh
 
 # Run tests on container start
 CMD ["python", "-m", "pytest", "tests/", "-v", "--tb=short", "-p", "no:warnings"]
