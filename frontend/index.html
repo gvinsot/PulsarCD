@@ -27,16 +27,32 @@
                 </div>
                 <h2>Pulsar CD</h2>
             </div>
-            <form id="login-form">
-                <div class="login-field">
-                    <input type="text" id="login-username" placeholder="Username" required autofocus autocomplete="username" />
-                </div>
-                <div class="login-field">
-                    <input type="password" id="login-password" placeholder="Password" required autocomplete="current-password" />
-                </div>
-                <button type="submit" class="login-btn">Sign in</button>
-                <div id="login-error" class="login-error"></div>
-            </form>
+
+            <!-- Google sign-in: the button is rendered by Google Identity
+                 Services into this container once /api/auth/config confirms a
+                 client id is configured. -->
+            <div id="login-google" class="login-google" style="display:none">
+                <div id="login-google-button" class="login-google-button"></div>
+                <p class="login-hint">Access is limited to authorised Google accounts.</p>
+            </div>
+
+            <!-- Break-glass administrator. Hidden behind a link, and only shown
+                 at all when the deployment provisioned a local password. -->
+            <div id="login-fallback" class="login-fallback" style="display:none">
+                <button type="button" class="login-fallback-toggle" id="login-fallback-toggle"
+                        onclick="togglePasswordLogin()">Sign in with a password instead</button>
+                <form id="login-form" style="display:none">
+                    <div class="login-field">
+                        <input type="text" id="login-username" placeholder="Username" required autocomplete="username" />
+                    </div>
+                    <div class="login-field">
+                        <input type="password" id="login-password" placeholder="Password" required autocomplete="current-password" />
+                    </div>
+                    <button type="submit" class="login-btn">Sign in</button>
+                </form>
+            </div>
+
+            <div id="login-error" class="login-error"></div>
         </div>
     </div>
 
@@ -1264,20 +1280,23 @@
                             <button class="btn btn-sm btn-secondary" onclick="addMCPServer()">+ Add MCP Server</button>
                         </div>
 
-                        <!-- Users Tab -->
+                        <!-- Users Tab: Google addresses allowed to sign in -->
                         <div class="settings-panel" id="settings-panel-users">
                             <div id="users-list"></div>
                             <div class="settings-add-user">
-                                <h4>Add user</h4>
+                                <h4>Allow a Google account</h4>
                                 <div class="settings-add-user-form">
-                                    <input type="text" id="new-user-username" placeholder="Username" />
-                                    <input type="password" id="new-user-password" placeholder="Password" autocomplete="new-password" data-lpignore="true" data-1p-ignore />
+                                    <input type="email" id="new-user-email" placeholder="name@example.com" autocomplete="off" />
                                     <select id="new-user-role">
                                         <option value="viewer">viewer</option>
                                         <option value="admin">admin</option>
                                     </select>
                                     <button class="btn btn-sm btn-primary" onclick="createUser()">Add</button>
                                 </div>
+                                <p class="settings-hint">
+                                    Whoever controls that Google account can sign in. Removing an
+                                    address ends its open sessions immediately.
+                                </p>
                             </div>
                         </div>
                     </div>

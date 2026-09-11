@@ -19,6 +19,16 @@ Environment variables:
   present the key registered for the agent_id it acts on and the shared
   PULSARCD_AUTH__AGENT_KEY is no longer accepted on its own. A malformed value
   is reported as a warning and ignored.
+- PULSARCD_AUTH__GOOGLE_CLIENT_ID: OAuth 2.0 Web client id from the Google Cloud
+  console. Required for Google sign-in, which is how everyone signs in; it is a
+  public value, not a secret. Unset disables Google sign-in.
+- PULSARCD_AUTH__GOOGLE_ADMINS / PULSARCD_AUTH__GOOGLE_VIEWERS: addresses allowed
+  to sign in, as a comma-separated list or a JSON array. Reapplied on every boot,
+  so they override anything edited in Settings > Users (which persists the rest
+  to allowed_emails.json in the data directory).
+- PULSARCD_AUTH__USERNAME / PULSARCD_AUTH__PASSWORD: the optional break-glass
+  administrator. No password means no local account and password login answers
+  403; see backend/user_manager.py.
 - PULSARCD_AUTH__JWT_SECRET: JWT signing secret. Auto-generated when unset (all
   sessions are invalidated on restart); when set it must be at least
   MIN_SECRET_LENGTH characters or startup fails.
@@ -157,11 +167,26 @@ class GitHubConfig(BaseModel):
 
 
 class AuthConfig(BaseModel):
-    """Authentication configuration."""
+    """Authentication configuration.
+
+    Users sign in with Google (google_client_id + the two allowlists below).
+    The username/password pair provisions the optional break-glass
+    administrator only -- see backend/user_manager.py.
+    """
+    # OAuth 2.0 Web client id from the Google Cloud console. Public by design:
+    # the browser needs it to ask Google for an ID token. Empty disables Google
+    # sign-in entirely, which leaves only the break-glass account.
+    google_client_id: str = ""
+    # Addresses allowed to sign in, by role. These are reapplied on every boot
+    # and take precedence over anything edited in the UI (see allowlist.py).
+    google_admins: List[str] = []
+    google_viewers: List[str] = []
+
+    # Break-glass local administrator. Empty password = no local account at all.
     username: str = "admin"
     # Empty on purpose: a "changeme" default is a weak credential waiting for a
-    # future caller to wire it into a login check.  The bootstrap password comes
-    # from PULSARCD_AUTH__PASSWORD and is validated by user_manager.
+    # future caller to wire it into a login check.  The password comes from
+    # PULSARCD_AUTH__PASSWORD and is validated by user_manager.
     password: str = ""
     jwt_secret: str = ""
     jwt_expiry_hours: int = 24
@@ -301,15 +326,23 @@ def load_config() -> Settings:
     Example PULSARCD_HOSTS:
     [{"name": "local", "mode": "docker", "docker_url": "unix:///var/run/docker.sock"}]
     """
-    # PULSARCD_AUTH__AGENT_KEYS carries a JSON object. Hide it from
-    # pydantic-settings and parse it below so a malformed value degrades to a
+    # These three carry structured values (a JSON object, and two address
+    # lists an operator writes comma-separated). Hide them from
+    # pydantic-settings and parse them below so a malformed value degrades to a
     # warning instead of aborting startup with a SettingsError.
-    agent_keys_env = os.environ.pop("PULSARCD_AUTH__AGENT_KEYS", None)
+    hidden_env = {
+        name: os.environ.pop(name, None)
+        for name in ("PULSARCD_AUTH__AGENT_KEYS",
+                     "PULSARCD_AUTH__GOOGLE_ADMINS",
+                     "PULSARCD_AUTH__GOOGLE_VIEWERS")
+    }
+    agent_keys_env = hidden_env["PULSARCD_AUTH__AGENT_KEYS"]
 
     settings = Settings()
 
-    if agent_keys_env is not None:
-        os.environ["PULSARCD_AUTH__AGENT_KEYS"] = agent_keys_env
+    for name, value in hidden_env.items():
+        if value is not None:
+            os.environ[name] = value
 
     # Load hosts from environment variable (JSON array)
     # This needs special handling because it's a complex nested structure
@@ -363,6 +396,13 @@ def load_config() -> Settings:
     load_env(settings.ai, "model", "PULSARCD_AI__MODEL")
 
     # Auth settings
+    load_env(settings.auth, "google_client_id", "PULSARCD_AUTH__GOOGLE_CLIENT_ID")
+    # Address lists: JSON array or a comma/semicolon/whitespace separated string.
+    from backend.allowlist import parse_email_list
+    settings.auth.google_admins = parse_email_list(
+        hidden_env["PULSARCD_AUTH__GOOGLE_ADMINS"] or "")
+    settings.auth.google_viewers = parse_email_list(
+        hidden_env["PULSARCD_AUTH__GOOGLE_VIEWERS"] or "")
     load_env(settings.auth, "username", "PULSARCD_AUTH__USERNAME")
     load_env(settings.auth, "password", "PULSARCD_AUTH__PASSWORD")
     load_env(settings.auth, "jwt_secret", "PULSARCD_AUTH__JWT_SECRET")

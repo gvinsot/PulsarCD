@@ -156,6 +156,11 @@ PulsarCD uses an **agent-based architecture** where lightweight agents run on ea
 git clone https://github.com/yourusername/pulsarcd.git
 cd pulsarcd
 
+# Sign-in is Google-only: create an OAuth 2.0 Web client (see
+# "Signing in" under Security Hardening), then list who may get in.
+export PULSARCD_AUTH__GOOGLE_CLIENT_ID=<your-client-id>.apps.googleusercontent.com
+export PULSARCD_AUTH__GOOGLE_ADMINS=you@example.com
+
 # Start backend, frontend, and OpenSearch
 docker-compose up -d
 ```
@@ -173,7 +178,9 @@ docker stack deploy -c devops/docker-compose.swarm.yml pulsarcd
 
 ### 3. Access the Dashboard
 
-Open http://localhost:5000 in your browser.
+Open http://localhost:5000 in your browser and sign in with one of the Google
+accounts you listed above. Add `http://localhost:5000` to the OAuth client's
+authorised JavaScript origins or the button will not appear.
 
 ## Configuration
 
@@ -471,6 +478,63 @@ Each host in `PULSARCD_HOSTS` supports these fields (for SSH mode):
 
 ## Security Hardening
 
+### Signing in: Google accounts on an allowlist
+
+Everyone signs in with Google. A verified Google identity only says *who* someone
+is; an allowlist of addresses decides *whether* they get in, and with which role.
+An address that is not on the list is refused even with a perfectly valid Google
+account — the deployment is normally published on the public internet, where
+"has a Google account" is not an access rule.
+
+**Setting up the OAuth client** (once, at
+[console.cloud.google.com](https://console.cloud.google.com)):
+
+1. *APIs & Services ▸ OAuth consent screen*: choose **Internal** if every
+   address belongs to your Workspace, **External** otherwise.
+2. *Credentials ▸ Create credentials ▸ OAuth client ID ▸ Web application*.
+3. *Authorised JavaScript origins*: the deployment's origin, e.g.
+   `https://logs.example.com` (origin only, no path). No redirect URI is needed:
+   the browser posts the ID token straight to the backend.
+4. Copy the **Client ID** into `PULSARCD_AUTH__GOOGLE_CLIENT_ID`. It is a public
+   identifier, not a secret — the browser has to hand it to Google.
+
+**Who gets in:**
+
+| Variable | Effect |
+|----------|--------|
+| `PULSARCD_AUTH__GOOGLE_CLIENT_ID` | The OAuth Web client id. Unset disables Google sign-in entirely. |
+| `PULSARCD_AUTH__GOOGLE_ADMINS` | Comma-separated addresses granted the **admin** role (deploy, shell, secrets). Set at least one, or nobody can administer the deployment through Google. |
+| `PULSARCD_AUTH__GOOGLE_VIEWERS` | Comma-separated addresses granted the read-only **viewer** role. |
+
+Both lists also accept a JSON array. They are **reapplied on every boot** and
+take precedence over the UI, so addresses that come from them show up in
+*Settings ▸ Users* as read-only (`from environment`) — editing one there would be
+undone by the next restart. Everything added from the UI is persisted alongside
+them in `/data/allowed_emails.json`, so onboarding a colleague does not need a
+redeploy. Removing an address ends its open sessions immediately.
+
+The backend verifies each Google ID token against Google's published signing
+keys before looking at the allowlist: RS256 pinned (the token header picks the
+key, never the algorithm), `aud` equal to the configured client id — without it,
+an ID token issued to any application in the world would be accepted — `iss`
+equal to Google, current `exp`/`iat`, and `email_verified` true.
+
+### Break-glass administrator (optional)
+
+A single local username/password account, kept as a way back in when Google is
+unreachable or the OAuth client is misconfigured. It exists only when an
+operator provisions it explicitly:
+
+| Variable | Effect |
+|----------|--------|
+| `PULSARCD_AUTH__USERNAME` | Local username (default `admin`). |
+| `PULSARCD_AUTH__PASSWORD` | At least 12 characters, no known placeholder. **Empty means no local account at all** and `POST /api/auth/login` answers 403 — nothing to guess, nothing to stuff. A weak value is refused the same way rather than replaced by a generated one: on a Google-first deployment, a random password printed once into the container logs is a live admin account nobody will ever read. |
+
+The environment is authoritative on every boot: changing the password rotates it
+and cuts the sessions it had opened, clearing it deletes the account. The sign-in
+screen only offers the password form when such an account exists, behind a
+"Sign in with a password instead" link.
+
 ### Required secrets
 
 `devops/docker-compose.swarm.yml` refuses to deploy when any of these is unset
@@ -479,21 +543,22 @@ or empty (strict `${VAR:?...}` form). Generate each one with
 
 | Variable | Why it is mandatory |
 |----------|---------------------|
-| `PULSARCD_AUTH__PASSWORD` | Web login password. The stack is published through Traefik, so a default such as `changeme` means an internet-facing admin account. Must be at least 12 characters and must not be a known placeholder — the backend rejects weak values and bootstraps the admin with a random password printed **once** in the container logs. |
-| `PULSARCD_AUTH__JWT_SECRET` | Signs session tokens - the strongest credential in the stack: forging a token bypasses the password, the login rate limit and the role policy at once. Minimum 32 characters; the backend **refuses to start** on a shorter or placeholder value. If left empty it generates a new secret at every restart: sessions are invalidated and replicas reject each other's tokens. |
+| `PULSARCD_AUTH__JWT_SECRET` | Signs session tokens - the strongest credential in the stack: forging a token bypasses Google sign-in, the allowlist and the role policy at once. Minimum 32 characters; the backend **refuses to start** on a shorter or placeholder value. If left empty it generates a new secret at every restart: sessions are invalidated and replicas reject each other's tokens. |
 | `PULSARCD_AUTH__AGENT_KEY` | Shared key agents use to authenticate against the backend API. Must be identical on the backend and on every agent, otherwise agents would run unauthenticated. Same 32-character minimum. |
 
-The password policy (at least 12 characters, no known placeholder) applies to
-every write path, not only the bootstrap: `POST` and `PUT /api/admin/users` reject
-a weak value with HTTP 400. Changing the password after the first boot is done
-from the UI; the value in `.env` is only used to bootstrap `/data/users.json`, so
-editing it later has no effect unless that file is deleted.
+`PULSARCD_AUTH__GOOGLE_CLIENT_ID` and `PULSARCD_AUTH__GOOGLE_ADMINS` use the same
+strict form — not because they are secret, but because a stack deployed without
+them is one nobody can sign in to.
 
 **Upgrading an existing deployment:** `devops/.env` predates
-`PULSARCD_AUTH__JWT_SECRET` and the compose file now uses the strict `${VAR:?}`
-form, so the next `docker stack deploy` fails until the variable is added. Set a
-real secret rather than restoring a default - everyone is signed out once, which
-is expected.
+`PULSARCD_AUTH__JWT_SECRET` and the two Google variables, and the compose file
+uses the strict `${VAR:?}` form for all three, so the next `docker stack deploy`
+fails until they are added. Set a real JWT secret rather than restoring a default.
+Local accounts in `/data/users.json` other than the break-glass one are dropped on
+the first boot after the upgrade: list those people in
+`PULSARCD_AUTH__GOOGLE_ADMINS` / `_VIEWERS` by their Google address first, or add
+them from *Settings ▸ Users* once you are signed in. Everyone is signed out once,
+which is expected.
 
 ### Optional security variables
 
@@ -506,14 +571,16 @@ is expected.
 
 ### Login rate limiting and session revocation
 
-- Failed logins are counted per (account, client address) - 5 per minute - and per
-  client address - 30 per minute. The pairing matters: a counter keyed on the
-  account alone would let anyone lock an administrator out with five bad passwords
-  a minute, correct password included.
-- Changing a password, changing a role or deleting an account bumps that account's
-  `token_epoch` in `/data/users.json`, which immediately invalidates every JWT
-  already issued for it - on the HTTP API, on the terminal WebSocket **and** on
-  both MCP mounts.
+- Failed sign-ins are counted per (identity, client address) - 5 per minute - and
+  per client address - 30 per minute, on Google sign-in and password sign-in
+  alike. The pairing matters: a counter keyed on the account alone would let
+  anyone lock an administrator out with five bad attempts a minute, correct
+  credential included.
+- Changing an address's role or removing it from the allowlist bumps its
+  `token_epoch` in `/data/allowed_emails.json`; rotating the break-glass password
+  does the same in `/data/users.json`. Either immediately invalidates every JWT
+  already issued for that identity - on the HTTP API, on the terminal WebSocket
+  **and** on both MCP mounts.
 
 ### SSH host key verification
 

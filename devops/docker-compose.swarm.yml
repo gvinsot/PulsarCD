@@ -139,10 +139,21 @@ services:
       # This stack is published on the public internet through Traefik, so no
       # credential may fall back to a default: every secret below uses the
       # strict ":?" form and the deploy fails when it is unset.
+      #
+      # Google Sign-In is how everyone gets in. The client id is REQUIRED (it is
+      # public, not a secret) and so is at least one admin address: without them
+      # the deployment has no way to admit anybody except the optional
+      # break-glass account below.
+      - PULSARCD_AUTH__GOOGLE_CLIENT_ID=${PULSARCD_AUTH__GOOGLE_CLIENT_ID:?PULSARCD_AUTH__GOOGLE_CLIENT_ID must be set to the OAuth Web client id}
+      - PULSARCD_AUTH__GOOGLE_ADMINS=${PULSARCD_AUTH__GOOGLE_ADMINS:?PULSARCD_AUTH__GOOGLE_ADMINS must list at least one authorised address}
+      - PULSARCD_AUTH__GOOGLE_VIEWERS=${PULSARCD_AUTH__GOOGLE_VIEWERS:-}
+      # Break-glass local administrator, OPTIONAL: a way back in when Google is
+      # unreachable. An empty password means no local account at all and
+      # password sign-in answers 403 -- which is a fine way to deploy. When set,
+      # it must be strong (>= 12 characters, no placeholder) or it is refused
+      # and the account is not created.
       - PULSARCD_AUTH__USERNAME=${PULSARCD_AUTH__USERNAME:-admin}
-      # REQUIRED: never deploy with a placeholder ("changeme") password.
-      # Generate one with: openssl rand -base64 32
-      - PULSARCD_AUTH__PASSWORD=${PULSARCD_AUTH__PASSWORD:?PULSARCD_AUTH__PASSWORD must be set to a strong value}
+      - PULSARCD_AUTH__PASSWORD=${PULSARCD_AUTH__PASSWORD:-}
       # REQUIRED by choice: the backend auto-generates a random JWT secret when
       # this is empty, which is not weak but is regenerated on every restart
       # (all sessions are invalidated) and differs per replica (tokens issued by

@@ -21,6 +21,11 @@ apscheduler>=3.10.4
 
 # Authentication (pinned - newer versions may change jwt.decode behavior)
 PyJWT==2.8.0
+# Required by PyJWT for RS256, which is what Google signs ID tokens with.
+# Present transitively via paramiko/asyncssh, but declared here because
+# backend/google_auth.py depends on it directly.
+cryptography>=42.0.0
+# Break-glass administrator password only; everyone else signs in with Google.
 bcrypt>=4.0.0
 
 # MCP (Model Context Protocol)

@@ -24,13 +24,15 @@ Both servers accept two token types:
   **both** servers and is not subject to the role check below. Treat it like a root
   credential, pin it explicitly rather than relying on the per-boot random value,
   and rotate it if it ever reaches a log.
-- **JWT token** — the same token used by the web UI, with two conditions:
+- **JWT token** — the same token the web UI gets after signing in with Google,
+  with two conditions:
   - `/ai/actions/mcp` requires `role == "admin"`. A `viewer` JWT gets
     `403 {"error": "Admin role required for this MCP server"}` — its tools change
     what runs on the Swarm. `/ai/mcp` accepts any authenticated role.
-  - Revocation is enforced on both mounts: after a password change, a role change
-    or an account deletion the token is refused with
-    `401 {"error": "Token has been revoked"}`, exactly as on the HTTP API.
+  - Revocation is enforced on both mounts: after a role change, a removal from
+    the Google allowlist, or a break-glass password rotation, the token is
+    refused with `401 {"error": "Token has been revoked"}`, exactly as on the
+    HTTP API.
 
 ## Configuration
 

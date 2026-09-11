@@ -22,7 +22,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
-from .auth import create_token, decode_token
+from .auth import AUTH_SOURCE_GOOGLE, AUTH_SOURCE_LOCAL, create_token, decode_token
+from .allowlist import EmailAllowlist
+from .google_auth import GoogleIdTokenVerifier, GoogleTokenError
 from .collector import Collector
 from .config import load_config, Settings
 from .models import (
@@ -49,6 +51,8 @@ collector: Collector = None
 github_service: GitHubService = None
 error_detector = None
 user_manager = None
+email_allowlist: Optional[EmailAllowlist] = None
+google_verifier: Optional[GoogleIdTokenVerifier] = None
 llm_agent = None
 pipeline_state: Optional[PipelineStateManager] = None
 tag_cleaner = None
@@ -111,6 +115,7 @@ _background_actions: Dict[str, BackgroundAction] = {}
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     global settings, opensearch, collector, github_service, error_detector, user_manager, llm_agent, pipeline_state
+    global email_allowlist, google_verifier
 
     # Startup
     logger.info("Starting PulsarCD API")
@@ -129,9 +134,33 @@ async def lifespan(app: FastAPI):
     pipeline_state = PipelineStateManager.get_instance(settings.data_dir)
     logger.info("Pipeline state manager initialized", data_dir=settings.data_dir)
 
-    # Initialize user manager (file-based multi-user auth)
+    # Google sign-in: who Google says you are, then whether you are allowed in.
+    google_verifier = GoogleIdTokenVerifier(settings.auth.google_client_id)
+    email_allowlist = EmailAllowlist(
+        path=f"{settings.data_dir}/allowed_emails.json",
+        admins=settings.auth.google_admins,
+        viewers=settings.auth.google_viewers,
+    )
+    if not google_verifier.enabled:
+        logger.warning(
+            "PULSARCD_AUTH__GOOGLE_CLIENT_ID is not set: Google sign-in is "
+            "disabled and only the break-glass administrator can sign in."
+        )
+    elif not email_allowlist.admin_count():
+        logger.warning(
+            "Google sign-in is configured but no address has the admin role: "
+            "set PULSARCD_AUTH__GOOGLE_ADMINS, or nobody will be able to "
+            "administer the deployment through Google."
+        )
+
+    # Break-glass local administrator (usually absent, see user_manager).
     from .user_manager import UserManager
     user_manager = UserManager(path=f"{settings.data_dir}/users.json")
+    if not user_manager.enabled and not google_verifier.enabled:
+        logger.error(
+            "No sign-in method is available: set PULSARCD_AUTH__GOOGLE_CLIENT_ID "
+            "(plus PULSARCD_AUTH__GOOGLE_ADMINS) or PULSARCD_AUTH__PASSWORD."
+        )
 
     # Initialize OpenSearch with retry (wait for DNS/service to be ready)
     max_retries = 30
@@ -365,7 +394,15 @@ _AUTH_EXEMPT_PREFIXES = (
 # prefix rule and reaches the same route through Starlette's redirect, so an
 # external probe configured with it would otherwise start reporting the service
 # down with a 401.
-_AUTH_EXEMPT_EXACT = ("/", "/api/health", "/api/health/")
+#
+# The two sign-in routes are exact entries, not a "/api/auth/" prefix: every
+# other route under that path (starting with /api/auth/me) must stay behind the
+# token check.
+_AUTH_EXEMPT_EXACT = (
+    "/", "/api/health", "/api/health/",
+    "/api/auth/google",   # exchanges a Google ID token for a session token
+    "/api/auth/config",   # what the sign-in screen must render (no secrets)
+)
 
 # ---- Role-based access policy ----------------------------------------------
 # Two roles exist: "admin" (full access) and "viewer" (read-only).  The policy is
@@ -627,20 +664,35 @@ def _user_token_epoch(user: Any) -> int:
         return 0
 
 
+def _identity_store(payload: Dict[str, Any]):
+    """Return the store that owns a token's subject, or None if unavailable.
+
+    The two namespaces are independent -- a Google address and a local username
+    are looked up in different files -- so the ``auth`` claim decides which one
+    answers.  A token minted before the claim existed carries none and is read
+    as local, which is what it was.
+    """
+    if payload.get("auth") == AUTH_SOURCE_GOOGLE:
+        return email_allowlist
+    return user_manager
+
+
 def _token_is_revoked(payload: Dict[str, Any]) -> bool:
     """Whether a decoded JWT was invalidated after it was issued.
 
-    A password change, a role change and an account deletion all bump the
-    account's epoch (see user_manager), so a token minted before that carries a
-    lower value and is refused.  Tokens issued before the claim existed read as
-    epoch 0 and stay valid until the account is first revoked, which keeps a
-    users.json written by an older version working as-is.
+    A role change, a removal from the allowlist and a break-glass password
+    change all bump the identity's epoch (see allowlist / user_manager), so a
+    token minted before that carries a lower value and is refused.  Tokens
+    issued before the claim existed read as epoch 0 and stay valid until the
+    identity is first revoked, which keeps a file written by an older version
+    working as-is.
     """
-    if user_manager is None:
+    store = _identity_store(payload)
+    if store is None:
         return False
     username = payload.get("sub") or ""
     try:
-        current = user_manager.token_epoch_for(username)
+        current = store.token_epoch_for(username)
     except Exception as e:  # never lock everyone out on a storage hiccup
         logger.error("Token epoch lookup failed", user=username, error=str(e))
         return False
@@ -719,6 +771,7 @@ async def auth_middleware(request: Request, call_next):
 
     request.state.user = payload.get("sub", "")
     request.state.role = payload.get("role", "viewer")
+    request.state.auth_source = payload.get("auth", AUTH_SOURCE_LOCAL)
 
     # Admin-only paths
     if path.startswith("/api/admin/") and getattr(request.state, "role", "") != "admin":
@@ -755,7 +808,9 @@ async def auth_middleware(request: Request, call_next):
 #     style attributes in the markup;
 #   * fonts: the Google Fonts files;
 #   * images: the inline data: favicon.
-# Anything not listed falls back to default-src 'self'.
+# Anything not listed falls back to default-src 'self'.  The Google sign-in
+# button needs more than this; see _GOOGLE_CSP_DIRECTIVES, which is merged in
+# only on deployments that have it configured.
 _CSP_DIRECTIVES = (
     "default-src 'self'",
     "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
@@ -766,6 +821,18 @@ _CSP_DIRECTIVES = (
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
+)
+
+# Google Identity Services, added only when Google sign-in is configured: the
+# button is a cross-origin iframe that loads its own script and stylesheet and
+# talks back to accounts.google.com. Each entry is the narrowest path Google
+# documents, so this is not a blanket grant to the whole origin.
+_GOOGLE_CSP_DIRECTIVES = (
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
+    "https://accounts.google.com/gsi/client",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com "
+    "https://cdn.jsdelivr.net https://accounts.google.com/gsi/style",
+    "frame-src https://accounts.google.com/gsi/",
 )
 
 _HSTS_VALUE = "max-age=31536000; includeSubDomains"
@@ -783,10 +850,29 @@ def _connect_src(request: Request) -> str:
     out so the terminal keeps working, and the host is only echoed back when it
     has a plain host[:port] shape.
     """
+    sources = ["'self'"]
     host = request.headers.get("host") or request.url.netloc
     if host and _HOST_HEADER_RE.match(host):
-        return f"connect-src 'self' ws://{host} wss://{host}"
-    return "connect-src 'self'"
+        sources += [f"ws://{host}", f"wss://{host}"]
+    if google_verifier is not None and google_verifier.enabled:
+        sources.append("https://accounts.google.com/gsi/")
+    return "connect-src " + " ".join(sources)
+
+
+def _csp_directives(request: Request) -> str:
+    """Build the policy for this response, widened only if Google sign-in is on.
+
+    The Google entries are left out entirely on a deployment that does not use
+    them: an unused allowance is still an allowance.
+    """
+    directives = list(_CSP_DIRECTIVES)
+    if google_verifier is not None and google_verifier.enabled:
+        # Replace the base script-src/style-src with the widened forms and add
+        # frame-src, which otherwise falls back to default-src 'self'.
+        widened = {d.split(" ", 1)[0]: d for d in _GOOGLE_CSP_DIRECTIVES}
+        directives = [widened.pop(d.split(" ", 1)[0], d) for d in directives]
+        directives += list(widened.values())
+    return "; ".join(directives + [_connect_src(request)])
 
 
 def _request_is_https(request: Request) -> bool:
@@ -808,8 +894,7 @@ async def security_headers_middleware(request: Request, call_next):
     """
     response = await call_next(request)
     headers = response.headers
-    headers.setdefault("Content-Security-Policy",
-                       "; ".join(_CSP_DIRECTIVES + (_connect_src(request),)))
+    headers.setdefault("Content-Security-Policy", _csp_directives(request))
     headers.setdefault("X-Content-Type-Options", "nosniff")
     headers.setdefault("X-Frame-Options", "DENY")
     headers.setdefault("Referrer-Policy", "no-referrer")
@@ -820,9 +905,103 @@ async def security_headers_middleware(request: Request, call_next):
 
 # ============== Auth Endpoints ==============
 
+@app.get("/api/auth/config")
+async def auth_config():
+    """Describe the sign-in methods to the login screen.
+
+    Public on purpose: it is read before anyone is authenticated, and it carries
+    nothing secret.  The OAuth client id is a public identifier -- the browser
+    has to hand it to Google -- and the two booleans only say which buttons to
+    draw, which is already obvious from trying them.
+    """
+    return {
+        "google_enabled": bool(google_verifier and google_verifier.enabled),
+        "google_client_id": google_verifier.client_id if google_verifier else "",
+        "password_login_enabled": bool(user_manager and user_manager.enabled),
+    }
+
+
+@app.post("/api/auth/google")
+async def auth_google(request: Request):
+    """Exchange a Google ID token for a PulsarCD session token.
+
+    Three separate things have to hold, in this order: Google really signed this
+    credential for this deployment (google_auth), the address it carries is
+    allowed in (allowlist), and only then is a session token minted.
+
+    A bad credential is a 401 and an unlisted address a 403, which names the
+    address.  That distinction leaks nothing: reaching the 403 at all requires a
+    Google-signed token for that address, so a caller only ever learns the
+    status of an account they already control.  Why Google itself said no is NOT
+    relayed -- that detail belongs in the server log, not in a reply to whoever
+    sent the token.
+    """
+    client_ip = _client_address(request)
+
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid request body")
+    credential = body.get("credential", "")
+    if not isinstance(credential, str):
+        raise HTTPException(status_code=400, detail="Invalid credential format")
+
+    if not google_verifier or not google_verifier.enabled:
+        raise HTTPException(status_code=403, detail="Google sign-in is not configured")
+
+    # The address is unknown until the credential is verified, so this first
+    # pass only applies the per-client ceiling; the per-account bucket is
+    # checked below, once there is an account to speak of.
+    if _is_rate_limited(client_ip):
+        logger.warning("Google sign-in rate limited", client_ip=client_ip)
+        raise HTTPException(status_code=429, detail="Too many sign-in attempts. Try again later.")
+
+    try:
+        claims = await google_verifier.verify(credential)
+    except GoogleTokenError as e:
+        _record_login_attempt(client_ip)
+        logger.warning("Google credential rejected", client_ip=client_ip, error=str(e))
+        raise HTTPException(status_code=401, detail="Google sign-in failed")
+
+    email = claims["email"]
+    if _is_rate_limited(client_ip, email):
+        logger.warning("Google sign-in rate limited", email=email[:128], client_ip=client_ip)
+        raise HTTPException(status_code=429, detail="Too many sign-in attempts. Try again later.")
+
+    role = email_allowlist.role_for(email) if email_allowlist else None
+    if role is None:
+        _record_login_attempt(client_ip, email)
+        # Logged in full: an address Google vouched for that is not allowed in
+        # is exactly what an operator needs to see, either to add a colleague or
+        # to notice someone probing.
+        logger.warning("Google sign-in refused: address not allowed",
+                       email=email[:128], client_ip=client_ip)
+        raise HTTPException(
+            status_code=403,
+            detail=f"{email} is not authorised to access this deployment.")
+
+    _clear_login_attempts(email, client_ip)
+    token = create_token(
+        email,
+        settings.auth.jwt_secret,
+        settings.auth.jwt_expiry_hours,
+        role=role,
+        token_epoch=email_allowlist.token_epoch_for(email) or 0,
+        auth_source=AUTH_SOURCE_GOOGLE,
+    )
+    logger.info("Google sign-in", email=email, role=role, client_ip=client_ip)
+    return {"token": token, "email": email, "role": role,
+            "name": claims.get("name") or email}
+
+
 @app.post("/api/auth/login")
 async def auth_login(request: Request):
-    """Authenticate and return a JWT token."""
+    """Authenticate the break-glass administrator and return a JWT token.
+
+    This is not the normal way in -- everyone signs in with Google.  It exists
+    so a Google outage or a misconfigured OAuth client does not lock the
+    operator out of their own cluster, and it only works when
+    PULSARCD_AUTH__PASSWORD provisioned an account (see user_manager).
+    """
     client_ip = _client_address(request)
 
     body = await request.json()
@@ -833,13 +1012,20 @@ async def auth_login(request: Request):
     if not isinstance(username, str) or not isinstance(password, str):
         raise HTTPException(status_code=400, detail="Invalid credentials format")
 
+    if not user_manager or not user_manager.enabled:
+        logger.warning("Password login attempted while disabled",
+                       username=username[:128], client_ip=client_ip)
+        raise HTTPException(
+            status_code=403,
+            detail="Password sign-in is disabled on this deployment. Use Google.")
+
     # Counted per account and per client address: the username is needed first,
     # so the body is parsed before the limit is applied.
     if _is_rate_limited(client_ip, username):
         logger.warning("Login rate limited", username=username[:128], client_ip=client_ip)
         raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
 
-    user = user_manager.authenticate(username, password) if user_manager else None
+    user = user_manager.authenticate(username, password)
     if user:
         _clear_login_attempts(username, client_ip)
         token = create_token(
@@ -848,6 +1034,7 @@ async def auth_login(request: Request):
             settings.auth.jwt_expiry_hours,
             role=user.role,
             token_epoch=_user_token_epoch(user),
+            auth_source=AUTH_SOURCE_LOCAL,
         )
         return {"token": token}
 
@@ -862,54 +1049,69 @@ async def auth_me(request: Request):
     return {
         "username": getattr(request.state, "user", None),
         "role": getattr(request.state, "role", "viewer"),
+        "auth": getattr(request.state, "auth_source", AUTH_SOURCE_LOCAL),
     }
 
 
-# ============== Admin: User Management ==============
+# ============== Admin: Allowed Google Addresses ==============
+#
+# "Users" are Google addresses now: there is no local account to create, and no
+# password to set.  Adding an address here lets whoever controls that Google
+# account sign in; removing it cuts their sessions immediately (the revocation
+# epoch, see allowlist.py).  Addresses that come from the environment are
+# reported as `managed` and refuse to be edited here, because the next restart
+# would reinstate them and the operator would think the change had stuck.
+
 
 @app.get("/api/admin/users")
 async def admin_list_users():
-    """List all users (admin only)."""
-    return {"users": user_manager.list_users()}
+    """List the Google addresses allowed to sign in (admin only)."""
+    return {
+        "users": email_allowlist.list_entries() if email_allowlist else [],
+        "google_enabled": bool(google_verifier and google_verifier.enabled),
+        # The break-glass account, so the UI can say it exists rather than
+        # leaving an operator wondering where the local login went.
+        "local_admin": user_manager.describe() if user_manager else None,
+    }
 
 
 @app.post("/api/admin/users")
-async def admin_create_user(request: Request):
-    """Create a new user (admin only)."""
+async def admin_add_user(request: Request):
+    """Allow a Google address to sign in (admin only)."""
     body = await request.json()
-    username = body.get("username", "").strip()
-    password = body.get("password", "")
+    email = body.get("email", "")
     role = body.get("role", "viewer")
 
-    if not username or not password:
-        raise HTTPException(status_code=400, detail="Username and password are required")
+    if not isinstance(email, str) or not isinstance(role, str):
+        raise HTTPException(status_code=400, detail="Invalid request body")
+    if not email.strip():
+        raise HTTPException(status_code=400, detail="An email address is required")
 
     try:
-        user = await user_manager.create_user(username, password, role)
-        return user
+        return await email_allowlist.add(email, role)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.put("/api/admin/users/{username}")
-async def admin_update_user(username: str, request: Request):
-    """Update an existing user (admin only)."""
+@app.put("/api/admin/users/{email}")
+async def admin_update_user(email: str, request: Request):
+    """Change the role of an allowed address (admin only)."""
     body = await request.json()
-    password = body.get("password")
     role = body.get("role")
+    if not isinstance(role, str) or not role:
+        raise HTTPException(status_code=400, detail="A role is required")
 
     try:
-        user = await user_manager.update_user(username, password=password, role=role)
-        return user
+        return await email_allowlist.set_role(email, role)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.delete("/api/admin/users/{username}")
-async def admin_delete_user(username: str):
-    """Delete a user (admin only)."""
+@app.delete("/api/admin/users/{email}")
+async def admin_delete_user(email: str):
+    """Revoke an allowed address, cutting its open sessions (admin only)."""
     try:
-        await user_manager.delete_user(username)
+        await email_allowlist.remove(email)
         return {"deleted": True}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

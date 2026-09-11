@@ -1,14 +1,33 @@
-"""File-based user management for PulsarCD.
+"""Break-glass local administrator for PulsarCD.
 
-Stores users in /data/users.json with bcrypt password hashing.
-Auto-creates a default admin user on first boot.
+Signing in normally goes through Google: an ID token is verified
+(``backend/google_auth.py``) and the address it carries is looked up in the
+allowlist (``backend/allowlist.py``).  This module keeps exactly ONE local
+account alive as a way back in when Google is unreachable, the OAuth client is
+misconfigured, or the last allowlisted administrator locked themselves out.
+
+It only exists when the operator provisions it explicitly:
+
+    PULSARCD_AUTH__USERNAME=admin           (optional, defaults to "admin")
+    PULSARCD_AUTH__PASSWORD=<12+ characters> (required: no password, no account)
+
+With ``PULSARCD_AUTH__PASSWORD`` unset there is no local account at all and
+``POST /api/auth/login`` answers 403 -- nothing to guess, nothing to stuff.  A
+weak or placeholder value is refused the same way rather than replaced by a
+generated one: on a Google-first deployment, a random password printed once into
+the container logs is a live administrator account that nobody will ever read.
+
+The environment is authoritative on every boot.  Changing the password rewrites
+the stored hash and bumps the token epoch, which cuts the sessions the old
+password opened; clearing it deletes the account outright.  This is deliberate:
+the file is a cache of the configuration, not a second place to edit it, and the
+previous behaviour (keep whatever the file says, ignore the environment forever)
+made a password rotation look like it had worked when it had not.
 """
 
 import asyncio
 import json
 import os
-import secrets
-import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -16,11 +35,12 @@ import bcrypt as _bcrypt
 import structlog
 from pydantic import BaseModel
 
+from .auth import next_token_epoch as _next_token_epoch
+
 logger = structlog.get_logger()
 
-# Minimum length accepted for the bootstrap admin password. Anything shorter,
-# empty, or a well-known placeholder is refused: the deployment gets a random
-# password instead so it can never end up with guessable credentials.
+# Minimum length accepted for the break-glass password. Anything shorter,
+# empty, or a well-known placeholder is refused and the account is not created.
 MIN_ADMIN_PASSWORD_LENGTH = 12
 
 # Placeholder values shipped in the sample compose/.env files.
@@ -29,12 +49,7 @@ _PLACEHOLDER_PASSWORDS = frozenset({"changeme", "change-me", "changemenow",
 
 
 def weak_password_reason(password: str) -> Optional[str]:
-    """Return why a password is unacceptable, or None if it is fine.
-
-    Applied at bootstrap AND on every write path (create_user / update_user):
-    enforcing it only at bootstrap left the documented "change the password from
-    the UI after the first boot" flow free to set `changeme` back a second later.
-    """
+    """Return why a password is unacceptable, or None if it is fine."""
     if not password:
         return "not set"
     if password.strip().lower() in _PLACEHOLDER_PASSWORDS:
@@ -48,44 +63,20 @@ def weak_password_reason(password: str) -> Optional[str]:
 _weak_admin_password_reason = weak_password_reason
 
 
-def _rejected_password_error(reason: str) -> ValueError:
-    """Build the ValueError the admin API turns into an HTTP 400."""
-    return ValueError(
-        f"Password rejected: it is {reason}. Use at least "
-        f"{MIN_ADMIN_PASSWORD_LENGTH} characters and avoid placeholder values."
-    )
-
-
-def _next_token_epoch(current: int = 0) -> int:
-    """Return a strictly increasing revocation epoch.
-
-    A wall-clock second is used as the base so that an account recreated under a
-    name that existed before does not restart from a value an old token could
-    match; ``current + 1`` keeps the sequence strictly increasing when two
-    revocations happen within the same second.
-    """
-    try:
-        current_value = int(current)
-    except (TypeError, ValueError):
-        current_value = 0
-    return max(int(time.time()), current_value + 1)
-
-
 class User(BaseModel):
-    """User account."""
+    """The break-glass account."""
     username: str
     password_hash: str
-    role: str = "admin"  # "admin" or "viewer"
+    role: str = "admin"
     # Revocation epoch carried by every JWT issued for this account.  A token
     # whose epoch is older than this value is refused, so bumping the field
-    # invalidates every session already open for the user.  Absent from a
-    # users.json written by an older version: it then reads as 0, which keeps
-    # tokens issued before the upgrade valid until the first revocation.
+    # invalidates every session already open.  Absent from a users.json written
+    # by an older version: it then reads as 0.
     token_epoch: int = 0
 
 
 class UserManager:
-    """File-based user CRUD with bcrypt authentication."""
+    """Holds the single break-glass administrator, reconciled from the env."""
 
     def __init__(self, path: str = "/data/users.json"):
         self._path = Path(path)
@@ -93,51 +84,87 @@ class UserManager:
         self._users: List[User] = []
         self._load()
 
-    def _load(self) -> None:
-        """Load users from JSON file, create default admin if absent."""
-        if self._path.exists():
-            try:
-                raw = json.loads(self._path.read_text(encoding="utf-8"))
-                self._users = [User(**u) for u in raw]
-                logger.info("Users loaded", path=str(self._path), count=len(self._users))
-                return
-            except Exception as e:
-                logger.error("Failed to parse users file, starting fresh",
-                             path=str(self._path), error=str(e))
+    @property
+    def enabled(self) -> bool:
+        """Whether a local account exists, i.e. whether password login works."""
+        return bool(self._users)
 
-        # Auto-create default admin from env vars or generated password.
-        # A weak or default PULSARCD_AUTH__PASSWORD is never accepted: the
-        # service is typically published on the public internet, so an
-        # unusable-but-random password is safer than a guessable one.
-        username = os.environ.get("PULSARCD_AUTH__USERNAME", "admin")
+    def _read_file(self) -> List[User]:
+        """Read whatever accounts the data file holds, tolerating junk."""
+        if not self._path.exists():
+            return []
+        try:
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
+            return [User(**u) for u in raw]
+        except Exception as e:
+            logger.error("Failed to parse users file, starting fresh",
+                         path=str(self._path), error=str(e))
+            return []
+
+    def _load(self) -> None:
+        """Reconcile the stored account with the environment."""
+        stored = self._read_file()
+        username = (os.environ.get("PULSARCD_AUTH__USERNAME") or "admin").strip() or "admin"
         password = os.environ.get("PULSARCD_AUTH__PASSWORD", "")
-        weak_reason = _weak_admin_password_reason(password)
-        if weak_reason:
-            password = secrets.token_urlsafe(24)
-            # Logged exactly once, on account creation: only the bcrypt hash is
-            # persisted, so this line is the single chance to copy the value.
-            logger.warning(
-                "PULSARCD_AUTH__PASSWORD rejected; generated a random admin "
-                "password instead. ACTION REQUIRED: copy it from this log now, "
-                "sign in, and change it via the UI — or set "
-                "PULSARCD_AUTH__PASSWORD to a strong value "
-                f"(>= {MIN_ADMIN_PASSWORD_LENGTH} characters), delete the users "
-                "file and restart.",
-                username=username,
-                reason=weak_reason,
-                generated_password=password,
-            )
+
+        reason = weak_password_reason(password)
+        if reason:
+            if password:
+                logger.error(
+                    "PULSARCD_AUTH__PASSWORD rejected; the break-glass "
+                    "administrator is DISABLED and password login answers 403. "
+                    f"Set it to at least {MIN_ADMIN_PASSWORD_LENGTH} characters "
+                    "(and not a placeholder) to provision it.",
+                    username=username, reason=reason)
+            else:
+                logger.info(
+                    "No break-glass administrator configured; sign-in is "
+                    "Google-only. Set PULSARCD_AUTH__PASSWORD to provision one.")
+            self._users = []
+            if stored:
+                # The environment used to define an account and no longer does:
+                # the file must not keep a credential the operator has revoked.
+                logger.warning("Removing the stored break-glass administrator",
+                               path=str(self._path))
+                self._save_sync()
+            return
+
+        previous = next((u for u in stored if u.username == username), None)
+        if previous is not None and self._hash_matches(previous, password):
+            # Unchanged: keep the stored epoch so a restart does not sign the
+            # operator out of a session they opened a minute ago.
+            self._users = [previous]
+            if len(stored) != 1:
+                logger.warning(
+                    "Dropping extra accounts from the users file; only the "
+                    "break-glass administrator is kept, everyone else signs in "
+                    "with Google", path=str(self._path), dropped=len(stored) - 1)
+                self._save_sync()
+            return
+
         self._users = [User(
             username=username,
             password_hash=_bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode(),
             role="admin",
-            token_epoch=_next_token_epoch(),
+            # Bumped past the previous value so the sessions the old password
+            # opened do not survive the rotation.
+            token_epoch=_next_token_epoch(getattr(previous, "token_epoch", 0) if previous else 0),
         )]
         self._save_sync()
-        logger.info("Default admin user created", username=username, path=str(self._path))
+        logger.info("Break-glass administrator provisioned from the environment",
+                    username=username, path=str(self._path),
+                    replaced=previous is not None)
+
+    @staticmethod
+    def _hash_matches(user: User, password: str) -> bool:
+        """Whether the stored hash already corresponds to this password."""
+        try:
+            return _bcrypt.checkpw(password.encode(), user.password_hash.encode())
+        except (ValueError, TypeError):
+            return False  # hand-edited or truncated hash: rewrite it
 
     def _save_sync(self) -> None:
-        """Write users to JSON file (synchronous)."""
+        """Write the account to the JSON file (synchronous)."""
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             data = [u.model_dump() for u in self._users]
@@ -146,120 +173,36 @@ class UserManager:
             logger.error("Failed to save users file", path=str(self._path), error=str(e))
             raise
 
-    async def _save(self) -> None:
-        """Write users to JSON file (async-safe)."""
-        self._save_sync()
-
     def authenticate(self, username: str, password: str) -> Optional[User]:
-        """Verify credentials and return user if valid."""
+        """Verify credentials and return the account if valid."""
         for user in self._users:
             if user.username == username:
-                if _bcrypt.checkpw(password.encode(), user.password_hash.encode()):
+                if self._hash_matches(user, password):
                     return user
                 return None
         return None
 
     def get_user(self, username: str) -> Optional[User]:
-        """Get user by username."""
+        """Get the local account by username."""
         for user in self._users:
             if user.username == username:
                 return user
         return None
 
     def token_epoch_for(self, username: str) -> Optional[int]:
-        """Return the current token epoch of a user, or None if it does not exist.
+        """Return the current token epoch of the account, or None if unknown.
 
         None means every token bearing that username must be refused: the
-        account was deleted while its JWT was still within its expiry window.
+        account was removed while its JWT was still within its expiry window.
         """
         user = self.get_user(username)
         if user is None:
             return None
         return int(getattr(user, "token_epoch", 0) or 0)
 
-    def list_users(self) -> List[dict]:
-        """List all users (without password hashes)."""
-        return [{"username": u.username, "role": u.role} for u in self._users]
-
-    async def create_user(self, username: str, password: str, role: str = "viewer") -> dict:
-        """Create a new user.
-
-        Raises ValueError if the username exists, the role is unknown, or the
-        password does not meet the policy.
-        """
-        reason = weak_password_reason(password)
-        if reason:
-            raise _rejected_password_error(reason)
-        async with self._lock:
-            if self.get_user(username):
-                raise ValueError(f"User '{username}' already exists")
-            if role not in ("admin", "viewer"):
-                raise ValueError(f"Invalid role: {role}")
-
-            user = User(
-                username=username,
-                password_hash=_bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode(),
-                role=role,
-                # Start above any epoch a token issued for a previous account
-                # of the same name could carry.
-                token_epoch=_next_token_epoch(),
-            )
-            self._users.append(user)
-            await self._save()
-            logger.info("User created", username=username, role=role)
-            return {"username": user.username, "role": user.role}
-
-    async def update_user(self, username: str, password: Optional[str] = None, role: Optional[str] = None) -> dict:
-        """Update an existing user. Raises ValueError if not found.
-
-        A password or role change bumps the token epoch, which immediately
-        invalidates every JWT already issued for the account.  A new password
-        must satisfy the same policy as the bootstrap one.
-        """
-        if password is not None:
-            reason = weak_password_reason(password)
-            if reason:
-                raise _rejected_password_error(reason)
-        async with self._lock:
-            user = self.get_user(username)
-            if not user:
-                raise ValueError(f"User '{username}' not found")
-            revoke = False
-            if role is not None:
-                if role not in ("admin", "viewer"):
-                    raise ValueError(f"Invalid role: {role}")
-                revoke = role != user.role
-                user.role = role
-            if password is not None:
-                user.password_hash = _bcrypt.hashpw(password.encode(), _bcrypt.gensalt()).decode()
-                revoke = True
-            if revoke:
-                user.token_epoch = _next_token_epoch(user.token_epoch)
-            await self._save()
-            logger.info("User updated", username=username, role=user.role,
-                        sessions_revoked=revoke)
-            return {"username": user.username, "role": user.role}
-
-    async def delete_user(self, username: str) -> bool:
-        """Delete a user. Raises ValueError if not found or last admin.
-
-        Deleting also cuts the account's live sessions: ``token_epoch_for``
-        returns None for an unknown user, and the API refuses every token whose
-        subject it cannot resolve.
-        """
-        async with self._lock:
-            user = self.get_user(username)
-            if not user:
-                raise ValueError(f"User '{username}' not found")
-
-            admin_count = sum(1 for u in self._users if u.role == "admin")
-            if user.role == "admin" and admin_count <= 1:
-                raise ValueError("Cannot delete the last admin user")
-
-            # Bumped before removal so that a same-named account recreated
-            # within the same second cannot inherit a still-valid epoch.
-            user.token_epoch = _next_token_epoch(user.token_epoch)
-            self._users = [u for u in self._users if u.username != username]
-            await self._save()
-            logger.info("User deleted", username=username)
-            return True
+    def describe(self) -> Optional[dict]:
+        """Describe the break-glass account for the admin UI, or None."""
+        if not self._users:
+            return None
+        user = self._users[0]
+        return {"username": user.username, "role": user.role}

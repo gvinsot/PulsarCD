@@ -14,7 +14,10 @@ import asyncio
 import base64
 import json
 import pathlib
+import re
+import time
 import uuid
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import jwt
@@ -704,27 +707,35 @@ class TestM3TokenRevocation:
         with patch.object(api_module, "user_manager", _um(5)):
             assert client.get("/api/containers", headers=headers).status_code == 401
 
-    async def test_password_change_bumps_the_epoch(self, tmp_path):
+    def test_a_break_glass_password_change_bumps_the_epoch(self, tmp_path, monkeypatch):
         from backend.user_manager import UserManager
         path = tmp_path / "users.json"
-        path.write_text(json.dumps([
-            {"username": "bob", "password_hash": "x", "role": "viewer"},
-        ]), encoding="utf-8")
-        mgr = UserManager(path=str(path))
-        assert mgr.token_epoch_for("bob") == 0
-        await mgr.update_user("bob", password="a-strong-new-password")
-        assert mgr.token_epoch_for("bob") > 0
+        monkeypatch.setenv("PULSARCD_AUTH__USERNAME", "admin")
+        monkeypatch.setenv("PULSARCD_AUTH__PASSWORD", "the-first-long-password")
+        before = UserManager(path=str(path)).token_epoch_for("admin")
+        monkeypatch.setenv("PULSARCD_AUTH__PASSWORD", "the-second-long-password")
+        assert UserManager(path=str(path)).token_epoch_for("admin") > before
 
-    async def test_deletion_removes_the_epoch(self, tmp_path):
-        from backend.user_manager import UserManager
-        path = tmp_path / "users.json"
+    async def test_removal_from_the_allowlist_removes_the_epoch(self, tmp_path):
+        from backend.allowlist import EmailAllowlist
+        path = tmp_path / "allowed_emails.json"
         path.write_text(json.dumps([
-            {"username": "bob", "password_hash": "x", "role": "viewer"},
-            {"username": "root", "password_hash": "y", "role": "admin"},
+            {"email": "bob@example.com", "role": "viewer"},
+            {"email": "root@example.com", "role": "admin"},
         ]), encoding="utf-8")
-        mgr = UserManager(path=str(path))
-        await mgr.delete_user("bob")
-        assert mgr.token_epoch_for("bob") is None
+        allowlist = EmailAllowlist(path=str(path))
+        await allowlist.remove("bob@example.com")
+        assert allowlist.token_epoch_for("bob@example.com") is None
+
+    def test_a_google_token_is_checked_against_the_allowlist(self, client):
+        """Routing on the `auth` claim: the local store must not answer for it."""
+        from backend.auth import create_token as _create
+        token = _create("bob@example.com", api_module.settings.auth.jwt_secret, 1,
+                        role="admin", token_epoch=41, auth_source="google")
+        headers = {"Authorization": f"Bearer {token}"}
+        with patch.object(api_module, "email_allowlist", _um(42)), \
+             patch.object(api_module, "user_manager", _um(0)):
+            assert client.get("/api/containers", headers=headers).status_code == 401
 
 
 # ===========================================================================
@@ -1383,46 +1394,283 @@ class TestPromptInjectionDefences:
 
 
 # ===========================================================================
-# H3 - Password policy on every write path, not only the bootstrap
+# Google ID token verification - the whole authentication decision rests here
 # ===========================================================================
 
-class TestPasswordPolicyOnWrites:
-    """The UI is the documented way to change a password: it must be gated too."""
+def _rsa_keypair():
+    """Generate a throwaway RSA key standing in for Google's signing key."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    return rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
-    def _manager(self, tmp_path, monkeypatch):
+
+_TEST_KEY = None
+_TEST_KID = "test-kid-1"
+_TEST_CLIENT_ID = "pulsarcd.apps.googleusercontent.com"
+
+
+def _signing_key():
+    global _TEST_KEY
+    if _TEST_KEY is None:
+        _TEST_KEY = _rsa_keypair()
+    return _TEST_KEY
+
+
+def _google_token(key=None, kid=_TEST_KID, alg="RS256", **overrides):
+    """Mint an ID token that looks like Google's, so it can be broken on purpose."""
+    now = datetime.now(timezone.utc)
+    claims = {
+        "iss": "https://accounts.google.com",
+        "aud": _TEST_CLIENT_ID,
+        "sub": "1234567890",
+        "email": "boss@example.com",
+        "email_verified": True,
+        "iat": now,
+        "exp": now + timedelta(hours=1),
+    }
+    for field, value in overrides.items():
+        if value is _REMOVE:
+            claims.pop(field, None)
+        else:
+            claims[field] = value
+    signing = key if key is not None else _signing_key()
+    return jwt.encode(claims, signing, algorithm=alg, headers={"kid": kid})
+
+
+_REMOVE = object()
+
+
+def _verifier_with_test_key(client_id=_TEST_CLIENT_ID):
+    """A verifier whose JWKS cache is preloaded with the test public key."""
+    from backend.google_auth import GoogleIdTokenVerifier
+    verifier = GoogleIdTokenVerifier(client_id)
+    verifier._keys = {_TEST_KID: _signing_key().public_key()}
+    verifier._fetched_at = time.monotonic()
+    return verifier
+
+
+class TestGoogleIdTokenVerification:
+    """Everything that stands between a forged credential and an admin session."""
+
+    def _verify(self, credential, client_id=_TEST_CLIENT_ID):
+        return asyncio.run(_verifier_with_test_key(client_id).verify(credential))
+
+    def test_a_genuine_token_is_accepted(self):
+        claims = self._verify(_google_token())
+        assert claims["email"] == "boss@example.com"
+
+    def test_a_token_for_another_client_is_refused(self):
+        """Without the aud check, any Google ID token in the world would work."""
+        from backend.google_auth import GoogleTokenError
+        with pytest.raises(GoogleTokenError):
+            self._verify(_google_token(aud="someone-else.apps.googleusercontent.com"))
+
+    def test_a_token_signed_by_someone_else_is_refused(self):
+        from backend.google_auth import GoogleTokenError
+        with pytest.raises(GoogleTokenError):
+            self._verify(_google_token(key=_rsa_keypair()))
+
+    def test_the_none_algorithm_is_refused(self):
+        """The header is attacker-controlled; alg must never be read from it."""
+        from backend.google_auth import GoogleTokenError
+        unsigned = jwt.encode({"iss": "https://accounts.google.com",
+                               "aud": _TEST_CLIENT_ID, "sub": "1",
+                               "email": "boss@example.com", "email_verified": True,
+                               "iat": datetime.now(timezone.utc),
+                               "exp": datetime.now(timezone.utc) + timedelta(hours=1)},
+                              key="", algorithm="none", headers={"kid": _TEST_KID})
+        with pytest.raises(GoogleTokenError):
+            self._verify(unsigned)
+
+    def test_an_hmac_token_signed_with_the_public_key_is_refused(self):
+        """The classic RS256->HS256 confusion: the public key is not a secret.
+
+        PyJWT refuses to *mint* this, so the token is assembled by hand -- which
+        is exactly what an attacker does.
+        """
+        import hashlib
+        import hmac
+        from cryptography.hazmat.primitives import serialization
+        from backend.google_auth import GoogleTokenError
+
+        public_pem = _signing_key().public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo)
+
+        def b64(raw):
+            return base64.urlsafe_b64encode(raw).rstrip(b"=")
+
+        now = int(datetime.now(timezone.utc).timestamp())
+        header = b64(json.dumps({"alg": "HS256", "kid": _TEST_KID}).encode())
+        payload = b64(json.dumps({
+            "iss": "https://accounts.google.com", "aud": _TEST_CLIENT_ID,
+            "sub": "1", "email": "boss@example.com", "email_verified": True,
+            "iat": now, "exp": now + 3600,
+        }).encode())
+        signed = header + b"." + payload
+        signature = b64(hmac.new(public_pem, signed, hashlib.sha256).digest())
+        forged = (signed + b"." + signature).decode()
+
+        with pytest.raises(GoogleTokenError):
+            self._verify(forged)
+
+    def test_an_expired_token_is_refused(self):
+        from backend.google_auth import GoogleTokenError
+        past = datetime.now(timezone.utc) - timedelta(hours=2)
+        with pytest.raises(GoogleTokenError):
+            self._verify(_google_token(iat=past, exp=past + timedelta(hours=1)))
+
+    def test_a_token_from_another_issuer_is_refused(self):
+        from backend.google_auth import GoogleTokenError
+        with pytest.raises(GoogleTokenError):
+            self._verify(_google_token(iss="https://accounts.evil.example"))
+
+    @pytest.mark.parametrize("claim", ["exp", "iat", "aud", "iss", "sub"])
+    def test_a_missing_required_claim_is_refused(self, claim):
+        from backend.google_auth import GoogleTokenError
+        with pytest.raises(GoogleTokenError):
+            self._verify(_google_token(**{claim: _REMOVE}))
+
+    def test_an_unverified_address_is_refused(self):
+        """An unverified address proves nothing about who controls it."""
+        from backend.google_auth import GoogleTokenError
+        with pytest.raises(GoogleTokenError):
+            self._verify(_google_token(email_verified=False))
+
+    def test_a_token_without_an_address_is_refused(self):
+        from backend.google_auth import GoogleTokenError
+        with pytest.raises(GoogleTokenError):
+            self._verify(_google_token(email=_REMOVE))
+
+    def test_an_unknown_key_id_is_refused_without_a_fetch(self):
+        """A fresh cache plus the refresh floor: no amplification through us."""
+        from backend.google_auth import GoogleTokenError
+        verifier = _verifier_with_test_key()
+        verifier._last_attempt = time.monotonic()  # just tried, do not try again
+        with pytest.raises(GoogleTokenError):
+            asyncio.run(verifier.verify(_google_token(kid="rotated-kid")))
+
+    def test_an_oversized_credential_is_refused_before_parsing(self):
+        from backend.google_auth import GoogleTokenError
+        with pytest.raises(GoogleTokenError, match="too large"):
+            self._verify("a" * 20000)
+
+    @pytest.mark.parametrize("credential", ["", "not-a-jwt", "a.b.c"])
+    def test_malformed_credentials_are_refused(self, credential):
+        from backend.google_auth import GoogleTokenError
+        with pytest.raises(GoogleTokenError):
+            self._verify(credential)
+
+    def test_nothing_is_accepted_without_a_client_id(self):
+        """An unconfigured deployment must not accept any Google credential."""
+        from backend.google_auth import GoogleIdTokenVerifier, GoogleTokenError
+        verifier = GoogleIdTokenVerifier("")
+        assert verifier.enabled is False
+        with pytest.raises(GoogleTokenError):
+            asyncio.run(verifier.verify(_google_token()))
+
+    def test_the_address_is_normalised(self):
+        """Google's casing must reach the same allowlist entry as the operator's."""
+        claims = self._verify(_google_token(email="Boss@Example.COM"))
+        assert claims["email"] == "boss@example.com"
+
+
+class TestGoogleSignInEndToEnd:
+    """The real verifier and the real allowlist, through the real endpoint.
+
+    Everything else stubs one of the two halves; this is the path that ships.
+    """
+
+    @pytest.fixture
+    def wired(self, client, tmp_path):
+        from backend.allowlist import EmailAllowlist
+        allowlist = EmailAllowlist(
+            path=str(tmp_path / "allowed_emails.json"),
+            admins=["boss@example.com"], viewers=["intern@example.com"])
+        api_module._login_attempts.clear()
+        with patch.object(api_module, "google_verifier", _verifier_with_test_key()), \
+             patch.object(api_module, "email_allowlist", allowlist):
+            yield client
+        api_module._login_attempts.clear()
+
+    def test_an_allowlisted_admin_reaches_an_admin_only_route(self, wired):
+        resp = wired.post("/api/auth/google", json={"credential": _google_token()})
+        assert resp.status_code == 200, resp.text
+        token = resp.json()["token"]
+        assert wired.get("/api/config",
+                         headers={"Authorization": f"Bearer {token}"}).status_code == 200
+
+    def test_an_allowlisted_viewer_is_read_only(self, wired):
+        token = wired.post("/api/auth/google", json={
+            "credential": _google_token(email="intern@example.com")}).json()["token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        assert wired.get("/api/containers", headers=headers).status_code == 200
+        assert wired.post("/api/stacks/build", headers=headers).status_code == 403
+
+    def test_an_unlisted_address_gets_nothing(self, wired):
+        """A genuine Google token is not, by itself, access."""
+        resp = wired.post("/api/auth/google", json={
+            "credential": _google_token(email="stranger@example.com")})
+        assert resp.status_code == 403
+        assert "token" not in resp.json()
+
+    def test_a_forged_credential_gets_nothing(self, wired):
+        resp = wired.post("/api/auth/google", json={
+            "credential": _google_token(key=_rsa_keypair())})
+        assert resp.status_code == 401
+        assert "token" not in resp.json()
+
+    def test_a_token_for_another_oauth_client_gets_nothing(self, wired):
+        resp = wired.post("/api/auth/google", json={
+            "credential": _google_token(aud="another-app.apps.googleusercontent.com")})
+        assert resp.status_code == 401
+
+
+# ===========================================================================
+# H3 - The break-glass administrator is provisioned, never defaulted
+# ===========================================================================
+
+class TestBreakGlassProvisioning:
+    """Password sign-in exists only when an operator asked for it, explicitly."""
+
+    def _manager(self, tmp_path, monkeypatch, password, username="admin"):
         from backend.user_manager import UserManager
-        monkeypatch.setenv("PULSARCD_AUTH__USERNAME", "admin")
-        monkeypatch.setenv("PULSARCD_AUTH__PASSWORD", "a-strong-bootstrap-password")
+        monkeypatch.setenv("PULSARCD_AUTH__USERNAME", username)
+        monkeypatch.setenv("PULSARCD_AUTH__PASSWORD", password)
         return UserManager(path=str(tmp_path / "users.json"))
 
+    @staticmethod
+    def _stored(tmp_path):
+        """Whatever the users file holds; an absent file is no account at all."""
+        path = tmp_path / "users.json"
+        if not path.exists():
+            return []
+        return json.loads(path.read_text(encoding="utf-8"))
+
     @pytest.mark.parametrize("password", ["changeme", "1", "short", "password", ""])
-    def test_create_user_refuses_a_weak_password(self, tmp_path, monkeypatch, password):
-        mgr = self._manager(tmp_path, monkeypatch)
-        with pytest.raises(ValueError) as exc:
-            asyncio.run(mgr.create_user("bob", password, "admin"))
-        assert "Password rejected" in str(exc.value)
-        assert mgr.authenticate("bob", password) is None
-
-    @pytest.mark.parametrize("password", ["changeme", "1", "short"])
-    def test_update_user_refuses_a_weak_password(self, tmp_path, monkeypatch, password):
-        mgr = self._manager(tmp_path, monkeypatch)
-        with pytest.raises(ValueError):
-            asyncio.run(mgr.update_user("admin", password=password))
+    def test_a_weak_password_leaves_no_account_behind(self, tmp_path, monkeypatch, password):
+        """Not even a random generated one: nobody reads it out of the logs."""
+        mgr = self._manager(tmp_path, monkeypatch, password)
+        assert mgr.enabled is False
         assert mgr.authenticate("admin", password) is None
-        # The existing password still works: the write was refused, not applied.
-        assert mgr.authenticate("admin", "a-strong-bootstrap-password") is not None
+        assert self._stored(tmp_path) == []
 
-    def test_a_strong_password_is_accepted_on_both_paths(self, tmp_path, monkeypatch):
-        mgr = self._manager(tmp_path, monkeypatch)
-        asyncio.run(mgr.create_user("bob", "a-perfectly-fine-password", "viewer"))
-        assert mgr.authenticate("bob", "a-perfectly-fine-password") is not None
-        asyncio.run(mgr.update_user("bob", password="another-fine-password"))
-        assert mgr.authenticate("bob", "another-fine-password") is not None
+    def test_a_strong_password_is_honoured(self, tmp_path, monkeypatch):
+        mgr = self._manager(tmp_path, monkeypatch, "a-properly-long-secret")
+        assert mgr.authenticate("admin", "a-properly-long-secret") is not None
 
-    def test_a_role_change_still_works_without_a_password(self, tmp_path, monkeypatch):
-        mgr = self._manager(tmp_path, monkeypatch)
-        asyncio.run(mgr.create_user("bob", "a-perfectly-fine-password", "viewer"))
-        assert asyncio.run(mgr.update_user("bob", role="admin"))["role"] == "admin"
+    def test_the_password_is_never_stored_in_clear(self, tmp_path, monkeypatch):
+        self._manager(tmp_path, monkeypatch, "a-properly-long-secret")
+        assert "a-properly-long-secret" not in (tmp_path / "users.json").read_text(
+            encoding="utf-8")
+
+    def test_revoking_the_account_through_the_environment_takes_effect(
+            self, tmp_path, monkeypatch):
+        """The old behaviour kept the stored account forever; a revocation had
+        to be done by deleting a file on the volume."""
+        self._manager(tmp_path, monkeypatch, "a-properly-long-secret")
+        cleared = self._manager(tmp_path, monkeypatch, "")
+        assert cleared.enabled is False
+        assert cleared.authenticate("admin", "a-properly-long-secret") is None
 
 
 # ===========================================================================
@@ -1494,17 +1742,37 @@ class TestH3BootstrapPassword:
         from backend.user_manager import _weak_admin_password_reason
         assert _weak_admin_password_reason("a-properly-long-secret") is None
 
-    def test_swarm_compose_has_no_credential_fallback(self):
-        """`${VAR:-changeme}` would silently deploy default credentials."""
+    @staticmethod
+    def _swarm_compose():
         compose = (pathlib.Path(__file__).resolve().parent.parent
                    / "devops" / "docker-compose.swarm.yml")
         if not compose.exists():
             pytest.skip("swarm compose file not present")
-        text = compose.read_text(encoding="utf-8")
-        for var in ("PULSARCD_AUTH__PASSWORD", "PULSARCD_AUTH__JWT_SECRET",
-                    "PULSARCD_AUTH__AGENT_KEY"):
-            assert f"${{{var}:-" not in text, f"{var} still has a default fallback"
-            assert f"${{{var}:?" in text, f"{var} is not declared as required"
+        return compose.read_text(encoding="utf-8")
+
+    @pytest.mark.parametrize("var", ["PULSARCD_AUTH__JWT_SECRET",
+                                     "PULSARCD_AUTH__AGENT_KEY",
+                                     "PULSARCD_AUTH__GOOGLE_CLIENT_ID",
+                                     "PULSARCD_AUTH__GOOGLE_ADMINS"])
+    def test_swarm_compose_requires_the_access_configuration(self, var):
+        """Deploying without these means a stack nobody can administer -- or,
+        for the secrets, one whose sessions are forgeable."""
+        text = self._swarm_compose()
+        assert f"${{{var}:-" not in text, f"{var} still has a default fallback"
+        assert f"${{{var}:?" in text, f"{var} is not declared as required"
+
+    def test_swarm_compose_has_no_default_break_glass_password(self):
+        """`${VAR:-changeme}` would silently deploy a default credential.
+
+        The password is optional now (empty = no local account at all), so the
+        rule is not "must be required" but "must never default to a value".
+        """
+        text = self._swarm_compose()
+        var = "PULSARCD_AUTH__PASSWORD"
+        assert f"${{{var}:-}}" in text or f"${{{var}:?" in text, \
+            f"{var} must be empty-by-default or required"
+        assert not re.search(rf"\$\{{{var}:-[^}}\s]", text), \
+            f"{var} falls back to a default credential"
 
 
 # ===========================================================================

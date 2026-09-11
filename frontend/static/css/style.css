@@ -4868,6 +4868,49 @@ a.btn {
     display: none;
 }
 
+/* Google sign-in. The button itself is a cross-origin iframe rendered by
+   Google Identity Services, so it cannot be styled -- only placed. */
+.login-google {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.login-google-button {
+    min-height: 44px;
+}
+
+.login-hint {
+    margin: 1rem 0 0 0;
+    color: var(--text-tertiary);
+    font-size: 0.8rem;
+    text-align: center;
+}
+
+/* Break-glass password form: present, but never the thing you reach for. */
+.login-fallback {
+    margin-top: 1.25rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--border-subtle);
+}
+
+.login-fallback-toggle {
+    display: block;
+    width: 100%;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--text-tertiary);
+    font-family: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.login-fallback-toggle:hover {
+    color: var(--text-secondary);
+}
+
 /* ============== Terminal ============== */
 
 #terminal-view.active {
@@ -5679,6 +5722,21 @@ a.btn {
 
 .settings-add-user-form input { flex: 1; }
 .settings-add-user-form select { width: 100px; }
+
+/* Explanatory note under a settings control (never an error). */
+.settings-hint {
+    margin: 10px 0 0 0;
+    color: var(--text-tertiary);
+    font-size: 0.78rem;
+    line-height: 1.5;
+}
+
+/* An address that comes from the environment and cannot be edited here. */
+.user-row-managed {
+    font-size: 0.72rem;
+    color: var(--text-tertiary);
+    font-style: italic;
+}
 
 /* Settings footer */
 .modal-footer-actions {

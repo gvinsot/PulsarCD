@@ -22,6 +22,9 @@ def _mock_settings():
     )
     s = MagicMock()
     s.auth = AuthConfig(
+        google_client_id="test-client-id.apps.googleusercontent.com",
+        google_admins=["boss@example.com"],
+        google_viewers=[],
         username="testuser",
         password="testpass",
         jwt_secret="test-jwt-secret-32-chars-minimum!",
@@ -68,10 +71,10 @@ def _mock_github():
 
 
 def _mock_user_manager():
-    """In-memory user manager that accepts testuser/testpass."""
+    """Break-glass administrator double that accepts testuser/testpass."""
     m = MagicMock()
     from types import SimpleNamespace
-    test_user = SimpleNamespace(username="testuser", role="admin")
+    test_user = SimpleNamespace(username="testuser", role="admin", token_epoch=0)
 
     def _authenticate(username, password):
         if username == "testuser" and password == "testpass":
@@ -79,7 +82,31 @@ def _mock_user_manager():
         return None
 
     m.authenticate = _authenticate
-    m.list_users = MagicMock(return_value=[{"username": "testuser", "role": "admin"}])
+    m.enabled = True
+    m.describe = MagicMock(return_value={"username": "testuser", "role": "admin"})
+    return m
+
+
+def _mock_email_allowlist():
+    """Allowlist double holding one admin and one viewer address."""
+    m = MagicMock()
+    entries = {"boss@example.com": "admin", "watcher@example.com": "viewer"}
+    m.role_for = MagicMock(side_effect=lambda email: entries.get((email or "").lower()))
+    m.token_epoch_for = MagicMock(
+        side_effect=lambda email: 0 if (email or "").lower() in entries else None)
+    m.admin_count = MagicMock(return_value=1)
+    m.list_entries = MagicMock(return_value=[
+        {"email": email, "role": role, "managed": role == "admin"}
+        for email, role in entries.items()
+    ])
+    return m
+
+
+def _mock_google_verifier(enabled=True):
+    """Google verifier double; verify() is patched per test when needed."""
+    m = MagicMock()
+    m.enabled = enabled
+    m.client_id = "test-client-id.apps.googleusercontent.com"
     return m
 
 
@@ -97,6 +124,8 @@ def client():
     mock_col = _mock_collector()
     mock_gh = _mock_github()
     mock_um = _mock_user_manager()
+    mock_allowlist = _mock_email_allowlist()
+    mock_google = _mock_google_verifier()
 
     @asynccontextmanager
     async def _test_lifespan(app):
@@ -107,6 +136,8 @@ def client():
         api_module.github_service = mock_gh
         api_module.error_detector = None
         api_module.user_manager = mock_um
+        api_module.email_allowlist = mock_allowlist
+        api_module.google_verifier = mock_google
         yield
         # No teardown needed for mocks
 

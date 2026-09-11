@@ -37,8 +37,20 @@ function authHeaders() {
 function showLogin() {
     document.getElementById('login-overlay').style.display = 'flex';
     document.querySelector('.app').style.display = 'none';
-    document.getElementById('login-error').textContent = '';
-    document.getElementById('login-error').style.display = 'none';
+    clearLoginError();
+    initSignIn();
+}
+
+function clearLoginError() {
+    const el = document.getElementById('login-error');
+    el.textContent = '';
+    el.style.display = 'none';
+}
+
+function showLoginError(message) {
+    const el = document.getElementById('login-error');
+    el.textContent = message;
+    el.style.display = 'block';
 }
 
 function hideLogin() {
@@ -48,6 +60,9 @@ function hideLogin() {
 
 function logout() {
     clearAuthToken();
+    // Stop Google from silently handing the same account back on the next
+    // sign-in: logging out of a console is meant to mean something.
+    try { google.accounts.id.disableAutoSelect(); } catch { /* GIS not loaded */ }
     showLogin();
 }
 
@@ -104,12 +119,132 @@ async function checkAuth() {
     }
 }
 
+// ============== Sign-in ==============
+
+const GOOGLE_GSI_SRC = 'https://accounts.google.com/gsi/client';
+
+// /api/auth/config is fetched once and reused: showLogin() runs again after
+// every 401, and re-rendering the Google button on each of those would restart
+// the whole GIS handshake.
+let _signInConfig = null;
+let _signInReady = false;
+
+/**
+ * Prepare whichever sign-in methods this deployment offers.
+ * Google is the normal path; the password form is the break-glass account and
+ * is only offered when the backend says one exists.
+ */
+async function initSignIn() {
+    if (_signInReady) return;
+    try {
+        const response = await fetch(`${API_BASE}/auth/config`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        _signInConfig = await response.json();
+    } catch {
+        showLoginError('Cannot reach the server.');
+        return;
+    }
+    _signInReady = true;
+
+    if (_signInConfig.password_login_enabled) {
+        document.getElementById('login-fallback').style.display = '';
+    }
+    if (_signInConfig.google_enabled && _signInConfig.google_client_id) {
+        document.getElementById('login-google').style.display = '';
+        try {
+            await loadGoogleIdentityServices();
+            renderGoogleButton(_signInConfig.google_client_id);
+        } catch {
+            showLoginError('Could not load Google sign-in.');
+            // Without Google there may be nothing else on screen, so open the
+            // password form rather than leaving a dead card.
+            if (_signInConfig.password_login_enabled) togglePasswordLogin(true);
+        }
+    } else if (!_signInConfig.password_login_enabled) {
+        showLoginError('No sign-in method is configured on this deployment.');
+    } else {
+        togglePasswordLogin(true);
+    }
+}
+
+/** Load Google Identity Services on demand, once. */
+function loadGoogleIdentityServices() {
+    if (window.google && window.google.accounts) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+        const existing = document.querySelector(`script[src="${GOOGLE_GSI_SRC}"]`);
+        if (existing) {
+            existing.addEventListener('load', resolve);
+            existing.addEventListener('error', reject);
+            return;
+        }
+        const script = document.createElement('script');
+        script.src = GOOGLE_GSI_SRC;
+        script.async = true;
+        script.defer = true;
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.appendChild(script);
+    });
+}
+
+function renderGoogleButton(clientId) {
+    google.accounts.id.initialize({
+        client_id: clientId,
+        callback: onGoogleCredential,
+        // No auto-select: this is an infrastructure console, so signing in is a
+        // deliberate act rather than something that happens on page load.
+        auto_select: false,
+        cancel_on_tap_outside: true,
+    });
+    google.accounts.id.renderButton(
+        document.getElementById('login-google-button'),
+        { theme: 'filled_black', size: 'large', text: 'signin_with',
+          shape: 'pill', width: 280 }
+    );
+}
+
+/**
+ * Exchange the Google ID token for a PulsarCD session token.
+ * The credential proves who the visitor is; the backend decides whether that
+ * address is on the allowlist, so a 403 here is "not invited", not "wrong
+ * password".
+ */
+async function onGoogleCredential(response) {
+    clearLoginError();
+    try {
+        const result = await fetch(`${API_BASE}/auth/google`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ credential: response.credential })
+        });
+        if (result.ok) {
+            const data = await result.json();
+            setAuthToken(data.token);
+            await checkAuth();
+            return;
+        }
+        const error = await result.json().catch(() => ({}));
+        showLoginError(error.detail || 'Google sign-in failed.');
+    } catch {
+        showLoginError('Connection error');
+    }
+}
+
+/** Show or hide the break-glass password form. */
+function togglePasswordLogin(forceOpen) {
+    const form = document.getElementById('login-form');
+    const toggle = document.getElementById('login-fallback-toggle');
+    const open = forceOpen === true || form.style.display === 'none';
+    form.style.display = open ? '' : 'none';
+    toggle.style.display = open ? 'none' : '';
+    if (open) document.getElementById('login-username').focus();
+}
+
 function initLoginForm() {
     document.getElementById('login-form').addEventListener('submit', async (e) => {
         e.preventDefault();
         const username = document.getElementById('login-username').value;
         const password = document.getElementById('login-password').value;
-        const errorEl = document.getElementById('login-error');
 
         try {
             const response = await fetch(`${API_BASE}/auth/login`, {
@@ -120,15 +255,16 @@ function initLoginForm() {
             if (response.ok) {
                 const data = await response.json();
                 setAuthToken(data.token);
-                errorEl.style.display = 'none';
+                clearLoginError();
                 await checkAuth();
             } else {
-                errorEl.textContent = 'Invalid username or password';
-                errorEl.style.display = 'block';
+                const error = await response.json().catch(() => ({}));
+                showLoginError(response.status === 401
+                    ? 'Invalid username or password'
+                    : (error.detail || 'Sign-in failed'));
             }
         } catch {
-            errorEl.textContent = 'Connection error';
-            errorEl.style.display = 'block';
+            showLoginError('Connection error');
         }
     });
 }
@@ -761,7 +897,14 @@ async function saveSettings() {
     }
 }
 
-// ============== Users Management (Settings) ==============
+// ============== Allowed Google Accounts (Settings) ==============
+//
+// "Users" are Google addresses: there is no local account to create and no
+// password to set. An address listed here may sign in with Google; removing it
+// ends its open sessions. Addresses marked `managed` come from
+// PULSARCD_AUTH__GOOGLE_ADMINS/VIEWERS and can only be changed by redeploying,
+// so the UI shows them as locked rather than offering an edit that would be
+// undone on the next restart.
 
 async function loadUsersList() {
     const container = document.getElementById('users-list');
@@ -769,49 +912,77 @@ async function loadUsersList() {
 
     const data = await apiGet('/admin/users');
     if (!data || !data.users) {
-        container.innerHTML = '<div class="empty-state">Failed to load users</div>';
+        container.innerHTML = '<div class="empty-state">Failed to load allowed accounts</div>';
         return;
     }
 
-    container.innerHTML = data.users.map(u => `
+    const rows = data.users.map(u => {
+        const email = escapeHtml(u.email);
+        const other = u.role === 'admin' ? 'viewer' : 'admin';
+        const actions = u.managed
+            ? '<span class="user-row-managed" title="Set through PULSARCD_AUTH__GOOGLE_ADMINS / _VIEWERS">from environment</span>'
+            : `<button class="btn btn-xs btn-secondary" onclick="setUserRole('${email}', '${other}')">Make ${other}</button>
+               <button class="btn btn-xs btn-secondary" onclick="deleteUser('${email}')">Remove</button>`;
+        return `
         <div class="user-row">
             <div class="user-row-info">
-                <span class="user-row-name">${escapeHtml(u.username)}</span>
+                <span class="user-row-name">${email}</span>
                 <span class="user-row-role">${escapeHtml(u.role)}</span>
             </div>
-            <div class="user-row-actions">
-                <button class="btn btn-xs btn-secondary" onclick="deleteUser('${escapeHtml(u.username)}')">Delete</button>
-            </div>
-        </div>
-    `).join('');
+            <div class="user-row-actions">${actions}</div>
+        </div>`;
+    }).join('');
+
+    const notices = [];
+    if (!data.google_enabled) {
+        notices.push('Google sign-in is not configured (PULSARCD_AUTH__GOOGLE_CLIENT_ID), so none of these addresses can sign in yet.');
+    }
+    if (data.local_admin) {
+        notices.push(`Break-glass administrator "${escapeHtml(data.local_admin.username)}" is enabled; its password comes from PULSARCD_AUTH__PASSWORD.`);
+    }
+
+    container.innerHTML =
+        (rows || '<div class="empty-state">No address is allowed to sign in yet</div>') +
+        notices.map(n => `<p class="settings-hint">${n}</p>`).join('');
 }
 
 async function createUser() {
-    const username = document.getElementById('new-user-username').value.trim();
-    const password = document.getElementById('new-user-password').value;
+    const emailEl = document.getElementById('new-user-email');
+    const email = emailEl.value.trim();
     const role = document.getElementById('new-user-role').value;
+    if (!email) return;
 
-    if (!username || !password) return;
-
-    const result = await apiPost('/admin/users', { username, password, role });
+    const result = await apiPost('/admin/users', { email, role });
     if (result) {
-        document.getElementById('new-user-username').value = '';
-        document.getElementById('new-user-password').value = '';
+        emailEl.value = '';
         loadUsersList();
     }
 }
 
-async function deleteUser(username) {
-    if (!confirm(`Delete user "${username}"?`)) return;
+async function setUserRole(email, role) {
+    if (!confirm(`Make "${email}" a ${role}? This ends their current session.`)) return;
+    await _userRequest(`/admin/users/${encodeURIComponent(email)}`, 'PUT', { role });
+}
+
+async function deleteUser(email) {
+    if (!confirm(`Revoke access for "${email}"?`)) return;
+    await _userRequest(`/admin/users/${encodeURIComponent(email)}`, 'DELETE');
+}
+
+/** Send one allowlist change and refresh the list, reporting what went wrong. */
+async function _userRequest(path, method, body) {
     try {
-        const resp = await fetch(`${API_BASE}/admin/users/${username}`, {
-            method: 'DELETE',
-            headers: authHeaders(),
+        const resp = await fetch(`${API_BASE}${path}`, {
+            method,
+            headers: body
+                ? { ...authHeaders(), 'Content-Type': 'application/json' }
+                : authHeaders(),
+            body: body ? JSON.stringify(body) : undefined,
         });
         if (resp.ok) loadUsersList();
         else {
             const err = await resp.json().catch(() => ({}));
-            alert(err.detail || 'Delete failed');
+            alert(err.detail || `Request failed (HTTP ${resp.status})`);
         }
     } catch { alert('Connection error'); }
 }

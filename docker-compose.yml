@@ -76,6 +76,25 @@ services:
       # ========== All configuration via environment variables ==========
       - PULSARCD_DEBUG=false
 
+      # ---------- Authentication ----------
+      # Everyone signs in with Google, and only the addresses listed here get
+      # in. Create an OAuth 2.0 Web client at console.cloud.google.com, add this
+      # deployment's origin (e.g. http://localhost:5000) to its authorised
+      # JavaScript origins, and paste the client id below -- it is a public
+      # identifier, not a secret. No redirect URI is needed.
+      - PULSARCD_AUTH__GOOGLE_CLIENT_ID=${PULSARCD_AUTH__GOOGLE_CLIENT_ID:-}
+      # Comma-separated. Reapplied on every boot, so they override whatever
+      # Settings > Users holds; everything added from the UI lives alongside
+      # them in /data/allowed_emails.json.
+      - PULSARCD_AUTH__GOOGLE_ADMINS=${PULSARCD_AUTH__GOOGLE_ADMINS:-}
+      - PULSARCD_AUTH__GOOGLE_VIEWERS=${PULSARCD_AUTH__GOOGLE_VIEWERS:-}
+      # Optional break-glass administrator for when Google is unreachable.
+      # Empty password = no local account and password sign-in answers 403.
+      # When set it must be 12+ characters and not a placeholder, or it is
+      # refused and the account is not created (see the container logs).
+      - PULSARCD_AUTH__USERNAME=${PULSARCD_AUTH__USERNAME:-admin}
+      - PULSARCD_AUTH__PASSWORD=${PULSARCD_AUTH__PASSWORD:-}
+
       # SSH host key verification is strict: an unknown host aborts the
       # connection instead of trusting whatever key answers. Keep known_hosts on
       # the read/write data volume and bootstrap it from inside the container:

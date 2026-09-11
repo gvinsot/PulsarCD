@@ -120,6 +120,235 @@ class TestOpenSearchProbe:
 # Authentication
 # ---------------------------------------------------------------------------
 
+class TestSignInConfig:
+    """The login screen has to know which buttons to draw before it has a token."""
+
+    def test_config_is_public(self, client):
+        resp = client.get("/api/auth/config")
+        assert resp.status_code == 200
+
+    def test_config_describes_both_methods(self, client):
+        data = client.get("/api/auth/config").json()
+        assert data["google_enabled"] is True
+        assert data["google_client_id"] == "test-client-id.apps.googleusercontent.com"
+        assert data["password_login_enabled"] is True
+
+    def test_config_carries_no_secret(self, client):
+        """It is served to anyone who can reach the port."""
+        body = client.get("/api/auth/config").text
+        assert api_module.settings.auth.jwt_secret not in body
+        assert api_module.settings.auth.agent_key not in body
+        assert "password" not in body.replace("password_login_enabled", "")
+
+
+def _google_claims(email="boss@example.com", **extra):
+    claims = {"email": email, "email_verified": True, "sub": "google-123",
+              "name": "Boss Person"}
+    claims.update(extra)
+    return claims
+
+
+def _verifier(claims=None, error=None):
+    """Google verifier double: verify() either returns claims or raises."""
+    from backend.google_auth import GoogleTokenError
+    m = MagicMock()
+    m.enabled = True
+    m.client_id = "test-client-id.apps.googleusercontent.com"
+    if error is not None:
+        m.verify = AsyncMock(side_effect=GoogleTokenError(error))
+    else:
+        m.verify = AsyncMock(return_value=claims or _google_claims())
+    return m
+
+
+class TestGoogleSignIn:
+    """A verified Google identity plus an allowlist entry, or nothing."""
+
+    def test_an_allowed_address_gets_a_token(self, client, clean_login_attempts):
+        with patch.object(api_module, "google_verifier", _verifier()):
+            resp = client.post("/api/auth/google", json={"credential": "any"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["email"] == "boss@example.com"
+        assert data["role"] == "admin"
+        payload = jwt.decode(data["token"], api_module.settings.auth.jwt_secret,
+                             algorithms=["HS256"])
+        assert payload["sub"] == "boss@example.com"
+        assert payload["role"] == "admin"
+        assert payload["auth"] == "google"
+
+    def test_the_token_works_on_the_api(self, client, clean_login_attempts):
+        with patch.object(api_module, "google_verifier", _verifier()):
+            token = client.post("/api/auth/google", json={"credential": "any"}).json()["token"]
+        resp = client.get("/api/containers", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 200
+
+    def test_a_viewer_address_gets_the_viewer_role(self, client, clean_login_attempts):
+        verifier = _verifier(_google_claims(email="watcher@example.com"))
+        with patch.object(api_module, "google_verifier", verifier):
+            resp = client.post("/api/auth/google", json={"credential": "any"})
+        assert resp.json()["role"] == "viewer"
+
+    def test_an_address_outside_the_allowlist_is_refused(self, client, clean_login_attempts):
+        """Having a Google account is not an access rule."""
+        verifier = _verifier(_google_claims(email="stranger@example.com"))
+        with patch.object(api_module, "google_verifier", verifier):
+            resp = client.post("/api/auth/google", json={"credential": "any"})
+        assert resp.status_code == 403
+        assert "not authorised" in resp.json()["detail"]
+
+    def test_a_rejected_credential_is_a_401(self, client, clean_login_attempts):
+        with patch.object(api_module, "google_verifier", _verifier(error="bad signature")):
+            resp = client.post("/api/auth/google", json={"credential": "forged"})
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Google sign-in failed"
+
+    def test_the_failure_reason_does_not_leak(self, client, clean_login_attempts):
+        """Why Google said no is an operator detail, not a caller's."""
+        with patch.object(api_module, "google_verifier",
+                          _verifier(error="audience mismatch: other-client-id")):
+            resp = client.post("/api/auth/google", json={"credential": "forged"})
+        assert "other-client-id" not in resp.text
+
+    def test_sign_in_is_refused_when_google_is_not_configured(self, client,
+                                                              clean_login_attempts):
+        disabled = MagicMock()
+        disabled.enabled = False
+        with patch.object(api_module, "google_verifier", disabled):
+            resp = client.post("/api/auth/google", json={"credential": "any"})
+        assert resp.status_code == 403
+
+    def test_a_non_string_credential_is_refused(self, client, clean_login_attempts):
+        with patch.object(api_module, "google_verifier", _verifier()):
+            resp = client.post("/api/auth/google", json={"credential": {"a": 1}})
+        assert resp.status_code == 400
+
+    def test_the_address_is_not_taken_from_the_request(self, client, clean_login_attempts):
+        """Only the verified claims decide who signed in."""
+        verifier = _verifier(_google_claims(email="watcher@example.com"))
+        with patch.object(api_module, "google_verifier", verifier):
+            resp = client.post("/api/auth/google",
+                               json={"credential": "any", "email": "boss@example.com",
+                                     "role": "admin"})
+        assert resp.json()["email"] == "watcher@example.com"
+        assert resp.json()["role"] == "viewer"
+
+    def test_repeated_failures_are_rate_limited(self, client, clean_login_attempts):
+        """The endpoint is unauthenticated and does public-key work per call."""
+        with patch.object(api_module, "google_verifier", _verifier(error="nope")):
+            for _ in range(api_module._LOGIN_MAX_ATTEMPTS_PER_CLIENT):
+                client.post("/api/auth/google", json={"credential": "forged"})
+            resp = client.post("/api/auth/google", json={"credential": "forged"})
+        assert resp.status_code == 429
+
+    def test_a_revoked_address_cannot_use_its_token(self, client, clean_login_attempts):
+        """Removing an address from the allowlist cuts the session it opened."""
+        with patch.object(api_module, "google_verifier", _verifier()):
+            token = client.post("/api/auth/google", json={"credential": "any"}).json()["token"]
+        gone = MagicMock()
+        gone.token_epoch_for = MagicMock(return_value=None)
+        with patch.object(api_module, "email_allowlist", gone):
+            resp = client.get("/api/containers", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Token has been revoked"
+
+    def test_a_google_token_is_not_resolved_against_local_accounts(self, client):
+        """The two namespaces are separate; the `auth` claim picks the store."""
+        token = create_token("testuser", api_module.settings.auth.jwt_secret, 1,
+                             role="admin", token_epoch=0, auth_source="google")
+        gone = MagicMock()
+        gone.token_epoch_for = MagicMock(return_value=None)
+        with patch.object(api_module, "email_allowlist", gone):
+            resp = client.get("/api/containers", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 401
+
+
+class TestAdminAllowlistApi:
+    """Settings > Users manages Google addresses, not local accounts."""
+
+    def test_listing_returns_the_addresses(self, client, auth_headers):
+        data = client.get("/api/admin/users", headers=auth_headers).json()
+        assert {u["email"] for u in data["users"]} == {"boss@example.com",
+                                                       "watcher@example.com"}
+        assert data["google_enabled"] is True
+
+    def test_listing_reports_the_break_glass_account(self, client, auth_headers):
+        """Otherwise the operator cannot tell the local login still exists."""
+        data = client.get("/api/admin/users", headers=auth_headers).json()
+        assert data["local_admin"] == {"username": "testuser", "role": "admin"}
+
+    def test_listing_carries_no_password_material(self, client, auth_headers):
+        body = client.get("/api/admin/users", headers=auth_headers).text
+        assert "password_hash" not in body and "$2b$" not in body
+
+    def test_adding_an_address(self, client, auth_headers):
+        allowlist = MagicMock()
+        allowlist.add = AsyncMock(return_value={"email": "new@example.com",
+                                                "role": "viewer", "managed": False})
+        with patch.object(api_module, "email_allowlist", allowlist):
+            resp = client.post("/api/admin/users", headers=auth_headers,
+                               json={"email": "new@example.com", "role": "viewer"})
+        assert resp.status_code == 200
+        allowlist.add.assert_awaited_once_with("new@example.com", "viewer")
+
+    def test_an_address_is_required(self, client, auth_headers):
+        resp = client.post("/api/admin/users", headers=auth_headers,
+                           json={"email": "   ", "role": "viewer"})
+        assert resp.status_code == 400
+
+    def test_a_rejected_address_becomes_a_400(self, client, auth_headers):
+        allowlist = MagicMock()
+        allowlist.add = AsyncMock(side_effect=ValueError("'x' is not a valid email address"))
+        with patch.object(api_module, "email_allowlist", allowlist):
+            resp = client.post("/api/admin/users", headers=auth_headers,
+                               json={"email": "x", "role": "viewer"})
+        assert resp.status_code == 400
+        assert "not a valid email" in resp.json()["detail"]
+
+    def test_changing_a_role(self, client, auth_headers):
+        allowlist = MagicMock()
+        allowlist.set_role = AsyncMock(return_value={"email": "watcher@example.com",
+                                                     "role": "admin", "managed": False})
+        with patch.object(api_module, "email_allowlist", allowlist):
+            resp = client.put("/api/admin/users/watcher@example.com",
+                              headers=auth_headers, json={"role": "admin"})
+        assert resp.status_code == 200
+        allowlist.set_role.assert_awaited_once_with("watcher@example.com", "admin")
+
+    def test_a_role_is_required_on_update(self, client, auth_headers):
+        resp = client.put("/api/admin/users/watcher@example.com",
+                          headers=auth_headers, json={})
+        assert resp.status_code == 400
+
+    def test_removing_an_address(self, client, auth_headers):
+        allowlist = MagicMock()
+        allowlist.remove = AsyncMock(return_value=True)
+        with patch.object(api_module, "email_allowlist", allowlist):
+            resp = client.delete("/api/admin/users/watcher@example.com",
+                                 headers=auth_headers)
+        assert resp.status_code == 200
+        allowlist.remove.assert_awaited_once_with("watcher@example.com")
+
+    def test_a_refused_removal_becomes_a_400(self, client, auth_headers):
+        allowlist = MagicMock()
+        allowlist.remove = AsyncMock(side_effect=ValueError("Cannot remove the last administrator"))
+        with patch.object(api_module, "email_allowlist", allowlist):
+            resp = client.delete("/api/admin/users/boss@example.com", headers=auth_headers)
+        assert resp.status_code == 400
+
+    @pytest.mark.parametrize("method,kwargs", [
+        ("post", {"json": {"email": "new@example.com", "role": "admin"}}),
+        ("put", {"json": {"role": "admin"}}),
+        ("delete", {}),
+    ])
+    def test_viewers_cannot_change_the_allowlist(self, client, method, kwargs):
+        """Granting access is the most privileged thing in the product."""
+        path = "/api/admin/users" if method == "post" else "/api/admin/users/x@example.com"
+        resp = getattr(client, method)(
+            path, headers={"Authorization": f"Bearer {_token(role='viewer')}"}, **kwargs)
+        assert resp.status_code == 403
+
+
 class TestAuth:
     def test_login_valid(self, client):
         resp = client.post("/api/auth/login", json={"username": "testuser", "password": "testpass"})
@@ -134,6 +363,27 @@ class TestAuth:
     def test_login_wrong_username(self, client):
         resp = client.post("/api/auth/login", json={"username": "nobody", "password": "testpass"})
         assert resp.status_code == 401
+
+    def test_login_carries_the_local_auth_source(self, client):
+        token = client.post("/api/auth/login",
+                            json={"username": "testuser", "password": "testpass"}).json()["token"]
+        payload = jwt.decode(token, api_module.settings.auth.jwt_secret, algorithms=["HS256"])
+        assert payload["auth"] == "local"
+
+    def test_password_login_is_refused_when_no_account_is_provisioned(self, client):
+        """PULSARCD_AUTH__PASSWORD unset means there is nothing to guess."""
+        disabled = MagicMock()
+        disabled.enabled = False
+        with patch.object(api_module, "user_manager", disabled):
+            resp = client.post("/api/auth/login",
+                               json={"username": "admin", "password": "anything-at-all"})
+        assert resp.status_code == 403
+        assert "disabled" in resp.json()["detail"]
+
+    def test_auth_me_reports_the_identity_source(self, client, auth_headers):
+        data = client.get("/api/auth/me", headers=auth_headers).json()
+        assert data["username"] == "testuser"
+        assert data["auth"] == "local"
 
     def test_protected_without_token(self, client):
         resp = client.get("/api/containers")
@@ -801,54 +1051,222 @@ class TestTokenRevocation:
         assert payload["epoch"] == 1234
 
 
-class TestUserManagerTokenEpoch:
-    """The epoch lives with the account and only moves on revocation."""
+class TestAllowlistTokenEpoch:
+    """The epoch lives with the address and only moves on revocation."""
 
-    def _manager(self, tmp_path, users=None):
-        from backend.user_manager import UserManager
-        path = tmp_path / "users.json"
-        path.write_text(json.dumps(users if users is not None else [
-            {"username": "admin", "password_hash": "hash-admin", "role": "admin"},
-            {"username": "bob", "password_hash": "hash-bob", "role": "viewer"},
+    def _allowlist(self, tmp_path, entries=None, **kwargs):
+        from backend.allowlist import EmailAllowlist
+        path = tmp_path / "allowed_emails.json"
+        path.write_text(json.dumps(entries if entries is not None else [
+            {"email": "root@example.com", "role": "admin"},
+            {"email": "bob@example.com", "role": "viewer"},
         ]), encoding="utf-8")
-        return UserManager(path=str(path))
+        return EmailAllowlist(path=str(path), **kwargs)
 
     def test_missing_field_reads_as_zero(self, tmp_path):
-        """A users.json written before the upgrade keeps working."""
-        mgr = self._manager(tmp_path)
-        assert mgr.token_epoch_for("bob") == 0
+        """A file written before the upgrade keeps working."""
+        allowlist = self._allowlist(tmp_path)
+        assert allowlist.token_epoch_for("bob@example.com") == 0
 
-    def test_unknown_user_has_no_epoch(self, tmp_path):
-        mgr = self._manager(tmp_path)
-        assert mgr.token_epoch_for("nobody") is None
+    def test_unknown_address_has_no_epoch(self, tmp_path):
+        allowlist = self._allowlist(tmp_path)
+        assert allowlist.token_epoch_for("nobody@example.com") is None
+
+    def test_lookup_is_case_insensitive(self, tmp_path):
+        """Google's casing and the operator's typing must reach the same entry."""
+        allowlist = self._allowlist(tmp_path)
+        assert allowlist.role_for("Bob@Example.COM") == "viewer"
 
     async def test_role_change_bumps_the_epoch(self, tmp_path):
-        mgr = self._manager(tmp_path)
-        await mgr.update_user("bob", role="admin")
-        assert mgr.token_epoch_for("bob") > 0
+        allowlist = self._allowlist(tmp_path)
+        await allowlist.set_role("bob@example.com", "admin")
+        assert allowlist.token_epoch_for("bob@example.com") > 0
 
     async def test_unchanged_role_does_not_bump(self, tmp_path):
-        mgr = self._manager(tmp_path)
-        await mgr.update_user("bob", role="viewer")
-        assert mgr.token_epoch_for("bob") == 0
-
-    async def test_password_change_bumps_the_epoch(self, tmp_path):
-        mgr = self._manager(tmp_path)
-        await mgr.update_user("bob", password="a-brand-new-password")
-        assert mgr.token_epoch_for("bob") > 0
+        allowlist = self._allowlist(tmp_path)
+        await allowlist.set_role("bob@example.com", "viewer")
+        assert allowlist.token_epoch_for("bob@example.com") == 0
 
     async def test_epoch_is_persisted(self, tmp_path):
-        from backend.user_manager import UserManager
-        mgr = self._manager(tmp_path)
-        await mgr.update_user("bob", role="admin")
-        expected = mgr.token_epoch_for("bob")
-        reloaded = UserManager(path=str(tmp_path / "users.json"))
-        assert reloaded.token_epoch_for("bob") == expected
+        from backend.allowlist import EmailAllowlist
+        allowlist = self._allowlist(tmp_path)
+        await allowlist.set_role("bob@example.com", "admin")
+        expected = allowlist.token_epoch_for("bob@example.com")
+        reloaded = EmailAllowlist(path=str(tmp_path / "allowed_emails.json"))
+        assert reloaded.token_epoch_for("bob@example.com") == expected
 
-    async def test_deletion_removes_the_account(self, tmp_path):
-        mgr = self._manager(tmp_path)
-        await mgr.delete_user("bob")
-        assert mgr.token_epoch_for("bob") is None
+    async def test_removal_revokes_the_address(self, tmp_path):
+        allowlist = self._allowlist(tmp_path)
+        await allowlist.remove("bob@example.com")
+        assert allowlist.token_epoch_for("bob@example.com") is None
+        assert allowlist.role_for("bob@example.com") is None
+
+    async def test_a_new_address_starts_above_any_old_token(self, tmp_path):
+        """Re-adding an address must not resurrect the tokens it once had."""
+        allowlist = self._allowlist(tmp_path)
+        await allowlist.remove("bob@example.com")
+        await allowlist.add("bob@example.com", "viewer")
+        assert allowlist.token_epoch_for("bob@example.com") > 0
+
+    async def test_the_last_admin_cannot_be_removed_or_demoted(self, tmp_path):
+        allowlist = self._allowlist(tmp_path)
+        with pytest.raises(ValueError):
+            await allowlist.remove("root@example.com")
+        with pytest.raises(ValueError):
+            await allowlist.set_role("root@example.com", "viewer")
+
+    @pytest.mark.parametrize("email", ["", "   ", "not-an-email", "a@b", "a b@c.d",
+                                       "@example.com", "x@" + "y" * 300 + ".com"])
+    async def test_invalid_addresses_are_refused(self, tmp_path, email):
+        allowlist = self._allowlist(tmp_path)
+        with pytest.raises(ValueError):
+            await allowlist.add(email, "viewer")
+
+    async def test_an_unknown_role_is_refused(self, tmp_path):
+        allowlist = self._allowlist(tmp_path)
+        with pytest.raises(ValueError):
+            await allowlist.add("new@example.com", "superuser")
+
+
+class TestAllowlistEnvironmentBootstrap:
+    """The environment is reapplied on every boot and outranks the UI."""
+
+    def _allowlist(self, tmp_path, **kwargs):
+        from backend.allowlist import EmailAllowlist
+        return EmailAllowlist(path=str(tmp_path / "allowed_emails.json"), **kwargs)
+
+    def test_env_addresses_are_added_on_first_boot(self, tmp_path):
+        allowlist = self._allowlist(tmp_path, admins=["boss@example.com"],
+                                    viewers=["intern@example.com"])
+        assert allowlist.role_for("boss@example.com") == "admin"
+        assert allowlist.role_for("intern@example.com") == "viewer"
+
+    def test_env_addresses_are_reported_as_managed(self, tmp_path):
+        allowlist = self._allowlist(tmp_path, admins=["boss@example.com"])
+        assert allowlist.is_managed("boss@example.com") is True
+        assert allowlist.is_managed("someone@example.com") is False
+
+    async def test_ui_additions_survive_a_reload(self, tmp_path):
+        allowlist = self._allowlist(tmp_path, admins=["boss@example.com"])
+        await allowlist.add("colleague@example.com", "viewer")
+        reloaded = self._allowlist(tmp_path, admins=["boss@example.com"])
+        assert reloaded.role_for("colleague@example.com") == "viewer"
+
+    def test_env_wins_over_a_stored_role(self, tmp_path):
+        """Demoting in the file must not survive a boot that says admin."""
+        path = tmp_path / "allowed_emails.json"
+        path.write_text(json.dumps([
+            {"email": "boss@example.com", "role": "viewer", "token_epoch": 5},
+        ]), encoding="utf-8")
+        allowlist = self._allowlist(tmp_path, admins=["boss@example.com"])
+        assert allowlist.role_for("boss@example.com") == "admin"
+        # And the sessions the old role opened are cut.
+        assert allowlist.token_epoch_for("boss@example.com") > 5
+
+    async def test_a_managed_address_cannot_be_edited_from_the_ui(self, tmp_path):
+        """Otherwise a restart would silently undo the change."""
+        allowlist = self._allowlist(tmp_path, admins=["boss@example.com", "other@example.com"])
+        with pytest.raises(ValueError, match="PULSARCD_AUTH__GOOGLE"):
+            await allowlist.remove("boss@example.com")
+        with pytest.raises(ValueError, match="PULSARCD_AUTH__GOOGLE"):
+            await allowlist.set_role("boss@example.com", "viewer")
+
+    def test_a_corrupt_file_falls_back_to_the_environment(self, tmp_path):
+        (tmp_path / "allowed_emails.json").write_text("{not json", encoding="utf-8")
+        allowlist = self._allowlist(tmp_path, admins=["boss@example.com"])
+        assert allowlist.role_for("boss@example.com") == "admin"
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("a@x.com,b@x.com", ["a@x.com", "b@x.com"]),
+        ("a@x.com b@x.com", ["a@x.com", "b@x.com"]),
+        ("a@x.com; b@x.com", ["a@x.com", "b@x.com"]),
+        ('["a@x.com", "B@X.com"]', ["a@x.com", "b@x.com"]),
+        ("  A@X.com  ", ["a@x.com"]),
+        ("", []),
+        ("[not json", []),
+    ])
+    def test_env_list_parsing(self, raw, expected):
+        from backend.allowlist import parse_email_list
+        assert parse_email_list(raw) == expected
+
+
+class TestBreakGlassAdministrator:
+    """The local account is provisioned from the environment, or not at all."""
+
+    def _manager(self, tmp_path, monkeypatch, password, username="admin"):
+        from backend.user_manager import UserManager
+        monkeypatch.setenv("PULSARCD_AUTH__USERNAME", username)
+        monkeypatch.setenv("PULSARCD_AUTH__PASSWORD", password)
+        return UserManager(path=str(tmp_path / "users.json"))
+
+    def test_a_strong_password_provisions_the_account(self, tmp_path, monkeypatch):
+        mgr = self._manager(tmp_path, monkeypatch, "a-properly-long-secret")
+        assert mgr.enabled is True
+        assert mgr.authenticate("admin", "a-properly-long-secret") is not None
+
+    @pytest.mark.parametrize("password", ["", "changeme", "short", "password"])
+    def test_a_weak_password_provisions_nothing(self, tmp_path, monkeypatch, password):
+        """No account beats an account with a password nobody will ever read."""
+        mgr = self._manager(tmp_path, monkeypatch, password)
+        assert mgr.enabled is False
+        assert mgr.authenticate("admin", password) is None
+        assert mgr.describe() is None
+
+    def test_the_password_can_be_rotated_through_the_environment(self, tmp_path, monkeypatch):
+        self._manager(tmp_path, monkeypatch, "the-first-long-password")
+        rotated = self._manager(tmp_path, monkeypatch, "the-second-long-password")
+        assert rotated.authenticate("admin", "the-first-long-password") is None
+        assert rotated.authenticate("admin", "the-second-long-password") is not None
+
+    def test_a_rotation_cuts_the_sessions_the_old_password_opened(self, tmp_path, monkeypatch):
+        first = self._manager(tmp_path, monkeypatch, "the-first-long-password")
+        before = first.token_epoch_for("admin")
+        rotated = self._manager(tmp_path, monkeypatch, "the-second-long-password")
+        assert rotated.token_epoch_for("admin") > before
+
+    def test_an_unchanged_password_keeps_the_epoch(self, tmp_path, monkeypatch):
+        """A restart must not sign the operator out of a live session."""
+        first = self._manager(tmp_path, monkeypatch, "an-unchanging-password")
+        before = first.token_epoch_for("admin")
+        again = self._manager(tmp_path, monkeypatch, "an-unchanging-password")
+        assert again.token_epoch_for("admin") == before
+
+    def test_clearing_the_password_removes_the_stored_account(self, tmp_path, monkeypatch):
+        """The file is a cache of the configuration, not a second place to edit."""
+        self._manager(tmp_path, monkeypatch, "a-properly-long-secret")
+        cleared = self._manager(tmp_path, monkeypatch, "")
+        assert cleared.enabled is False
+        assert json.loads((tmp_path / "users.json").read_text(encoding="utf-8")) == []
+
+    def test_accounts_from_the_old_multi_user_file_are_dropped(self, tmp_path, monkeypatch):
+        """Everyone but the break-glass admin signs in with Google now."""
+        import bcrypt
+        path = tmp_path / "users.json"
+        path.write_text(json.dumps([
+            {"username": "admin", "role": "admin", "token_epoch": 3,
+             "password_hash": bcrypt.hashpw(b"a-properly-long-secret",
+                                            bcrypt.gensalt()).decode()},
+            {"username": "legacy", "password_hash": "x", "role": "viewer"},
+        ]), encoding="utf-8")
+        monkeypatch.setenv("PULSARCD_AUTH__USERNAME", "admin")
+        monkeypatch.setenv("PULSARCD_AUTH__PASSWORD", "a-properly-long-secret")
+        from backend.user_manager import UserManager
+        mgr = UserManager(path=str(path))
+        assert mgr.get_user("legacy") is None
+        assert mgr.token_epoch_for("legacy") is None
+        # The admin itself is untouched: same password, so the epoch survives.
+        assert mgr.token_epoch_for("admin") == 3
+
+    def test_a_corrupt_hash_is_rewritten_rather_than_crashing(self, tmp_path, monkeypatch):
+        path = tmp_path / "users.json"
+        path.write_text(json.dumps([
+            {"username": "admin", "password_hash": "not-a-bcrypt-hash", "role": "admin"},
+        ]), encoding="utf-8")
+        monkeypatch.setenv("PULSARCD_AUTH__USERNAME", "admin")
+        monkeypatch.setenv("PULSARCD_AUTH__PASSWORD", "a-properly-long-secret")
+        from backend.user_manager import UserManager
+        mgr = UserManager(path=str(path))
+        assert mgr.authenticate("admin", "a-properly-long-secret") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -887,8 +1305,29 @@ class TestSecurityHeaders:
     def test_bogus_host_header_is_not_reflected(self, client):
         csp = client.get("/api/health", headers={"Host": "evil host <script>"}).headers[
             "Content-Security-Policy"]
-        assert csp.endswith("connect-src 'self'")
         assert "evil host" not in csp
+        # No WebSocket source at all rather than one built from a bad host.
+        assert "ws://" not in csp and "wss://" not in csp
+
+    def test_csp_carries_the_google_sign_in_sources(self, client):
+        """The GIS button is a cross-origin iframe with its own script and CSS."""
+        csp = client.get("/api/health").headers["Content-Security-Policy"]
+        assert "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net " \
+               "https://accounts.google.com/gsi/client" in csp
+        assert "https://accounts.google.com/gsi/style" in csp
+        assert "frame-src https://accounts.google.com/gsi/" in csp
+        assert "connect-src 'self' ws://testserver wss://testserver " \
+               "https://accounts.google.com/gsi/" in csp
+        # Widened, not duplicated: one script-src directive, or the browser
+        # intersects them and the button stops loading.
+        assert csp.count("script-src") == 1
+        assert csp.count("style-src") == 1
+
+    def test_csp_omits_google_when_sign_in_is_not_configured(self, client):
+        """An unused allowance is still an allowance."""
+        with patch.object(api_module, "google_verifier", None):
+            csp = client.get("/api/health").headers["Content-Security-Policy"]
+        assert "accounts.google.com" not in csp
 
     def test_no_hsts_over_plain_http(self, client):
         resp = client.get("/api/health")
