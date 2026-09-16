@@ -6095,6 +6095,10 @@ strong.md-h2 {
     gap: 6px;
 }
 
+.decision-verdict.decision-verdict-compact {
+    gap: 5px;
+}
+
 .decision-approved {
     color: var(--status-success);
 }
