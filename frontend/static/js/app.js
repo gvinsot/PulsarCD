@@ -797,12 +797,6 @@ async function testMCPServer(index) {
     }
 }
 
-function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-}
-
 /** Lightweight markdown→HTML: escapes HTML first, then applies common markdown patterns. */
 function simpleMarkdown(str) {
     if (!str) return '';
@@ -7120,11 +7114,24 @@ function formatImageName(image) {
     return `${name}<span class="image-sha" title="${sha}">${sha}</span>`;
 }
 
+/**
+ * Escape text for HTML, quotes included: the result goes into attribute
+ * values as often as into element content, and an unescaped quote there ends
+ * the attribute early.
+ */
 function escapeHtml(str) {
     if (!str) return '';
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+/** data-args value for a declarative handler (see UI_HANDLERS). */
+function uiArgs(...args) {
+    return escapeHtml(JSON.stringify(args));
 }
 
 function formatNumber(num) {

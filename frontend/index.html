@@ -5,15 +5,29 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PulsarCD - Docker Log Analytics</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%230d1117' stroke='%2338bdf8' stroke-width='1.5'/%3E%3Cpath d='M8 16h4l2-6 4 12 2-6h4' fill='none' stroke='%2338bdf8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <!-- Replaced per response by the server; app.js hands it to the <style>
+         elements xterm creates, the only inline styles the CSP accepts. -->
+    <meta name="csp-nonce" nonce="__CSP_NONCE__">
     <link rel="stylesheet" href="/static/css/style.css">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+    <!-- Third-party files are pinned by hash: a CDN serving anything else is refused. -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
+            integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4"
+            crossorigin="anonymous"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css"
+          integrity="sha384-tStR1zLfWgsiXCF3IgfB3lBa8KmBe/lG287CL9WCeKgQYcp1bjb4/+mwN6oti4Co"
+          crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"
+            integrity="sha384-J4qzUjBl1FxyLsl/kQPQIOeINsmp17OHYXDOMpMxlKX53ZfYsL+aWHpgArvOuof9"
+            crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"
+            integrity="sha384-XGqKrV8Jrukp1NITJbOEHwg01tNkuXr6uB6YEj69ebpYU3v7FvoGgEg23C1Gcehk"
+            crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"
+            integrity="sha384-S1biLeI8L/bFduIVvCxbn/l4EtaG4nTqQjGF7qCYTbsGXGFe8KgIKXtw4+UWxprv"
+            crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.min.js"
+            integrity="sha384-suTk5GfzCaPxAJRzhqzQQvM81UskMll+stLgqXpay997ORTnMRm1IAJi143VfhXU"
+            crossorigin="anonymous"></script>
 </head>
 <body>
     <!-- Login Overlay -->
@@ -31,17 +45,17 @@
             <!-- Google sign-in: the button is rendered by Google Identity
                  Services into this container once /api/auth/config confirms a
                  client id is configured. -->
-            <div id="login-google" class="login-google" style="display:none">
+            <div id="login-google" class="login-google start-hidden">
                 <div id="login-google-button" class="login-google-button"></div>
                 <p class="login-hint">Access is limited to authorised Google accounts.</p>
             </div>
 
             <!-- Break-glass administrator. Hidden behind a link, and only shown
                  at all when the deployment provisioned a local password. -->
-            <div id="login-fallback" class="login-fallback" style="display:none">
+            <div id="login-fallback" class="login-fallback start-hidden">
                 <button type="button" class="login-fallback-toggle" id="login-fallback-toggle"
-                        onclick="togglePasswordLogin()">Sign in with a password instead</button>
-                <form id="login-form" style="display:none">
+                        data-click="togglePasswordLogin">Sign in with a password instead</button>
+                <form id="login-form" class="start-hidden">
                     <div class="login-field">
                         <input type="text" id="login-username" placeholder="Username" required autocomplete="username" />
                     </div>
@@ -56,13 +70,13 @@
         </div>
     </div>
 
-    <div class="app" style="display:none">
+    <div class="app start-hidden">
         <!-- Top Bar Navigation -->
         <header class="topbar">
             <div class="topbar-inner">
                 <div class="topbar-left">
                     <div class="logo">
-                        <div class="logo-icon" id="logo-icon" onclick="toggleMobileMenu()" role="button" aria-label="Toggle menu" tabindex="0">
+                        <div class="logo-icon" id="logo-icon" data-click="toggleMobileMenu" role="button" aria-label="Toggle menu" tabindex="0">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
                             </svg>
@@ -120,7 +134,7 @@
                         <span class="status-dot"></span>
                     </div>
                     <!-- Agent Button -->
-                    <button class="agent-topbar-btn" onclick="openAgentModal()" title="AI Agent" id="agent-topbar-btn">
+                    <button class="agent-topbar-btn" data-click="openAgentModal" title="AI Agent" id="agent-topbar-btn">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                             <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1.27A7 7 0 0 1 14 23h-4a7 7 0 0 1-6.73-4H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/>
                             <circle cx="9" cy="15" r="1.5" fill="currentColor" stroke="none"/>
@@ -130,7 +144,7 @@
                     </button>
                     <!-- User Menu -->
                     <div class="user-menu" id="user-menu">
-                        <button class="user-menu-btn" onclick="toggleUserMenu()" title="User menu">
+                        <button class="user-menu-btn" data-click="toggleUserMenu" title="User menu">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                                 <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
                                 <circle cx="12" cy="7" r="4"/>
@@ -153,7 +167,7 @@
                                 <span class="user-menu-github-dot" id="user-menu-github-dot"></span>
                             </div>
                             <div class="user-menu-divider"></div>
-                            <button class="user-menu-item" onclick="openSettingsModal(); closeUserMenu();" id="settings-menu-item">
+                            <button class="user-menu-item" data-click="openSettingsFromUserMenu" id="settings-menu-item">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                                     <circle cx="12" cy="12" r="3"/>
                                     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -161,7 +175,7 @@
                                 Settings
                             </button>
                             <div class="user-menu-divider"></div>
-                            <button class="user-menu-item user-menu-logout" onclick="logout()">
+                            <button class="user-menu-item user-menu-logout" data-click="logout">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                                     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
                                     <polyline points="16 17 21 12 16 7"/>
@@ -189,7 +203,7 @@
             <section id="dashboard-view" class="view active">
                 <header class="view-header">
                     <h1>Dashboard</h1>
-                    <button class="btn btn-secondary" onclick="refreshDashboard()">
+                    <button class="btn btn-secondary" data-click="refreshDashboard">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                             <polyline points="23 4 23 10 17 10"/>
                             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
@@ -213,7 +227,7 @@
                         </div>
                     </div>
                     
-                    <div class="stat-card warning" style="cursor: pointer;" onclick="searchHttpErrors(400, 499)" title="Click to view HTTP 4xx logs">
+                    <div class="stat-card warning" data-click="searchHttpErrors" data-args='[400, 499]' title="Click to view HTTP 4xx logs">
                         <div class="stat-icon">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
@@ -227,7 +241,7 @@
                         </div>
                     </div>
                     
-                    <div class="stat-card error" style="cursor: pointer;" onclick="searchHttpErrors(500, 599)" title="Click to view HTTP 5xx logs">
+                    <div class="stat-card error" data-click="searchHttpErrors" data-args='[500, 599]' title="Click to view HTTP 5xx logs">
                         <div class="stat-icon">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <circle cx="12" cy="12" r="10"/>
@@ -270,7 +284,7 @@
                         </div>
                     </div>
                     
-                    <div class="stat-card" id="gpu-stat-card" style="display: none;">
+                    <div class="stat-card start-hidden" id="gpu-stat-card">
                         <div class="stat-icon gpu">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="2" y="6" width="20" height="12" rx="2"/>
@@ -285,7 +299,7 @@
                         </div>
                     </div>
 
-                    <div class="stat-card" id="vram-stat-card" style="display: none;">
+                    <div class="stat-card start-hidden" id="vram-stat-card">
                         <div class="stat-icon gpu">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <rect x="3" y="4" width="18" height="16" rx="2"/>
@@ -300,29 +314,29 @@
                 </div>
                 
                 <!-- Recurring Errors -->
-                <div class="chart-card recurring-errors-card" style="display:none">
+                <div class="chart-card recurring-errors-card start-hidden">
                     <h3>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="vertical-align:-2px;margin-right:6px">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" class="card-title-icon">
                             <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
                             <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
                         </svg>
                         Recurring Errors
                     </h3>
                     <div id="recurring-errors-list">
-                        <div class="loading-placeholder" style="padding:16px;text-align:center;color:var(--text-muted)">Loading…</div>
+                        <div class="loading-placeholder loading-placeholder-compact">Loading…</div>
                     </div>
                 </div>
 
                 <!-- System Errors -->
-                <div class="chart-card system-errors-card" style="display:none">
+                <div class="chart-card system-errors-card start-hidden">
                     <h3>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="vertical-align:-2px;margin-right:6px">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" class="card-title-icon">
                             <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
                         </svg>
                         System Errors
                     </h3>
                     <div id="system-errors-list">
-                        <div class="loading-placeholder" style="padding:16px;text-align:center;color:var(--text-muted)">Loading…</div>
+                        <div class="loading-placeholder loading-placeholder-compact">Loading…</div>
                     </div>
                 </div>
 
@@ -362,14 +376,14 @@
                     <div class="header-actions">
                         <div class="filter-group">
                             <label>Status:</label>
-                            <select id="status-filter" onchange="filterContainers()">
+                            <select id="status-filter" data-change="filterContainers">
                                 <option value="">All</option>
                                 <option value="running">Running</option>
                                 <option value="exited">Exited</option>
                                 <option value="paused">Paused</option>
                             </select>
                         </div>
-                        <button class="btn btn-secondary" onclick="refreshContainers()">
+                        <button class="btn btn-secondary" data-click="refreshContainers">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                                 <polyline points="23 4 23 10 17 10"/>
                                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
@@ -393,7 +407,7 @@
                         <span class="ai-badge">🤖 AI Powered</span>
                         <span id="ai-status-indicator" class="ai-indicator" title="AI Status"></span>
                         </div>
-                        <button class="btn btn-secondary" onclick="refreshLogsSearch()">
+                        <button class="btn btn-secondary" data-click="refreshLogsSearch">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                                 <polyline points="23 4 23 10 17 10"/>
                                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
@@ -410,19 +424,19 @@
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
                                 <path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2z"/>
                             </svg>
-                            <input type="text" id="ai-query" placeholder="Ex: Find errors from the last 10 minutes, Show 500 errors in nginx..." class="search-input ai-input" onfocus="showRecentQueries()" autocomplete="off">
+                            <input type="text" id="ai-query" placeholder="Ex: Find errors from the last 10 minutes, Show 500 errors in nginx..." class="search-input ai-input" data-focus="showRecentQueries" autocomplete="off">
                         </div>
-                        <button class="btn btn-primary" onclick="aiSearchLogs()" id="ai-search-btn">
+                        <button class="btn btn-primary" data-click="aiSearchLogs" id="ai-search-btn">
                             <span class="btn-text">Ask AI</span>
-                            <span class="btn-loading" style="display:none;">⏳</span>
+                            <span class="btn-loading start-hidden">⏳</span>
                         </button>
                     </div>
                     
                     <!-- Recent Queries Suggestions -->
-                    <div id="recent-queries" class="recent-queries" style="display: none;">
+                    <div id="recent-queries" class="recent-queries start-hidden">
                         <div class="recent-queries-header">
                             <span>🕐 Recent queries</span>
-                            <button class="btn-link" onclick="clearRecentQueries()">Clear</button>
+                            <button class="btn-link" data-click="clearRecentQueries">Clear</button>
                         </div>
                         <div id="recent-queries-list" class="recent-queries-list">
                             <!-- Populated by JavaScript -->
@@ -430,10 +444,10 @@
                     </div>
                     
                     <!-- Generated Query Panel (shown after AI search) -->
-                    <div id="ai-generated-query" class="generated-query-panel" style="display: none;">
+                    <div id="ai-generated-query" class="generated-query-panel start-hidden">
                         <div class="generated-query-header">
                             <span class="interpretation-label">📝 OpenSearch Query (editable JSON):</span>
-                            <button class="btn btn-sm btn-secondary" onclick="executeGeneratedQuery()">
+                            <button class="btn btn-sm btn-secondary" data-click="executeGeneratedQuery">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                     <polygon points="5 3 19 12 5 21 5 3"/>
                                 </svg>
@@ -448,7 +462,7 @@
                     <div class="results-header">
                         <span id="results-count">0 results</span>
                         <div class="results-actions">
-                            <button class="btn btn-sm" onclick="exportLogs()">Export</button>
+                            <button class="btn btn-sm" data-click="exportLogs">Export</button>
                         </div>
                     </div>
                     <div id="logs-table-container" class="logs-table-container">
@@ -467,9 +481,9 @@
                         </table>
                     </div>
                     <div class="pagination">
-                        <button class="btn btn-sm" id="prev-page" onclick="prevPage()" disabled>Previous</button>
+                        <button class="btn btn-sm" id="prev-page" data-click="prevPage" disabled>Previous</button>
                         <span id="page-info">Page 1</span>
-                        <button class="btn btn-sm" id="next-page" onclick="nextPage()">Next</button>
+                        <button class="btn btn-sm" id="next-page" data-click="nextPage">Next</button>
                     </div>
                 </div>
             </section>
@@ -479,7 +493,7 @@
                 <header class="view-header">
                     <h1>Stacks</h1>
                     <div class="header-actions">
-                        <button class="btn btn-icon btn-secondary" onclick="refreshStacks()" title="Refresh">
+                        <button class="btn btn-icon btn-secondary" data-click="refreshStacks" title="Refresh">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                                 <polyline points="23 4 23 10 17 10"/>
                                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
@@ -501,14 +515,14 @@
                     <div class="modal-content modal-lg">
                         <div class="modal-header">
                             <h2 id="stack-output-title">Command Output</h2>
-                            <button class="modal-close" onclick="closeStackOutputModal()">&times;</button>
+                            <button class="modal-close" data-click="closeStackOutputModal">&times;</button>
                         </div>
                         <div class="modal-body">
                             <div id="stack-output-status" class="stack-output-status"></div>
                             <pre id="stack-output-content" class="stack-output-content"></pre>
                         </div>
                         <div class="modal-footer">
-                            <button class="btn btn-secondary" onclick="closeStackOutputModal()">Close</button>
+                            <button class="btn btn-secondary" data-click="closeStackOutputModal">Close</button>
                         </div>
                     </div>
                 </div>
@@ -518,18 +532,18 @@
                     <div class="modal-content modal-lg">
                         <div class="modal-header">
                             <h2 id="action-logs-title">Action Logs</h2>
-                            <button class="modal-close" onclick="closeActionLogsModal()">&times;</button>
+                            <button class="modal-close" data-click="closeActionLogsModal">&times;</button>
                         </div>
                         <div class="modal-body">
                             <div id="action-logs-content" class="log-viewer action-log-viewer"></div>
                         </div>
                         <div class="modal-footer">
-                            <button class="btn btn-secondary" onclick="closeActionLogsModal()">Close</button>
-                            <button id="action-logs-stop-btn" class="btn btn-danger" onclick="cancelCurrentActionLogs()" title="Stop this action" style="display:none;">
+                            <button class="btn btn-secondary" data-click="closeActionLogsModal">Close</button>
+                            <button id="action-logs-stop-btn" class="btn btn-danger start-hidden" data-click="cancelCurrentActionLogs" title="Stop this action">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="6" y="6" width="12" height="12"/></svg>
                                 Stop
                             </button>
-                            <button class="btn btn-primary" onclick="analyzeActionLogs()" title="Analyze logs with AI and create a task">Create Agent Task</button>
+                            <button class="btn btn-primary" data-click="analyzeActionLogs" title="Analyze logs with AI and create a task">Create Agent Task</button>
                         </div>
                     </div>
                 </div>
@@ -539,15 +553,15 @@
                     <div class="modal-content modal-lg">
                         <div class="modal-header">
                             <h2 id="stack-env-title">Edit .env</h2>
-                            <button class="modal-close" onclick="closeStackEnvModal()">&times;</button>
+                            <button class="modal-close" data-click="closeStackEnvModal">&times;</button>
                         </div>
                         <div class="modal-body">
                             <p class="env-help-text">Edit the environment variables for this stack. Each line should be in KEY=VALUE format.</p>
                             <textarea id="stack-env-content" class="env-editor" placeholder="# Environment variables&#10;KEY=value&#10;ANOTHER_KEY=another_value" spellcheck="false"></textarea>
                         </div>
                         <div class="modal-footer">
-                            <button class="btn btn-secondary" onclick="closeStackEnvModal()">Cancel</button>
-                            <button class="btn btn-primary" id="stack-env-save" onclick="saveStackEnv()">
+                            <button class="btn btn-secondary" data-click="closeStackEnvModal">Cancel</button>
+                            <button class="btn btn-primary" id="stack-env-save" data-click="saveStackEnv">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                     <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
                                     <polyline points="17 21 17 13 7 13 7 21"/>
@@ -564,12 +578,12 @@
                     <div class="modal-content modal-lg">
                         <div class="modal-header">
                             <h2 id="service-logs-title">Service Logs</h2>
-                            <button class="modal-close" onclick="closeServiceLogsModal()">&times;</button>
+                            <button class="modal-close" data-click="closeServiceLogsModal">&times;</button>
                         </div>
                         <div class="modal-body">
                             <div class="logs-toolbar">
                                 <div class="logs-toolbar-left">
-                                    <button class="btn btn-sm" onclick="refreshServiceLogs()">
+                                    <button class="btn btn-sm" data-click="refreshServiceLogs">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                             <polyline points="23 4 23 10 17 10"/>
                                             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
@@ -578,8 +592,8 @@
                                     </button>
                                     <input type="number" id="service-logs-tail" value="200" min="10" max="10000" class="small-input">
                                     <label>lines</label>
-                                    <label class="checkbox-label" style="margin-left: 12px;">
-                                        <input type="checkbox" id="service-logs-auto-refresh" checked onchange="toggleServiceLogsAutoRefresh()">
+                                    <label class="checkbox-label auto-refresh-label">
+                                        <input type="checkbox" id="service-logs-auto-refresh" checked data-change="toggleServiceLogsAutoRefresh">
                                         Auto-refresh
                                     </label>
                                 </div>
@@ -589,10 +603,10 @@
                                             <circle cx="11" cy="11" r="8"/>
                                             <line x1="21" y1="21" x2="16.65" y2="16.65"/>
                                         </svg>
-                                        <input type="text" id="service-logs-filter" placeholder="Filter logs..." class="logs-filter-input" oninput="filterServiceLogs()">
+                                        <input type="text" id="service-logs-filter" placeholder="Filter logs..." class="logs-filter-input" data-input="filterServiceLogs">
                                     </div>
                                     <label class="checkbox-label">
-                                        <input type="checkbox" id="service-logs-errors-only" onchange="filterServiceLogs()">
+                                        <input type="checkbox" id="service-logs-errors-only" data-change="filterServiceLogs">
                                         Errors only
                                     </label>
                                 </div>
@@ -600,7 +614,7 @@
                             <div id="service-logs-content" class="log-viewer service-log-viewer"></div>
                         </div>
                         <div class="modal-footer">
-                            <button class="btn btn-secondary" onclick="closeServiceLogsModal()">Close</button>
+                            <button class="btn btn-secondary" data-click="closeServiceLogsModal">Close</button>
                         </div>
                     </div>
                 </div>
@@ -610,20 +624,20 @@
                     <div class="modal-content modal-lg">
                         <div class="modal-header">
                             <h2 id="service-status-title">Service Status</h2>
-                            <button class="modal-close" onclick="closeServiceStatusModal()">&times;</button>
+                            <button class="modal-close" data-click="closeServiceStatusModal">&times;</button>
                         </div>
                         <div class="modal-body">
                             <div class="logs-toolbar">
                                 <div class="logs-toolbar-left">
-                                    <button class="btn btn-sm" onclick="refreshServiceStatus()">
+                                    <button class="btn btn-sm" data-click="refreshServiceStatus">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                             <polyline points="23 4 23 10 17 10"/>
                                             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
                                         </svg>
                                         Refresh
                                     </button>
-                                    <label class="checkbox-label" style="margin-left: 12px;">
-                                        <input type="checkbox" id="service-status-auto-refresh" checked onchange="toggleServiceStatusAutoRefresh()">
+                                    <label class="checkbox-label auto-refresh-label">
+                                        <input type="checkbox" id="service-status-auto-refresh" checked data-change="toggleServiceStatusAutoRefresh">
                                         Auto-refresh
                                     </label>
                                 </div>
@@ -631,7 +645,7 @@
                             <div id="service-status-content" class="log-viewer service-log-viewer"></div>
                         </div>
                         <div class="modal-footer">
-                            <button class="btn btn-secondary" onclick="closeServiceStatusModal()">Close</button>
+                            <button class="btn btn-secondary" data-click="closeServiceStatusModal">Close</button>
                         </div>
                     </div>
                 </div>
@@ -641,20 +655,20 @@
                     <div class="modal-content modal-md">
                         <div class="modal-header">
                             <h2 id="stack-pipeline-title">Run Pipeline</h2>
-                            <button class="modal-close" onclick="closePipelineModal()">&times;</button>
+                            <button class="modal-close" data-click="closePipelineModal">&times;</button>
                         </div>
                         <div class="modal-body">
                             <p class="modal-help-text">Select a version tag or an untagged commit to run the full pipeline: Build → Test → Deploy.</p>
 
                             <div class="form-group">
                                 <label class="form-label" for="pipeline-branch-select">Branch</label>
-                                <select id="pipeline-branch-select" class="form-select" onchange="onPipelineBranchChange()">
+                                <select id="pipeline-branch-select" class="form-select" data-change="onPipelineBranchChange">
                                     <option value="">Loading branches...</option>
                                 </select>
                             </div>
 
-                            <div id="pipeline-untagged-section" class="form-group" style="display: none;">
-                                <label class="form-label">Untagged Commits <span id="pipeline-untagged-count" style="display:inline-block;background:#664d03;color:#ffcd39;border-radius:10px;padding:1px 8px;font-size:0.8em;font-weight:600;margin-left:4px;"></span></label>
+                            <div id="pipeline-untagged-section" class="form-group start-hidden">
+                                <label class="form-label">Untagged Commits <span id="pipeline-untagged-count" class="untagged-count-badge"></span></label>
                                 <div id="pipeline-untagged-list" class="tags-list"></div>
                             </div>
 
@@ -665,14 +679,14 @@
                                 </div>
                             </div>
 
-                            <div id="pipeline-selected-tag" class="selected-tag-display" style="display: none;">
+                            <div id="pipeline-selected-tag" class="selected-tag-display start-hidden">
                                 <span class="selected-tag-label">Selected:</span>
                                 <span id="pipeline-selected-tag-value" class="selected-tag-value"></span>
                             </div>
                         </div>
                         <div class="modal-footer">
-                            <button class="btn btn-secondary" onclick="closePipelineModal()">Cancel</button>
-                            <button class="btn btn-primary" id="stack-pipeline-submit" onclick="submitPipeline()">
+                            <button class="btn btn-secondary" data-click="closePipelineModal">Cancel</button>
+                            <button class="btn btn-primary" id="stack-pipeline-submit" data-click="submitPipeline">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                     <polygon points="5 3 19 12 5 21 5 3"/>
                                 </svg>
@@ -687,7 +701,7 @@
                     <div class="modal-content modal-md">
                         <div class="modal-header">
                             <h2 id="stack-build-title">Build Stack</h2>
-                            <button class="modal-close" onclick="closeBuildModal()">&times;</button>
+                            <button class="modal-close" data-click="closeBuildModal">&times;</button>
                         </div>
                         <div class="modal-body">
                             <p class="modal-help-text">Choose a tag, branch, or commit to build from.</p>
@@ -696,15 +710,15 @@
                                 <label class="form-label">Source</label>
                                 <div class="radio-group">
                                     <label class="radio-label">
-                                        <input type="radio" name="build-source" value="tag" checked onchange="toggleBuildSource('tag')">
+                                        <input type="radio" name="build-source" value="tag" checked data-change="toggleBuildSource" data-args='["tag"]'>
                                         <span>Tag</span>
                                     </label>
                                     <label class="radio-label">
-                                        <input type="radio" name="build-source" value="branch" onchange="toggleBuildSource('branch')">
+                                        <input type="radio" name="build-source" value="branch" data-change="toggleBuildSource" data-args='["branch"]'>
                                         <span>Branch</span>
                                     </label>
                                     <label class="radio-label">
-                                        <input type="radio" name="build-source" value="commit" onchange="toggleBuildSource('commit')">
+                                        <input type="radio" name="build-source" value="commit" data-change="toggleBuildSource" data-args='["commit"]'>
                                         <span>Commit ID</span>
                                     </label>
                                 </div>
@@ -715,42 +729,42 @@
                                 <div id="build-tags-list" class="tags-list">
                                     <div class="loading-placeholder">Loading tags...</div>
                                 </div>
-                                <div id="build-selected-tag" class="selected-tag-display" style="display: none;">
+                                <div id="build-selected-tag" class="selected-tag-display start-hidden">
                                     <span class="selected-tag-label">Selected:</span>
                                     <span id="build-selected-tag-value" class="selected-tag-value"></span>
                                 </div>
                             </div>
 
-                            <div id="build-branch-group" class="form-group" style="display: none;">
+                            <div id="build-branch-group" class="form-group start-hidden">
                                 <label class="form-label" for="build-branch-select">Branch</label>
                                 <select id="build-branch-select" class="form-select">
                                     <option value="">Loading branches...</option>
                                 </select>
                             </div>
 
-                            <div id="build-commit-group" class="form-group" style="display: none;">
+                            <div id="build-commit-group" class="form-group start-hidden">
                                 <label class="form-label" for="build-commit-input">Commit ID</label>
                                 <input type="text" id="build-commit-input" class="form-input" placeholder="e.g., abc1234 or full SHA">
                                 <span class="form-hint">Enter a short or full commit hash (7-40 characters)</span>
                             </div>
 
-                            <div id="build-version-group" class="form-group" style="display: none;">
+                            <div id="build-version-group" class="form-group start-hidden">
                                 <label class="form-label" for="build-version-input">Version</label>
                                 <input type="text" id="build-version-input" class="form-input" placeholder="1.0" value="1.0">
                                 <span class="form-hint">Major.minor version (patch will be auto-incremented)</span>
                             </div>
 
                             <div class="form-group">
-                                <label class="checkbox-label" style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                                    <input type="checkbox" id="build-no-cache" style="width: 16px; height: 16px;">
+                                <label class="checkbox-label no-cache-label">
+                                    <input type="checkbox" id="build-no-cache">
                                     <span>No cache</span>
                                 </label>
                                 <span class="form-hint">Force a fresh build without Docker layer cache</span>
                             </div>
                         </div>
                         <div class="modal-footer">
-                            <button class="btn btn-secondary" onclick="closeBuildModal()">Cancel</button>
-                            <button class="btn btn-primary" id="stack-build-submit" onclick="submitBuild()">
+                            <button class="btn btn-secondary" data-click="closeBuildModal">Cancel</button>
+                            <button class="btn btn-primary" id="stack-build-submit" data-click="submitBuild">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                     <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
                                     <polyline points="22 4 12 14.01 9 11.01"/>
@@ -766,7 +780,7 @@
                     <div class="modal-content modal-md">
                         <div class="modal-header">
                             <h2 id="stack-deploy-title">Deploy Stack</h2>
-                            <button class="modal-close" onclick="closeDeployModal()">&times;</button>
+                            <button class="modal-close" data-click="closeDeployModal">&times;</button>
                         </div>
                         <div class="modal-body">
                             <p class="modal-help-text">Select a version tag to deploy, or enter a custom tag.</p>
@@ -775,11 +789,11 @@
                                 <label class="form-label">Tag Source</label>
                                 <div class="radio-group">
                                     <label class="radio-label">
-                                        <input type="radio" name="deploy-source" value="select" checked onchange="toggleDeploySource('select')">
+                                        <input type="radio" name="deploy-source" value="select" checked data-change="toggleDeploySource" data-args='["select"]'>
                                         <span>Select from list</span>
                                     </label>
                                     <label class="radio-label">
-                                        <input type="radio" name="deploy-source" value="manual" onchange="toggleDeploySource('manual')">
+                                        <input type="radio" name="deploy-source" value="manual" data-change="toggleDeploySource" data-args='["manual"]'>
                                         <span>Enter manually</span>
                                     </label>
                                 </div>
@@ -792,20 +806,20 @@
                                 </div>
                             </div>
                             
-                            <div id="deploy-manual-group" class="form-group" style="display: none;">
+                            <div id="deploy-manual-group" class="form-group start-hidden">
                                 <label class="form-label" for="deploy-tag-input">Tag</label>
                                 <input type="text" id="deploy-tag-input" class="form-input" placeholder="e.g., v1.0.5 or 1.0.5">
                                 <span class="form-hint">Format: vX.X.X or X.X.X (e.g., v1.0.5)</span>
                             </div>
                             
-                            <div id="deploy-selected-tag" class="selected-tag-display" style="display: none;">
+                            <div id="deploy-selected-tag" class="selected-tag-display start-hidden">
                                 <span class="label">Selected:</span>
                                 <span class="tag-value" id="deploy-selected-tag-value">-</span>
                             </div>
                         </div>
                         <div class="modal-footer">
-                            <button class="btn btn-secondary" onclick="closeDeployModal()">Cancel</button>
-                            <button class="btn btn-primary" id="stack-deploy-submit" onclick="submitDeploy()">
+                            <button class="btn btn-secondary" data-click="closeDeployModal">Cancel</button>
+                            <button class="btn btn-primary" id="stack-deploy-submit" data-click="submitDeploy">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                     <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
                                     <polyline points="7.5 4.21 12 6.81 16.5 4.21"/>
@@ -825,7 +839,7 @@
                     <div class="modal-content modal-md">
                         <div class="modal-header">
                             <h2 id="stack-test-title">Test Stack</h2>
-                            <button class="modal-close" onclick="closeTestModal()">&times;</button>
+                            <button class="modal-close" data-click="closeTestModal">&times;</button>
                         </div>
                         <div class="modal-body">
                             <p class="modal-help-text">Run tests by building and executing the "test" target from docker-compose.swarm.yml.</p>
@@ -834,15 +848,15 @@
                                 <label class="form-label">Source</label>
                                 <div class="radio-group">
                                     <label class="radio-label">
-                                        <input type="radio" name="test-source" value="tag" checked onchange="toggleTestSource('tag')">
+                                        <input type="radio" name="test-source" value="tag" checked data-change="toggleTestSource" data-args='["tag"]'>
                                         <span>Tag</span>
                                     </label>
                                     <label class="radio-label">
-                                        <input type="radio" name="test-source" value="branch" onchange="toggleTestSource('branch')">
+                                        <input type="radio" name="test-source" value="branch" data-change="toggleTestSource" data-args='["branch"]'>
                                         <span>Branch</span>
                                     </label>
                                     <label class="radio-label">
-                                        <input type="radio" name="test-source" value="commit" onchange="toggleTestSource('commit')">
+                                        <input type="radio" name="test-source" value="commit" data-change="toggleTestSource" data-args='["commit"]'>
                                         <span>Commit ID</span>
                                     </label>
                                 </div>
@@ -853,28 +867,28 @@
                                 <div id="test-tags-list" class="tags-list">
                                     <div class="loading-placeholder">Loading tags...</div>
                                 </div>
-                                <div id="test-selected-tag" class="selected-tag-display" style="display: none;">
+                                <div id="test-selected-tag" class="selected-tag-display start-hidden">
                                     <span class="selected-tag-label">Selected:</span>
                                     <span id="test-selected-tag-value" class="selected-tag-value"></span>
                                 </div>
                             </div>
 
-                            <div id="test-branch-group" class="form-group" style="display: none;">
+                            <div id="test-branch-group" class="form-group start-hidden">
                                 <label class="form-label" for="test-branch-select">Branch</label>
                                 <select id="test-branch-select" class="form-select">
                                     <option value="">Loading branches...</option>
                                 </select>
                             </div>
 
-                            <div id="test-commit-group" class="form-group" style="display: none;">
+                            <div id="test-commit-group" class="form-group start-hidden">
                                 <label class="form-label" for="test-commit-input">Commit ID</label>
                                 <input type="text" id="test-commit-input" class="form-input" placeholder="e.g., abc1234 or full SHA">
                                 <span class="form-hint">Enter a short or full commit hash (7-40 characters)</span>
                             </div>
                         </div>
                         <div class="modal-footer">
-                            <button class="btn btn-secondary" onclick="closeTestModal()">Cancel</button>
-                            <button class="btn btn-primary" id="stack-test-submit" onclick="submitTest()">
+                            <button class="btn btn-secondary" data-click="closeTestModal">Cancel</button>
+                            <button class="btn btn-primary" id="stack-test-submit" data-click="submitTest">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                     <path d="M9 11l3 3L22 4"/>
                                     <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
@@ -890,7 +904,7 @@
                     <div class="modal-content modal-md">
                         <div class="modal-header">
                             <h2 id="service-deploy-title">Deploy Service</h2>
-                            <button class="modal-close" onclick="closeServiceDeployModal()">&times;</button>
+                            <button class="modal-close" data-click="closeServiceDeployModal">&times;</button>
                         </div>
                         <div class="modal-body">
                             <p class="modal-help-text">Select a new tag to deploy for this service.</p>
@@ -900,11 +914,11 @@
                                 <label class="form-label">Tag Source</label>
                                 <div class="radio-group">
                                     <label class="radio-label">
-                                        <input type="radio" name="service-deploy-source" value="select" checked onchange="toggleServiceDeploySource('select')">
+                                        <input type="radio" name="service-deploy-source" value="select" checked data-change="toggleServiceDeploySource" data-args='["select"]'>
                                         <span>Select from list</span>
                                     </label>
                                     <label class="radio-label">
-                                        <input type="radio" name="service-deploy-source" value="manual" onchange="toggleServiceDeploySource('manual')">
+                                        <input type="radio" name="service-deploy-source" value="manual" data-change="toggleServiceDeploySource" data-args='["manual"]'>
                                         <span>Enter manually</span>
                                     </label>
                                 </div>
@@ -917,20 +931,20 @@
                                 </div>
                             </div>
                             
-                            <div id="service-deploy-manual-group" class="form-group" style="display: none;">
+                            <div id="service-deploy-manual-group" class="form-group start-hidden">
                                 <label class="form-label" for="service-deploy-tag-input">Tag</label>
                                 <input type="text" id="service-deploy-tag-input" class="form-input" placeholder="e.g., v1.0.5 or latest">
                                 <span class="form-hint">Enter the image tag to deploy</span>
                             </div>
                             
-                            <div id="service-deploy-selected-tag" class="selected-tag-display" style="display: none;">
+                            <div id="service-deploy-selected-tag" class="selected-tag-display start-hidden">
                                 <span class="label">Selected:</span>
                                 <span class="tag-value" id="service-deploy-selected-tag-value">-</span>
                             </div>
                         </div>
                         <div class="modal-footer">
-                            <button class="btn btn-secondary" onclick="closeServiceDeployModal()">Cancel</button>
-                            <button class="btn btn-primary" id="service-deploy-submit" onclick="submitServiceDeploy()">
+                            <button class="btn btn-secondary" data-click="closeServiceDeployModal">Cancel</button>
+                            <button class="btn btn-primary" id="service-deploy-submit" data-click="submitServiceDeploy">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                     <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
                                 </svg>
@@ -956,9 +970,9 @@
                                         <div class="loading-placeholder">Loading activity...</div>
                                     </div>
                                 </div>
-                                <div class="activity-diff-panel" id="activity-diff-panel" style="display: none;">
+                                <div class="activity-diff-panel start-hidden" id="activity-diff-panel">
                                     <div class="activity-diff-header" id="activity-diff-header">
-                                        <button class="btn btn-sm btn-ghost" onclick="closeActivityDiff()">
+                                        <button class="btn btn-sm btn-ghost" data-click="closeActivityDiff">
                                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                                 <line x1="18" y1="6" x2="6" y2="18"/>
                                                 <line x1="6" y1="6" x2="18" y2="18"/>
@@ -981,7 +995,7 @@
                     <h1>Terminal</h1>
                     <div class="terminal-controls">
                         <span id="terminal-status" class="terminal-status disconnected">Disconnected</span>
-                        <button class="btn btn-secondary" id="terminal-reconnect-btn" onclick="reconnectTerminal()">
+                        <button class="btn btn-secondary" id="terminal-reconnect-btn" data-click="reconnectTerminal">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                                 <polyline points="23 4 23 10 17 10"/>
                                 <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
@@ -994,13 +1008,13 @@
             </section>
 
             <!-- Recurring Error Detail Modal -->
-            <div id="recurring-error-modal" class="modal" onclick="if(event.target===this)closeRecurringErrorModal()">
+            <div id="recurring-error-modal" class="modal">
                 <div class="modal-content modal-md">
                     <div class="modal-header">
                         <h2>Recurring Error</h2>
-                        <button class="modal-close" onclick="closeRecurringErrorModal()">&times;</button>
+                        <button class="modal-close" data-click="closeRecurringErrorModal">&times;</button>
                     </div>
-                    <div class="modal-body" style="padding:20px;display:flex;flex-direction:column;gap:16px">
+                    <div class="modal-body rerr-modal-body">
                         <div class="rerr-meta-row">
                             <span class="rerr-meta-label">Occurrences</span>
                             <span id="recurring-error-modal-count" class="rerr-count-badge"></span>
@@ -1026,12 +1040,12 @@
                             <span id="recurring-error-modal-delivered" class="rerr-meta-value"></span>
                         </div>
                         <div>
-                            <div class="rerr-meta-label" style="margin-bottom:6px">Error message</div>
+                            <div class="rerr-meta-label rerr-message-label">Error message</div>
                             <pre id="recurring-error-modal-message" class="rerr-full-message"></pre>
                         </div>
                     </div>
                     <div class="modal-footer">
-                        <button class="btn btn-secondary" onclick="closeRecurringErrorModal()">Close</button>
+                        <button class="btn btn-secondary" data-click="closeRecurringErrorModal">Close</button>
                     </div>
                 </div>
             </div>
@@ -1045,26 +1059,26 @@
                             <span id="modal-container-status" class="status-badge">running</span>
                         </div>
                         <div class="modal-header-actions">
-                            <button class="btn btn-sm btn-success" onclick="containerAction('start')" title="Start">
+                            <button class="btn btn-sm btn-success" data-click="containerAction" data-args='["start"]' title="Start">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                                     <polygon points="5 3 19 12 5 21 5 3"/>
                                 </svg>
                                 Start
                             </button>
-                            <button class="btn btn-sm btn-warning" onclick="containerAction('stop')" title="Stop">
+                            <button class="btn btn-sm btn-warning" data-click="containerAction" data-args='["stop"]' title="Stop">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                                     <rect x="6" y="6" width="12" height="12"/>
                                 </svg>
                                 Stop
                             </button>
-                            <button class="btn btn-sm btn-secondary" onclick="containerAction('restart')" title="Restart">
+                            <button class="btn btn-sm btn-secondary" data-click="containerAction" data-args='["restart"]' title="Restart">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                                     <polyline points="23 4 23 10 17 10"/>
                                     <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
                                 </svg>
                                 Restart
                             </button>
-                            <button class="modal-close" onclick="closeModal()">&times;</button>
+                            <button class="modal-close" data-click="closeModal">&times;</button>
                         </div>
                     </div>
                     <div class="modal-tabs">
@@ -1077,7 +1091,7 @@
                         <div id="tab-logs" class="tab-content active">
                             <div class="logs-toolbar">
                                 <div class="logs-toolbar-left">
-                                    <button class="btn btn-sm" onclick="refreshContainerLogs()">
+                                    <button class="btn btn-sm" data-click="refreshContainerLogs">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                             <polyline points="23 4 23 10 17 10"/>
                                             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
@@ -1093,10 +1107,10 @@
                                             <circle cx="11" cy="11" r="8"/>
                                             <line x1="21" y1="21" x2="16.65" y2="16.65"/>
                                         </svg>
-                                        <input type="text" id="logs-filter" placeholder="Filter logs..." class="logs-filter-input" oninput="filterContainerLogs()">
+                                        <input type="text" id="logs-filter" placeholder="Filter logs..." class="logs-filter-input" data-input="filterContainerLogs">
                                     </div>
                                     <label class="checkbox-label">
-                                        <input type="checkbox" id="logs-errors-only" onchange="filterContainerLogs()">
+                                        <input type="checkbox" id="logs-errors-only" data-change="filterContainerLogs">
                                         Errors only
                                     </label>
                                 </div>
@@ -1124,15 +1138,15 @@
                                     </div>
                                 </div>
                                 <div class="stats-controls">
-                                    <select id="stats-period" onchange="loadContainerMetrics()">
+                                    <select id="stats-period" data-change="loadContainerMetrics">
                                         <option value="1h">Last hour</option>
                                         <option value="6h">Last 6 hours</option>
                                         <option value="24h">Last 24 hours</option>
                                         <option value="7d" selected>Last 7 days</option>
                                         <option value="30d">Last 30 days</option>
                                     </select>
-                                    <button class="btn btn-sm" onclick="refreshContainerStats();loadContainerMetrics()">
-                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" style="vertical-align:-1px"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                                    <button class="btn btn-sm" data-click="refreshContainerStatsAndMetrics">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13" class="btn-inline-icon"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
                                         Refresh
                                     </button>
                                 </div>
@@ -1154,14 +1168,14 @@
                         </div>
                         <div id="tab-env" class="tab-content">
                             <div class="env-toolbar">
-                                <button class="btn btn-sm" onclick="refreshContainerEnv()">
+                                <button class="btn btn-sm" data-click="refreshContainerEnv">
                                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                         <polyline points="23 4 23 10 17 10"/>
                                         <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
                                     </svg>
                                     Refresh
                                 </button>
-                                <input type="text" id="env-filter" placeholder="Filter variables..." class="logs-filter-input" oninput="filterContainerEnv()">
+                                <input type="text" id="env-filter" placeholder="Filter variables..." class="logs-filter-input" data-input="filterContainerEnv">
                             </div>
                             <div id="container-env" class="env-viewer">
                                 <!-- Populated by JavaScript -->
@@ -1174,17 +1188,17 @@
                         </div>
                     </div>
                     <div class="modal-footer">
-                        <button class="btn btn-secondary" onclick="closeModal()">Close</button>
+                        <button class="btn btn-secondary" data-click="closeModal">Close</button>
                     </div>
                 </div>
             </div>
 
             <!-- Create Agent Task modal -->
             <div id="create-task-modal" class="modal">
-                <div class="modal-content" style="max-width: 640px;">
+                <div class="modal-content modal-task">
                     <div class="modal-header">
                         <h2>🤖 Create Agent Task</h2>
-                        <button class="modal-close" onclick="closeCreateTaskModal()">&times;</button>
+                        <button class="modal-close" data-click="closeCreateTaskModal">&times;</button>
                     </div>
                     <div class="modal-body">
                         <div class="task-form">
@@ -1199,16 +1213,16 @@
                             <div class="task-form-group">
                                 <label for="task-description">
                                     Task description
-                                    <button type="button" class="btn-toggle-preview" id="task-toggle-preview" onclick="toggleTaskPreview()">Preview</button>
+                                    <button type="button" class="btn-toggle-preview" id="task-toggle-preview" data-click="toggleTaskPreview">Preview</button>
                                 </label>
-                                <textarea id="task-description" class="task-textarea" rows="12" placeholder="Describe the task for the agent..." oninput="updateTaskPreview()"></textarea>
-                                <div id="task-description-preview" class="task-preview markdown-body" style="display:none"></div>
+                                <textarea id="task-description" class="task-textarea" rows="12" placeholder="Describe the task for the agent..." data-input="updateTaskPreview"></textarea>
+                                <div id="task-description-preview" class="task-preview markdown-body start-hidden"></div>
                             </div>
                         </div>
                     </div>
                     <div class="modal-footer">
-                        <button class="btn btn-secondary" onclick="closeCreateTaskModal()">Cancel</button>
-                        <button class="btn btn-primary" id="task-submit-btn" onclick="submitCreateTask()">
+                        <button class="btn btn-secondary" data-click="closeCreateTaskModal">Cancel</button>
+                        <button class="btn btn-primary" id="task-submit-btn" data-click="submitCreateTask">
                             Send Task
                         </button>
                     </div>
@@ -1219,13 +1233,13 @@
                 <div class="modal-content modal-lg">
                     <div class="modal-header">
                         <h2>Settings</h2>
-                        <button class="modal-close" onclick="closeSettingsModal()">&times;</button>
+                        <button class="modal-close" data-click="closeSettingsModal">&times;</button>
                     </div>
                     <div class="modal-body settings-modal-body">
                         <div class="settings-tabs">
-                            <button class="settings-tab active" data-tab="llm" onclick="switchSettingsTab('llm')">LLM</button>
-                            <button class="settings-tab" data-tab="mcp" onclick="switchSettingsTab('mcp')">MCP Servers</button>
-                            <button class="settings-tab" data-tab="users" onclick="switchSettingsTab('users')">Users</button>
+                            <button class="settings-tab active" data-tab="llm" data-click="switchSettingsTab" data-args='["llm"]'>LLM</button>
+                            <button class="settings-tab" data-tab="mcp" data-click="switchSettingsTab" data-args='["mcp"]'>MCP Servers</button>
+                            <button class="settings-tab" data-tab="users" data-click="switchSettingsTab" data-args='["users"]'>Users</button>
                         </div>
 
                         <!-- LLM Tab -->
@@ -1236,7 +1250,7 @@
                             </p>
                             <div class="settings-field">
                                 <label>Provider preset</label>
-                                <select id="settings-llm-preset" onchange="applyLLMPreset()">
+                                <select id="settings-llm-preset" data-change="applyLLMPreset">
                                     <option value="">Custom</option>
                                     <option value="openai">OpenAI</option>
                                     <option value="anthropic">Anthropic (Claude)</option>
@@ -1269,7 +1283,7 @@
                                 </div>
                             </div>
                             <div class="settings-field settings-field-inline">
-                                <button class="btn btn-sm btn-secondary" onclick="testLLMConnection()">Test connection</button>
+                                <button class="btn btn-sm btn-secondary" data-click="testLLMConnection">Test connection</button>
                                 <span id="settings-llm-test-result" class="settings-status"></span>
                             </div>
                         </div>
@@ -1277,7 +1291,7 @@
                         <!-- MCP Servers Tab -->
                         <div class="settings-panel" id="settings-panel-mcp">
                             <div id="mcp-servers-list"></div>
-                            <button class="btn btn-sm btn-secondary" onclick="addMCPServer()">+ Add MCP Server</button>
+                            <button class="btn btn-sm btn-secondary" data-click="addMCPServer">+ Add MCP Server</button>
                         </div>
 
                         <!-- Users Tab: Google addresses allowed to sign in -->
@@ -1291,7 +1305,7 @@
                                         <option value="viewer">viewer</option>
                                         <option value="admin">admin</option>
                                     </select>
-                                    <button class="btn btn-sm btn-primary" onclick="createUser()">Add</button>
+                                    <button class="btn btn-sm btn-primary" data-click="createUser">Add</button>
                                 </div>
                                 <p class="settings-hint">
                                     Whoever controls that Google account can sign in. Removing an
@@ -1303,8 +1317,8 @@
                     <div class="modal-footer">
                         <div id="settings-status" class="settings-status"></div>
                         <div class="modal-footer-actions">
-                            <button class="btn btn-secondary" onclick="closeSettingsModal()">Cancel</button>
-                            <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+                            <button class="btn btn-secondary" data-click="closeSettingsModal">Cancel</button>
+                            <button class="btn btn-primary" data-click="saveSettings">Save</button>
                         </div>
                     </div>
                 </div>
@@ -1315,20 +1329,20 @@
                     <div class="modal-header">
                         <h2>AI Agent</h2>
                         <div class="agent-modal-tabs">
-                            <button class="agent-tab" data-tab="chat" onclick="switchAgentTab('chat')">Chat</button>
-                            <button class="agent-tab active" data-tab="history" onclick="switchAgentTab('history')">History</button>
-                            <button class="agent-tab" data-tab="instructions" onclick="switchAgentTab('instructions')">Instructions</button>
+                            <button class="agent-tab" data-tab="chat" data-click="switchAgentTab" data-args='["chat"]'>Chat</button>
+                            <button class="agent-tab active" data-tab="history" data-click="switchAgentTab" data-args='["history"]'>History</button>
+                            <button class="agent-tab" data-tab="instructions" data-click="switchAgentTab" data-args='["instructions"]'>Instructions</button>
                         </div>
-                        <button class="modal-close" onclick="closeAgentModal()">&times;</button>
+                        <button class="modal-close" data-click="closeAgentModal">&times;</button>
                     </div>
                     <div class="modal-body agent-modal-body">
                         <!-- Chat Tab -->
                         <div class="agent-panel" id="agent-panel-chat">
                             <div class="llm-test-messages" id="llm-test-messages"></div>
                             <div class="llm-test-input">
-                                <input type="text" id="llm-test-input" placeholder="Ask the agent... (e.g. 'list tools', 'check container health', 'what errors occurred recently?')" onkeydown="if(event.key==='Enter')sendLLMTest()" autocomplete="off" />
-                                <button class="btn btn-primary btn-sm" id="llm-test-send" onclick="sendLLMTest()">Send</button>
-                                <button class="btn btn-secondary btn-sm" onclick="clearLLMChat()" title="Clear chat">Clear</button>
+                                <input type="text" id="llm-test-input" placeholder="Ask the agent... (e.g. 'list tools', 'check container health', 'what errors occurred recently?')" autocomplete="off" />
+                                <button class="btn btn-primary btn-sm" id="llm-test-send" data-click="sendLLMTest">Send</button>
+                                <button class="btn btn-secondary btn-sm" data-click="clearLLMChat" title="Clear chat">Clear</button>
                             </div>
                         </div>
                         <!-- History Tab -->
@@ -1396,7 +1410,7 @@
                                     <textarea id="settings-gate-instructions" rows="4"></textarea>
                                 </div>
 
-                                <button class="btn btn-primary" onclick="saveSettingsFromAgent()">Save Instructions</button>
+                                <button class="btn btn-primary" data-click="saveSettingsFromAgent">Save Instructions</button>
                             </div>
                         </div>
                     </div>

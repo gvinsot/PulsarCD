@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import re
+import secrets
 import time
 import traceback
 import uuid
@@ -802,20 +803,22 @@ async def auth_middleware(request: Request, call_next):
 # ============== Security Headers ==============
 
 # Content-Security-Policy sources, kept in sync with frontend/index.html:
-#   * scripts: Chart.js and xterm come from jsdelivr, and every handler is an
-#     inline onclick attribute, hence 'unsafe-inline';
-#   * styles: the Google Fonts stylesheet, the xterm stylesheet, and inline
-#     style attributes in the markup;
-#   * fonts: the Google Fonts files;
+#   * scripts: files only.  Chart.js and xterm come from jsdelivr, pinned by
+#     their integrity hashes.  There is no 'unsafe-inline': the markup carries
+#     no inline script and no on* attribute, app.js wires every handler itself;
+#   * styles: files only, style="" attributes included.  The single exception
+#     is the <style> elements xterm's DOM renderer creates at run time, which
+#     app.js stamps with the page's nonce (see serve_frontend);
+#   * fonts: self-hosted under /static/fonts;
 #   * images: the inline data: favicon.
 # Anything not listed falls back to default-src 'self'.  The Google sign-in
 # button needs more than this; see _GOOGLE_CSP_DIRECTIVES, which is merged in
 # only on deployments that have it configured.
 _CSP_DIRECTIVES = (
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net",
-    "font-src 'self' https://fonts.gstatic.com data:",
+    "script-src 'self' https://cdn.jsdelivr.net",
+    "style-src 'self' https://cdn.jsdelivr.net",
+    "font-src 'self'",
     "img-src 'self' data:",
     "frame-ancestors 'none'",
     "object-src 'none'",
@@ -828,10 +831,8 @@ _CSP_DIRECTIVES = (
 # talks back to accounts.google.com. Each entry is the narrowest path Google
 # documents, so this is not a blanket grant to the whole origin.
 _GOOGLE_CSP_DIRECTIVES = (
-    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
-    "https://accounts.google.com/gsi/client",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com "
-    "https://cdn.jsdelivr.net https://accounts.google.com/gsi/style",
+    "script-src 'self' https://cdn.jsdelivr.net https://accounts.google.com/gsi/client",
+    "style-src 'self' https://cdn.jsdelivr.net https://accounts.google.com/gsi/style",
     "frame-src https://accounts.google.com/gsi/",
 )
 
@@ -859,11 +860,12 @@ def _connect_src(request: Request) -> str:
     return "connect-src " + " ".join(sources)
 
 
-def _csp_directives(request: Request) -> str:
+def _csp_directives(request: Request, style_nonce: Optional[str] = None) -> str:
     """Build the policy for this response, widened only if Google sign-in is on.
 
     The Google entries are left out entirely on a deployment that does not use
-    them: an unused allowance is still an allowance.
+    them: an unused allowance is still an allowance.  style_nonce is only given
+    for the HTML page itself; no other response has markup to style.
     """
     directives = list(_CSP_DIRECTIVES)
     if google_verifier is not None and google_verifier.enabled:
@@ -872,6 +874,9 @@ def _csp_directives(request: Request) -> str:
         widened = {d.split(" ", 1)[0]: d for d in _GOOGLE_CSP_DIRECTIVES}
         directives = [widened.pop(d.split(" ", 1)[0], d) for d in directives]
         directives += list(widened.values())
+    if style_nonce:
+        directives = [f"{d} 'nonce-{style_nonce}'" if d.startswith("style-src ") else d
+                      for d in directives]
     return "; ".join(directives + [_connect_src(request)])
 
 
@@ -4562,18 +4567,28 @@ def _asset_version(url_path: str) -> str:
     return version
 
 
-def _render_index() -> str:
-    """Read index.html and stamp every /static reference with its content hash."""
+# HTML comments, with the indentation before them and the line break after:
+# they are notes for whoever edits index.html, not for whoever loads the page.
+_HTML_COMMENT_RE = re.compile(r"[ \t]*<!--.*?-->[ \t]*(?:\r?\n)?", re.DOTALL)
+
+# Where index.html asks for the per-response CSP nonce.
+_CSP_NONCE_PLACEHOLDER = "__CSP_NONCE__"
+
+
+def _render_index(style_nonce: str) -> str:
+    """Read index.html, strip its comments, stamp /static references and the nonce."""
     with open(_INDEX_PATH, encoding="utf-8") as f:
         html = f.read()
-    return _ASSET_REF_RE.sub(
+    html = _HTML_COMMENT_RE.sub("", html)
+    html = _ASSET_REF_RE.sub(
         lambda m: f'{m.group("attr")}="{m.group("path")}?v={_asset_version(m.group("path"))}"',
         html,
     )
+    return html.replace(_CSP_NONCE_PLACEHOLDER, style_nonce)
 
 
 @app.get("/")
-async def serve_frontend():
+async def serve_frontend(request: Request):
     """Serve the frontend.
 
     Each /static reference is stamped with a hash of that file's contents,
@@ -4581,5 +4596,15 @@ async def serve_frontend():
     asset without bumping it left browsers running a cached copy against an
     updated backend. The document itself must be revalidated for the new
     hashes to be picked up, hence no-cache.
+
+    Every response draws a fresh style nonce and sends a policy naming it; the
+    security headers middleware keeps that policy rather than its generic one.
+    A nonce is only worth something while it is unpredictable, which no-cache
+    also serves: this response has no validator, so each load is a new fetch
+    and a new nonce.
     """
-    return HTMLResponse(_render_index(), headers={"Cache-Control": "no-cache"})
+    nonce = secrets.token_urlsafe(18)
+    return HTMLResponse(_render_index(nonce), headers={
+        "Cache-Control": "no-cache",
+        "Content-Security-Policy": _csp_directives(request, style_nonce=nonce),
+    })
