@@ -1353,6 +1353,9 @@ class StackDeployer:
 
             # Ensure docker is logged in to registry
             await self._ensure_docker_login()
+
+            from .recovery import snapshot_envs
+            await snapshot_envs(self, repo_name)
             
             # Ensure repo is cloned
             clone_success, clone_msg = await self._ensure_repo_cloned(repo_name, ssh_url)
@@ -1460,6 +1463,9 @@ class StackDeployer:
             # Reject unsafe parameters before anything reaches a shell
             _validate_repo_name(repo_name)
             _validate_ssh_url(ssh_url)
+
+            from .recovery import snapshot_envs
+            await snapshot_envs(self, repo_name)
 
             # Ensure repo is cloned
             clone_success, clone_msg = await self._ensure_repo_cloned(repo_name, ssh_url)
@@ -1601,30 +1607,15 @@ class StackDeployer:
             logger.warning("Rejected unsafe repository name", error=str(e))
             return False, str(e)
 
-        repos_path = self.config.repos_path
-        env_path = f"{repos_path}/{repo_name}/devops/.env"
-        q_env_path = _shell_quote_path(env_path)
+        from .recovery import read_env
+        from .backup_vault import BackupError
+        try:
+            content = await read_env(self, f"{repo_name}/devops/.env")
+            return True, "" if content is None else content.decode("utf-8")
+        except (BackupError, UnicodeError):
+            return False, "Unable to read the environment file"
 
-        # Check if file exists
-        check_cmd = f"test -f {q_env_path} && echo 'exists' || echo 'missing'"
-        success, output = await self._run_command(check_cmd)
-
-        if not success:
-            return False, f"Failed to check .env file: {output}"
-
-        if "missing" in output:
-            return True, ""  # Return empty content if file doesn't exist
-
-        # Read the file content
-        read_cmd = f"cat -- {q_env_path}"
-        success, output = await self._run_command(read_cmd)
-
-        if not success:
-            return False, f"Failed to read .env file: {output}"
-
-        return True, output
-
-    async def save_env_file(self, repo_name: str, content: str) -> tuple[bool, str]:
+    async def save_env_file(self, repo_name: str, content: str, actor: str = "operator") -> tuple[bool, str]:
         """Save the content of the .env file for a repository.
 
         Args:
@@ -1640,29 +1631,16 @@ class StackDeployer:
             logger.warning("Rejected unsafe repository name", error=str(e))
             return False, str(e)
 
-        repos_path = self.config.repos_path
-        env_path = f"{repos_path}/{repo_name}/devops/.env"
-        devops_dir = f"{repos_path}/{repo_name}/devops"
-
-        # Ensure devops directory exists
-        mkdir_cmd = f"mkdir -p {_shell_quote_path(devops_dir)}"
-        await self._run_command(mkdir_cmd)
-
-        # The content is user-supplied: never let the shell see it. It is
-        # base64-encoded here and decoded on the host, so no quoting, heredoc
-        # marker or metacharacter in the content can alter the command.
-        # ``base64 -d`` is part of coreutils on any standard Debian/Ubuntu image.
-        encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
-        write_cmd = (
-            f"printf %s {shlex.quote(encoded)} | base64 -d > {_shell_quote_path(env_path)}"
-        )
-
-        success, output = await self._run_command(write_cmd)
-
-        if not success:
-            return False, f"Failed to write .env file: {output}"
-
-        return True, "File saved successfully"
+        if not isinstance(content, str) or len(content.encode("utf-8")) > 4 * 1024 * 1024:
+            return False, "Environment content must be text, at most 4 MiB"
+        from .recovery import save_env
+        from .backup_vault import BackupError
+        try:
+            revision = await save_env(self, repo_name, content.encode("utf-8"), actor=actor)
+            return True, ("File saved and encrypted backup recorded" if revision
+                          else "File saved (encrypted backup is disabled)")
+        except BackupError as exc:
+            return False, str(exc)
 
     @staticmethod
     def _repo_to_stack_name(repo_name: str) -> str:

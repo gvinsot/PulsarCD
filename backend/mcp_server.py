@@ -1498,7 +1498,7 @@ async def set_stack_env(
                         else "Nothing to change"),
         })
 
-    success, message = await deployer.save_env_file(repo_name, new_content)
+    success, message = await deployer.save_env_file(repo_name, new_content, actor="mcp")
     if not success:
         return json.dumps({"error": message})
 

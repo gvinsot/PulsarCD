@@ -23,6 +23,9 @@ let logsPage = 0;
 let logsPageSize = 100;
 let totalLogs = 0;
 
+// Before anything shows or hides these elements (see adoptStartHidden).
+adoptStartHidden(document);
+
 // ============== Authentication ==============
 
 function getAuthToken() { return localStorage.getItem('pulsarcd_token'); }
@@ -179,6 +182,9 @@ function loadGoogleIdentityServices() {
         }
         const script = document.createElement('script');
         script.src = GOOGLE_GSI_SRC;
+        // GIS copies the nonce of its own <script> onto the <style> it injects
+        // for the button; without it the CSP drops that stylesheet.
+        script.nonce = cspNonce();
         script.async = true;
         script.defer = true;
         script.onload = resolve;
@@ -595,7 +601,7 @@ async function loadAgentHistory(page) {
                     <div class="agent-history-icon">${icon}</div>
                     <div class="agent-history-content">
                         <div class="agent-history-title">${escapeHtml(title)}</div>
-                        <div class="agent-history-detail" onclick="this.classList.toggle('expanded')">${simpleMarkdown(detail)}</div>
+                        <div class="agent-history-detail" data-click="toggleExpanded">${simpleMarkdown(detail)}</div>
                     </div>
                     <div class="agent-history-time">${time}</div>
                 </div>
@@ -619,11 +625,11 @@ function _renderHistoryPagination(container, data) {
     const nav = document.createElement('div');
     nav.className = 'agent-history-pagination';
     nav.innerHTML = `
-        <button class="pagination-btn" ${page <= 1 ? 'disabled' : ''} onclick="loadAgentHistory(${page - 1})" title="Previous">
+        <button class="pagination-btn" ${page <= 1 ? 'disabled' : ''} data-click="loadAgentHistory" data-args="${uiArgs(page - 1)}" title="Previous">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
         <span class="pagination-info">${page} / ${total} <span class="pagination-total">(${totalEntries})</span></span>
-        <button class="pagination-btn" ${page >= total ? 'disabled' : ''} onclick="loadAgentHistory(${page + 1})" title="Next">
+        <button class="pagination-btn" ${page >= total ? 'disabled' : ''} data-click="loadAgentHistory" data-args="${uiArgs(page + 1)}" title="Next">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="9 18 15 12 9 6"/></svg>
         </button>
     `;
@@ -732,7 +738,7 @@ function renderMCPServers(servers) {
     const container = document.getElementById('mcp-servers-list');
     container.innerHTML = servers.map((s, i) => `
         <div class="mcp-server-card" data-index="${i}">
-            <button class="mcp-server-remove" onclick="removeMCPServer(${i})" title="Remove">&times;</button>
+            <button class="mcp-server-remove" data-click="removeMCPServer" data-args="${uiArgs(i)}" title="Remove">&times;</button>
             <div class="settings-field">
                 <label>Name</label>
                 <input type="text" class="mcp-name" value="${escapeHtml(s.name || '')}" />
@@ -746,7 +752,7 @@ function renderMCPServers(servers) {
                 <input type="password" class="mcp-apikey" value="${escapeHtml(s.api_key || '')}" autocomplete="off" data-lpignore="true" data-1p-ignore />
             </div>
             <div class="settings-field">
-                <button class="btn btn-sm btn-secondary" onclick="testMCPServer(${i})" id="mcp-test-btn-${i}">Test Connection</button>
+                <button class="btn btn-sm btn-secondary" data-click="testMCPServer" data-args="${uiArgs(i)}" id="mcp-test-btn-${i}">Test Connection</button>
                 <span class="mcp-test-result" id="mcp-test-result-${i}"></span>
             </div>
         </div>
@@ -807,8 +813,8 @@ function simpleMarkdown(str) {
     h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
     // Headers: ### h3, ## h2, # h1
     h = h.replace(/^### (.+)$/gm, '<strong>$1</strong>');
-    h = h.replace(/^## (.+)$/gm, '<strong style="font-size:1.05em">$1</strong>');
-    h = h.replace(/^# (.+)$/gm, '<strong style="font-size:1.1em">$1</strong>');
+    h = h.replace(/^## (.+)$/gm, '<strong class="md-h2">$1</strong>');
+    h = h.replace(/^# (.+)$/gm, '<strong class="md-h1">$1</strong>');
     // Bold: **text**
     h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     // Italic: *text*
@@ -915,8 +921,8 @@ async function loadUsersList() {
         const other = u.role === 'admin' ? 'viewer' : 'admin';
         const actions = u.managed
             ? '<span class="user-row-managed" title="Set through PULSARCD_AUTH__GOOGLE_ADMINS / _VIEWERS">from environment</span>'
-            : `<button class="btn btn-xs btn-secondary" onclick="setUserRole('${email}', '${other}')">Make ${other}</button>
-               <button class="btn btn-xs btn-secondary" onclick="deleteUser('${email}')">Remove</button>`;
+            : `<button class="btn btn-xs btn-secondary" data-click="setUserRole" data-args="${uiArgs(u.email, other)}">Make ${other}</button>
+               <button class="btn btn-xs btn-secondary" data-click="deleteUser" data-args="${uiArgs(u.email)}">Remove</button>`;
         return `
         <div class="user-row">
             <div class="user-row-info">
@@ -1140,9 +1146,9 @@ function renderRecentQueries() {
     }
     
     list.innerHTML = queries.map((q, idx) => `
-        <span class="recent-query-item" onclick="useRecentQuery(${idx})" title="${escapeHtml(q.question)}">
+        <span class="recent-query-item" data-click="useRecentQuery" data-args="${uiArgs(idx)}" title="${escapeHtml(q.question)}">
             ${escapeHtml(q.question.length > 40 ? q.question.substring(0, 40) + '...' : q.question)}
-            <span class="delete-query" onclick="event.stopPropagation(); deleteRecentQuery(${idx})">✕</span>
+            <span class="delete-query" data-click="deleteRecentQuery" data-args="${uiArgs(idx)}" data-click-stop>✕</span>
         </span>
     `).join('');
     
@@ -1390,7 +1396,7 @@ async function searchHttpErrors(minStatus, maxStatus) {
 function displayLogsResults(logs) {
     const tbody = document.getElementById('logs-table-body');
     tbody.innerHTML = logs.map((log, index) => `
-        <tr class="${getLogRowClass(log)} log-row" data-log-index="${index}" onclick="toggleLogExpand(this, ${index})">
+        <tr class="${getLogRowClass(log)} log-row" data-log-index="${index}" data-click="toggleLogRow" data-args="${uiArgs(index)}">
             <td class="col-time">${formatTime(log.timestamp)}</td>
             <td class="col-source" title="${escapeHtml(log.host)} / ${escapeHtml(log.container_name)}">
                 <span class="source-host">${escapeHtml(log.host)}</span>
@@ -1399,7 +1405,7 @@ function displayLogsResults(logs) {
             <td class="col-level">${log.level ? `<span class="log-level ${log.level.toLowerCase()}">${escapeHtml(log.level)}</span>` : ''}</td>
             <td class="col-message"><div class="message-truncate">${escapeHtml(log.message)}</div></td>
         </tr>
-        <tr class="log-expand-row" id="log-expand-${index}" style="display: none;">
+        <tr class="log-expand-row start-hidden" id="log-expand-${index}">
             <td colspan="4">
                 <div class="log-expand-content">
                     <div class="log-full-message">
@@ -1411,14 +1417,15 @@ function displayLogsResults(logs) {
                             <span class="analysis-value loading" id="search-similar-${index}">Loading...</span>
                         </div>
                         <div class="analysis-item create-task-item">
-                            <button class="btn btn-task-create" onclick="event.stopPropagation(); openCreateTaskModal('search', ${index})">🤖 Create Agent Task</button>
+                            <button class="btn btn-task-create" data-click="openCreateTaskModal" data-args="${uiArgs('search', index)}" data-click-stop>🤖 Create Agent Task</button>
                         </div>
                     </div>
                 </div>
             </td>
         </tr>
     `).join('');
-    
+    adoptStartHidden(tbody);
+
     // Store logs for later reference
     window.currentLogResults = logs;
     
@@ -1769,7 +1776,7 @@ function showNotification(type, message) {
             <div class="action-toast-info">
                 <span class="action-toast-icon action-toast-icon-${type}">${iconMap[type] || ''}</span>
                 <span class="action-toast-text">${escapeHtml(message)}</span>
-                <button class="action-toast-close" onclick="this.closest('.action-toast').classList.add('toast-exit'); setTimeout(() => this.closest('.action-toast')?.remove(), 300)">&times;</button>
+                <button class="action-toast-close" data-click="dismissToast">&times;</button>
             </div>
         </div>
     `;
@@ -1861,7 +1868,7 @@ async function loadRecurringErrors() {
             deliveryIcon = '<span class="rerr-delivery pending" title="Not yet sent to agent">&#8943;</span>';
         }
         return `
-        <div class="recurring-error-item" onclick="showRecurringErrorDetail(${i})">
+        <div class="recurring-error-item" data-click="showRecurringErrorDetail" data-args="${uiArgs(i)}">
             <div class="recurring-error-header">
                 <span class="recurring-error-count">${p.count}×</span>
                 <span class="recurring-error-services">${escapeHtml(services)}</span>
@@ -1885,11 +1892,11 @@ function showRecurringErrorDetail(index) {
     document.getElementById('recurring-error-modal-stacks').innerHTML =
         stacks.length
             ? stacks.map(s => `<span class="rerr-service-chip">${escapeHtml(s)}</span>`).join('')
-            : '<span style="color:var(--text-muted)">Unknown</span>';
+            : '<span class="text-muted">Unknown</span>';
     document.getElementById('recurring-error-modal-services').innerHTML =
         svcs.length
             ? svcs.map(s => `<span class="rerr-service-chip">${escapeHtml(s)}</span>`).join('')
-            : '<span style="color:var(--text-muted)">Unknown</span>';
+            : '<span class="text-muted">Unknown</span>';
     document.getElementById('recurring-error-modal-first-seen').textContent =
         formatRelativeTime(p.first_seen);
     document.getElementById('recurring-error-modal-last-seen').textContent =
@@ -2424,7 +2431,7 @@ async function loadContainers(forceRefresh = false) {
         }
         
         let topLevelHtml = `
-            <div class="host-header" onclick="toggleHostGroup(event, this)">
+            <div class="host-header" data-click="toggleHostHeader" data-click-stop>
                 <span class="host-name">
                     <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="6 9 12 15 18 9"/>
@@ -2438,15 +2445,15 @@ async function loadContainers(forceRefresh = false) {
                     ${topLevelGpuDisplay ? `<span class="group-stat group-gpu ${topLevelGpuClass}" title="GPU - Compute usage">🎮 ${topLevelGpuDisplay}</span>` : ''}
                     ${topLevelVramDisplay}
                 </span>
-                <div class="host-header-actions" onclick="event.stopPropagation();">
-                    <button class="btn btn-sm btn-warning" onclick="hostAction('${escapeHtml(topLevel)}', 'reboot')" title="Reboot this computer">
+                <div class="host-header-actions" data-click-stop>
+                    <button class="btn btn-sm btn-warning" data-click="hostAction" data-args="${uiArgs(topLevel, 'reboot')}" title="Reboot this computer">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <polyline points="23 4 23 10 17 10"/>
                             <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
                         </svg>
                         <span>Reboot</span>
                     </button>
-                    <button class="btn btn-sm btn-danger" onclick="hostAction('${escapeHtml(topLevel)}', 'shutdown')" title="Shutdown this computer">
+                    <button class="btn btn-sm btn-danger" data-click="hostAction" data-args="${uiArgs(topLevel, 'shutdown')}" title="Shutdown this computer">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <path d="M18.36 6.64a9 9 0 1 1-12.73 0"/>
                             <line x1="12" y1="2" x2="12" y2="12"/>
@@ -2522,7 +2529,7 @@ async function loadContainers(forceRefresh = false) {
             
             topLevelHtml += `
                 <div class="${serviceGroupClass}" data-host="${escapeHtml(topLevel)}" data-project="${escapeHtml(service)}">
-                    <div class="compose-header" onclick="toggleComposeGroup(event, this)">
+                    <div class="compose-header" data-click="toggleComposeHeader" data-click-stop>
                         <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <polyline points="6 9 12 15 18 9"/>
                         </svg>
@@ -2567,7 +2574,7 @@ async function loadContainers(forceRefresh = false) {
                 }
                 
                 topLevelHtml += `
-                    <div class="container-item" onclick="openContainer('${escapeHtml(c.host)}', '${escapeHtml(c.id)}', ${JSON.stringify(c).replace(/"/g, '&quot;')})">
+                    <div class="container-item" data-click="openContainer" data-args="${uiArgs(c.host, c.id, c)}">
                         <div class="container-info">
                             <span class="container-status ${c.status}"></span>
                             <div>
@@ -2594,10 +2601,10 @@ async function loadContainers(forceRefresh = false) {
                         </div>
                         ` : ''}
                         <div class="container-actions">
-                            <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); quickAction('${escapeHtml(c.host)}', '${escapeHtml(c.id)}', 'restart', '${escapeHtml(c.name)}')">
+                            <button class="btn btn-sm btn-secondary" data-click="quickAction" data-args="${uiArgs(c.host, c.id, 'restart', c.name)}" data-click-stop>
                                 Restart
                             </button>
-                            <button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); quickAction('${escapeHtml(c.host)}', '${escapeHtml(c.id)}', 'remove', '${escapeHtml(c.name)}')">
+                            <button class="btn btn-sm btn-danger" data-click="quickAction" data-args="${uiArgs(c.host, c.id, 'remove', c.name)}" data-click-stop>
                                 Remove
                             </button>
                         </div>
@@ -2619,8 +2626,7 @@ async function loadContainers(forceRefresh = false) {
     }
 }
 
-function toggleHostGroup(event, headerEl) {
-    event?.stopPropagation();
+function toggleHostGroup(headerEl) {
     const hostGroup = headerEl.closest('.host-group');
     if (!hostGroup) return;
     
@@ -2634,8 +2640,7 @@ function toggleHostGroup(event, headerEl) {
     saveGroups(storedGroups);
 }
 
-function toggleComposeGroup(event, headerEl) {
-    event.stopPropagation();
+function toggleComposeGroup(headerEl) {
     const composeGroup = headerEl.closest('.compose-group');
     if (!composeGroup) return;
     
@@ -2811,11 +2816,11 @@ function renderContainerLogs() {
         const timestamp = formatDateTime(log.timestamp);
         
         return `
-            <div class="log-line ${levelClass}${hidden ? ' hidden' : ''}" data-index="${index}" onclick="toggleContainerLogExpand(this, ${index})">
+            <div class="log-line ${levelClass}${hidden ? ' hidden' : ''}" data-index="${index}" data-click="toggleContainerLogRow" data-args="${uiArgs(index)}">
                 <span class="log-timestamp">${timestamp}</span>
                 <span class="log-message-truncate">${displayMessage}</span>
             </div>
-            <div class="container-log-expand" id="container-log-expand-${index}" style="display: none;">
+            <div class="container-log-expand start-hidden" id="container-log-expand-${index}">
                 <div class="log-expand-content">
                     <div class="log-full-message">
                         <pre>${escapeHtml(message)}</pre>
@@ -2826,7 +2831,7 @@ function renderContainerLogs() {
                             <span class="analysis-value loading" id="container-similar-${index}">Loading...</span>
                         </div>
                         <div class="analysis-item create-task-item">
-                            <button class="btn btn-task-create" onclick="event.stopPropagation(); openCreateTaskModal('container', ${index})">🤖 Create Agent Task</button>
+                            <button class="btn btn-task-create" data-click="openCreateTaskModal" data-args="${uiArgs('container', index)}" data-click-stop>🤖 Create Agent Task</button>
                         </div>
                     </div>
                 </div>
@@ -2835,6 +2840,7 @@ function renderContainerLogs() {
     }).join('');
     
     logViewer.innerHTML = html;
+    adoptStartHidden(logViewer);
     logViewer.scrollTop = logViewer.scrollHeight;
 }
 
@@ -3262,6 +3268,26 @@ async function refreshServiceStatus() {
     renderServiceStatusTable(result ? result.tasks : [], result ? result.service : currentStatusServiceName);
 }
 
+// Swarm task state -> colour class in the task tables (docker service ps).
+const _TASK_STATE_CLASSES = {
+    running: 'task-state-running',
+    complete: 'task-state-complete',
+    ready: 'task-state-pending',
+    starting: 'task-state-pending',
+    preparing: 'task-state-pending',
+    assigned: 'task-state-pending',
+    accepted: 'task-state-pending',
+    pending: 'task-state-pending',
+    new: 'task-state-pending',
+    failed: 'task-state-failed',
+    rejected: 'task-state-failed',
+    orphaned: 'task-state-failed',
+};
+
+function taskStateClass(state) {
+    return _TASK_STATE_CLASSES[state] || 'task-state-other';
+}
+
 function renderServiceStatusTable(tasks, serviceName) {
     const content = document.getElementById('service-status-content');
 
@@ -3270,51 +3296,32 @@ function renderServiceStatusTable(tasks, serviceName) {
         return;
     }
 
-    const stateColors = {
-        'running': '#4caf50',
-        'complete': '#2196f3',
-        'ready': '#ff9800',
-        'starting': '#ff9800',
-        'preparing': '#ff9800',
-        'assigned': '#ff9800',
-        'accepted': '#ff9800',
-        'pending': '#ff9800',
-        'new': '#ff9800',
-        'failed': '#f44336',
-        'rejected': '#f44336',
-        'shutdown': '#999',
-        'orphaned': '#f44336',
-        'remove': '#999',
-    };
-
-    let html = `<div style="padding: 12px; font-family: monospace; font-size: 13px;">`;
-    html += `<table style="width: 100%; border-collapse: collapse; color: #e0e0e0;">`;
-    html += `<thead><tr style="border-bottom: 1px solid #444; text-align: left;">`;
-    html += `<th style="padding: 6px 10px;">ID</th>`;
-    html += `<th style="padding: 6px 10px;">Image</th>`;
-    html += `<th style="padding: 6px 10px;">Node</th>`;
-    html += `<th style="padding: 6px 10px;">Desired State</th>`;
-    html += `<th style="padding: 6px 10px;">Current State</th>`;
-    html += `<th style="padding: 6px 10px;">Error</th>`;
-    html += `<th style="padding: 6px 10px;">Updated</th>`;
+    let html = `<div class="task-table-wrap">`;
+    html += `<table class="task-table">`;
+    html += `<thead><tr>`;
+    html += `<th>ID</th>`;
+    html += `<th>Image</th>`;
+    html += `<th>Node</th>`;
+    html += `<th>Desired State</th>`;
+    html += `<th>Current State</th>`;
+    html += `<th>Error</th>`;
+    html += `<th>Updated</th>`;
     html += `</tr></thead><tbody>`;
 
     for (const task of tasks) {
-        const stateColor = stateColors[task.state] || '#999';
-        const desiredColor = stateColors[task.desired_state] || '#999';
         const errorText = task.error || task.message || '';
         const updatedAt = task.updated_at ? new Date(task.updated_at).toLocaleString() : '';
         const taskIdShort = (task.id || '').substring(0, 12);
         const imageShort = (task.image || '').replace(/^.*\//, '').replace(/@sha256:.*$/, '');
 
-        html += `<tr style="border-bottom: 1px solid #333;">`;
-        html += `<td style="padding: 6px 10px; font-family: monospace; font-size: 12px;" title="${escapeHtml(task.id || '')}">${escapeHtml(taskIdShort)}</td>`;
-        html += `<td style="padding: 6px 10px; font-size: 12px;" title="${escapeHtml(task.image || '')}">${escapeHtml(imageShort)}</td>`;
-        html += `<td style="padding: 6px 10px;">${escapeHtml(task.node || '')}</td>`;
-        html += `<td style="padding: 6px 10px; color: ${desiredColor};">${escapeHtml(task.desired_state || '')}</td>`;
-        html += `<td style="padding: 6px 10px; color: ${stateColor};">${escapeHtml(task.state || '')}</td>`;
-        html += `<td style="padding: 6px 10px; color: #f44336; max-width: 400px; word-break: break-word;">${escapeHtml(errorText)}</td>`;
-        html += `<td style="padding: 6px 10px; white-space: nowrap;">${escapeHtml(updatedAt)}</td>`;
+        html += `<tr>`;
+        html += `<td class="task-cell-id" title="${escapeHtml(task.id || '')}">${escapeHtml(taskIdShort)}</td>`;
+        html += `<td class="task-cell-image" title="${escapeHtml(task.image || '')}">${escapeHtml(imageShort)}</td>`;
+        html += `<td>${escapeHtml(task.node || '')}</td>`;
+        html += `<td class="${taskStateClass(task.desired_state)}">${escapeHtml(task.desired_state || '')}</td>`;
+        html += `<td class="${taskStateClass(task.state)}">${escapeHtml(task.state || '')}</td>`;
+        html += `<td class="task-cell-error">${escapeHtml(errorText)}</td>`;
+        html += `<td class="task-cell-updated">${escapeHtml(updatedAt)}</td>`;
         html += `</tr>`;
     }
 
@@ -3444,50 +3451,31 @@ function renderServiceTasks(tasks, serviceName) {
         return;
     }
     
-    const stateColors = {
-        'running': '#4caf50',
-        'complete': '#2196f3',
-        'ready': '#ff9800',
-        'starting': '#ff9800',
-        'preparing': '#ff9800',
-        'assigned': '#ff9800',
-        'accepted': '#ff9800',
-        'pending': '#ff9800',
-        'new': '#ff9800',
-        'failed': '#f44336',
-        'rejected': '#f44336',
-        'shutdown': '#999',
-        'orphaned': '#f44336',
-        'remove': '#999',
-    };
-    
-    let html = `<div style="padding: 12px; font-family: monospace; font-size: 13px;">`;
-    html += `<div style="color: #ff9800; margin-bottom: 12px; font-size: 14px;">`;
+    let html = `<div class="task-table-wrap">`;
+    html += `<div class="task-table-notice">`;
     html += `&#9888; Service logs unavailable — showing task status (docker service ps)</div>`;
-    html += `<table style="width: 100%; border-collapse: collapse; color: #e0e0e0;">`;
-    html += `<thead><tr style="border-bottom: 1px solid #444; text-align: left;">`;
-    html += `<th style="padding: 6px 10px;">ID</th>`;
-    html += `<th style="padding: 6px 10px;">Node</th>`;
-    html += `<th style="padding: 6px 10px;">Desired State</th>`;
-    html += `<th style="padding: 6px 10px;">Current State</th>`;
-    html += `<th style="padding: 6px 10px;">Error</th>`;
-    html += `<th style="padding: 6px 10px;">Updated</th>`;
+    html += `<table class="task-table">`;
+    html += `<thead><tr>`;
+    html += `<th>ID</th>`;
+    html += `<th>Node</th>`;
+    html += `<th>Desired State</th>`;
+    html += `<th>Current State</th>`;
+    html += `<th>Error</th>`;
+    html += `<th>Updated</th>`;
     html += `</tr></thead><tbody>`;
-    
+
     for (const task of tasks) {
-        const stateColor = stateColors[task.state] || '#999';
-        const desiredColor = stateColors[task.desired_state] || '#999';
         const errorText = task.error || task.message || '';
         const updatedAt = task.updated_at ? new Date(task.updated_at).toLocaleString() : '';
         const taskIdShort = (task.id || '').substring(0, 12);
-        
-        html += `<tr style="border-bottom: 1px solid #333;">`;
-        html += `<td style="padding: 6px 10px; font-family: monospace; font-size: 12px;">${escapeHtml(taskIdShort)}</td>`;
-        html += `<td style="padding: 6px 10px;">${escapeHtml(task.node || '')}</td>`;
-        html += `<td style="padding: 6px 10px; color: ${desiredColor};">${escapeHtml(task.desired_state || '')}</td>`;
-        html += `<td style="padding: 6px 10px; color: ${stateColor};">${escapeHtml(task.state || '')}</td>`;
-        html += `<td style="padding: 6px 10px; color: #f44336; max-width: 400px; word-break: break-word;">${escapeHtml(errorText)}</td>`;
-        html += `<td style="padding: 6px 10px; white-space: nowrap;">${escapeHtml(updatedAt)}</td>`;
+
+        html += `<tr>`;
+        html += `<td class="task-cell-id">${escapeHtml(taskIdShort)}</td>`;
+        html += `<td>${escapeHtml(task.node || '')}</td>`;
+        html += `<td class="${taskStateClass(task.desired_state)}">${escapeHtml(task.desired_state || '')}</td>`;
+        html += `<td class="${taskStateClass(task.state)}">${escapeHtml(task.state || '')}</td>`;
+        html += `<td class="task-cell-error">${escapeHtml(errorText)}</td>`;
+        html += `<td class="task-cell-updated">${escapeHtml(updatedAt)}</td>`;
         html += `</tr>`;
     }
     
@@ -3980,10 +3968,7 @@ function updateContainerItems(containerListEl, containers, stackName) {
     const existingItems = containerListEl.querySelectorAll('.container-item:not(.container-item-empty)');
     const existingById = {};
     existingItems.forEach(el => {
-        // Extract container id from the onclick attribute
-        const onclick = el.getAttribute('onclick') || '';
-        const match = onclick.match(/openContainer\('[^']*',\s*'([^']*)'/);
-        if (match) existingById[match[1]] = el;
+        if (el.dataset.containerId) existingById[el.dataset.containerId] = el;
     });
 
     const newIds = new Set(containers.map(c => c.id));
@@ -4085,7 +4070,7 @@ function updateContainerItems(containerListEl, containers, stackName) {
                     <div class="container-info">
                         <span class="container-status exited"></span>
                         <div>
-                            <div class="container-name" style="color: var(--text-muted);">No running containers</div>
+                            <div class="container-name text-muted">No running containers</div>
                             <div class="container-image">Service has 0 replicas or all tasks failed</div>
                         </div>
                     </div>
@@ -4364,7 +4349,7 @@ function renderStacksList() {
         const qaServiceCount = Object.keys(qaStackContainers).length;
         const showContainerSection = (isDeployed && serviceCount > 0) || (isQaDeployed && qaServiceCount > 0);
         if (showContainerSection) {
-            containersHtml = `<div class="host-content" id="stack-containers-${escapeHtml(repo.name)}" style="display: ${isExpanded ? 'block' : 'none'};">`;
+            containersHtml = `<div class="host-content${isExpanded ? '' : ' start-hidden'}" id="stack-containers-${escapeHtml(repo.name)}">`;
 
             const renderServicesBlock = (servicesObj, parentStackName, isQa) => {
                 let html = '';
@@ -4406,7 +4391,7 @@ function renderStacksList() {
                             ${!hasContainers ? '<span class="service-no-replicas">0 replicas</span>' : ''}
                             ${serviceMemoryDisplay ? `<span class="group-stat group-memory" title="Total memory usage">💾 ${serviceMemoryDisplay}</span>` : ''}
                             ${serviceCpuDisplay ? `<span class="group-stat group-cpu ${serviceCpuClass}" title="Max CPU usage">⚡ ${serviceCpuDisplay}</span>` : ''}
-                            <button class="btn btn-sm btn-ghost service-logs-btn" onclick="event.stopPropagation(); openServiceLogs('${escapeHtml(fullServiceName)}')" title="View service logs">
+                            <button class="btn btn-sm btn-ghost service-logs-btn" data-click="openServiceLogs" data-args="${uiArgs(fullServiceName)}" data-click-stop title="View service logs">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                                     <polyline points="14 2 14 8 20 8"/>
@@ -4416,19 +4401,19 @@ function renderStacksList() {
                                 </svg>
                                 Logs
                             </button>
-                            <button class="btn btn-sm btn-ghost service-status-btn" onclick="event.stopPropagation(); openServiceStatus('${escapeHtml(fullServiceName)}')" title="Service task status (docker service ps)">
+                            <button class="btn btn-sm btn-ghost service-status-btn" data-click="openServiceStatus" data-args="${uiArgs(fullServiceName)}" data-click-stop title="Service task status (docker service ps)">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                     <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
                                 </svg>
                                 Status
                             </button>
-                            ${isQa ? '' : `<button class="btn btn-sm btn-primary service-deploy-btn" onclick="event.stopPropagation(); openServiceDeploy('${escapeHtml(fullServiceName)}', '${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', '${escapeHtml(firstContainerImage)}')" title="Deploy new version">
+                            ${isQa ? '' : `<button class="btn btn-sm btn-primary service-deploy-btn" data-click="openServiceDeploy" data-args="${uiArgs(fullServiceName, repo.name, repo.ssh_url, firstContainerImage)}" data-click-stop title="Deploy new version">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                     <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
                                 </svg>
                                 Deploy
                             </button>`}
-                            <button class="btn btn-sm btn-danger service-remove-btn" onclick="event.stopPropagation(); removeService('${escapeHtml(fullServiceName)}')" title="Remove service">
+                            <button class="btn btn-sm btn-danger service-remove-btn" data-click="removeService" data-args="${uiArgs(fullServiceName)}" data-click-stop title="Remove service">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                                     <polyline points="3 6 5 6 21 6"/>
                                     <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -4446,7 +4431,7 @@ function renderStacksList() {
                             <div class="container-info">
                                 <span class="container-status exited"></span>
                                 <div>
-                                    <div class="container-name" style="color: var(--text-muted);">No running containers</div>
+                                    <div class="container-name text-muted">No running containers</div>
                                     <div class="container-image">Service has 0 replicas or all tasks failed</div>
                                 </div>
                             </div>
@@ -4477,11 +4462,11 @@ function renderStacksList() {
                     }
                     
                     html += `
-                        <div class="container-item" onclick="openContainer('${escapeHtml(c.host)}', '${escapeHtml(c.id)}', ${JSON.stringify(c).replace(/"/g, '&quot;')})">
+                        <div class="container-item" data-container-id="${escapeHtml(c.id)}" data-click="openContainer" data-args="${uiArgs(c.host, c.id, c)}">
                             <div class="container-info">
                                 <span class="container-status ${c.status}"></span>
                                 <div>
-                                    <div class="container-name">${escapeHtml(c.name)} <span style="color: var(--text-muted); font-size: 0.85em;">(${escapeHtml(c.host)})</span></div>
+                                    <div class="container-name">${escapeHtml(c.name)} <span class="container-host-hint">(${escapeHtml(c.host)})</span></div>
                                     <div class="container-image">${formatImageName(c.image)}${containerAge ? ` <span class="container-age">• ${containerAge}</span>` : ''}</div>
                                 </div>
                             </div>
@@ -4504,7 +4489,7 @@ function renderStacksList() {
                             </div>
                             ` : ''}
                             <div class="container-actions">
-                                <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); quickAction('${escapeHtml(c.host)}', '${escapeHtml(c.id)}', 'restart', '${escapeHtml(c.name)}')">
+                                <button class="btn btn-sm btn-secondary" data-click="quickAction" data-args="${uiArgs(c.host, c.id, 'restart', c.name)}" data-click-stop>
                                     Restart
                                 </button>
                             </div>
@@ -4535,28 +4520,28 @@ function renderStacksList() {
                 if (serviceCount > 0) {
                     containersHtml += `
                     <div class="stack-subsection ${prodOpen ? '' : 'collapsed'}" data-subsection="prod">
-                        <div class="stack-section-divider stack-section-toggle" onclick="toggleStackSubSection('${escapeHtml(repo.name)}', 'prod')">
+                        <div class="stack-section-divider stack-section-toggle" data-click="toggleStackSubSection" data-args="${uiArgs(repo.name, 'prod')}">
                             ${chevronSvg}
                             <span class="stack-badge deployed">Production</span>
                             ${deployedTag ? `<span class="stack-divider-version" title="Production deployed version">${escapeHtml(deployedTag)}</span>` : ''}
                             <span class="group-count">${serviceCount} svc</span>
                             <span class="stack-divider-name">${escapeHtml(stackName)}</span>
                         </div>
-                        <div class="stack-subsection-body" id="stack-subsection-prod-${escapeHtml(repo.name)}" style="display: ${prodOpen ? 'block' : 'none'};">
+                        <div class="stack-subsection-body${prodOpen ? '' : ' start-hidden'}" id="stack-subsection-prod-${escapeHtml(repo.name)}">
                             ${renderServicesBlock(stackContainers, stackName, false)}
                         </div>
                     </div>`;
                 }
                 containersHtml += `
                     <div class="stack-subsection ${qaOpen ? '' : 'collapsed'}" data-subsection="qa">
-                        <div class="stack-section-divider stack-section-divider-qa stack-section-toggle" onclick="toggleStackSubSection('${escapeHtml(repo.name)}', 'qa')">
+                        <div class="stack-section-divider stack-section-divider-qa stack-section-toggle" data-click="toggleStackSubSection" data-args="${uiArgs(repo.name, 'qa')}">
                             ${chevronSvg}
                             <span class="stack-badge stack-badge-qa">QA Environment</span>
                             ${qaDeployedTag ? `<span class="stack-divider-version" title="QA deployed version">${escapeHtml(qaDeployedTag)}</span>` : ''}
                             <span class="group-count">${qaServiceCount} svc</span>
                             <span class="stack-divider-name">qa-${escapeHtml(stackName)}</span>
                         </div>
-                        <div class="stack-subsection-body" id="stack-subsection-qa-${escapeHtml(repo.name)}" style="display: ${qaOpen ? 'block' : 'none'};">
+                        <div class="stack-subsection-body${qaOpen ? '' : ' start-hidden'}" id="stack-subsection-qa-${escapeHtml(repo.name)}">
                             ${renderServicesBlock(qaStackContainers, qaStackName, true)}
                         </div>
                     </div>
@@ -4632,7 +4617,7 @@ function renderStacksList() {
         // Use host-group structure similar to Computers view
         return `
         <div class="host-group ${isExpanded ? '' : 'collapsed'}" data-repo="${escapeHtml(repo.name)}">
-            <div class="host-header ${healthClass}" ${(isDeployed || isQaDeployed) ? `onclick="toggleStackExpand('${escapeHtml(repo.name)}')"` : ''}>
+            <div class="host-header ${healthClass}" ${(isDeployed || isQaDeployed) ? `data-click="toggleStackExpand" data-args="${uiArgs(repo.name)}"` : ''}>
                 <span class="host-name">
                     ${(isDeployed || isQaDeployed) ? `
                     <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -4641,7 +4626,7 @@ function renderStacksList() {
                     ` : ''}
                     ${stackIcon}
                     ${escapeHtml(repo.name)}
-                    ${!isDeployed ? '<span class="stack-badge" style="background: var(--bg-tertiary); color: var(--text-muted);">Not deployed</span>' : ''}
+                    ${!isDeployed ? '<span class="stack-badge stack-badge-not-deployed">Not deployed</span>' : ''}
                     ${pipeline && pipeline.last_deployed_at ? `<span class="stack-deployed-ago" title="${new Date(pipeline.last_deployed_at).toLocaleString()}">${formatTimeAgo(pipeline.last_deployed_at)}</span>` : ''}
                     ${isDeployed ? `<span class="group-count">${Object.keys(stackContainers).length} svc, ${containerCount} ct</span>` : ''}
                     ${isDeployed && tooltipLines.length > 0 ? `
@@ -4650,8 +4635,8 @@ function renderStacksList() {
                         <span class="tooltip-content">${tooltipLines.map(l => `<div>${l}</div>`).join('')}</span>
                     </span>` : ''}
                 </span>
-                <div class="host-header-actions" onclick="event.stopPropagation();">
-                    <button class="btn btn-sm btn-ghost" onclick="showStackActivity('${escapeHtml(repo.owner)}', '${escapeHtml(repo.name)}')" title="View git activity">
+                <div class="host-header-actions" data-click-stop>
+                    <button class="btn btn-sm btn-ghost" data-click="showStackActivity" data-args="${uiArgs(repo.owner, repo.name)}" title="View git activity">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <circle cx="18" cy="18" r="3"/>
                             <circle cx="6" cy="6" r="3"/>
@@ -4659,7 +4644,7 @@ function renderStacksList() {
                         </svg>
                         <span>Activity</span>
                     </button>
-                    <button class="btn btn-sm btn-ghost" onclick="editStackEnv('${escapeHtml(repo.name)}')" title="Edit .env file">
+                    <button class="btn btn-sm btn-ghost" data-click="editStackEnv" data-args="${uiArgs(repo.name)}" title="Edit .env file">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
@@ -4668,59 +4653,59 @@ function renderStacksList() {
                     </button>
 
                     <div class="pipeline-flow">
-                        <div class="pipeline-step step-${versionStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'version')" title="Latest available version: ${escapeHtml(pipelineVersion)} (click to run full pipeline)" style="cursor:pointer">
+                        <div class="pipeline-step step-${versionStep}" data-click="pipelineStepClick" data-args="${uiArgs(repo.name, repo.ssh_url, 'version')}" data-click-stop title="Latest available version: ${escapeHtml(pipelineVersion)} (click to run full pipeline)">
                             ${stepIcon(versionStep)}
                             <span>Version</span>
                             <span class="pipeline-step-version" title="Latest available: ${escapeHtml(pipelineVersion)}">${escapeHtml(pipelineVersion)}</span>
                         </div>
-                        <span class="pipeline-transition-btn ${_gateArrowClass(pipeline, 'version', versionStep, buildStep)}${gateVersionBuild ? ' has-gate' : ''}${_transitionModeClass(pipeline, 'version_to_build')}" onclick="event.stopPropagation(); openTransitionConfig('${escapeHtml(repo.name)}', 'version_to_build')" title="Version → Build transition (click to configure)">
+                        <span class="pipeline-transition-btn ${_gateArrowClass(pipeline, 'version', versionStep, buildStep)}${gateVersionBuild ? ' has-gate' : ''}${_transitionModeClass(pipeline, 'version_to_build')}" data-click="openTransitionConfig" data-args="${uiArgs(repo.name, 'version_to_build')}" data-click-stop title="Version → Build transition (click to configure)">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
                             ${_transitionModeIcon(pipeline, 'version_to_build')}
                         </span>
-                        <div class="pipeline-step step-${buildStep}" ${skipBuild ? 'title="Build: skipped (no build config)"' : `onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'build')" title="Build${buildStageVersion ? ' — last built: ' + escapeHtml(buildStageVersion) : ''}" style="cursor:pointer"`}>
+                        <div class="pipeline-step step-${buildStep}" ${skipBuild ? 'title="Build: skipped (no build config)"' : `data-click="pipelineStepClick" data-args="${uiArgs(repo.name, repo.ssh_url, 'build')}" data-click-stop title="Build${buildStageVersion ? ' — last built: ' + escapeHtml(buildStageVersion) : ''}"`}>
                             ${skipBuild ? `<span class="step-icon">–</span>` : stepIcon(buildStep)}
                             <span>Build</span>
                             ${!skipBuild ? stageVersionLabel(buildStageVersion, 'Last built') : ''}
-                            ${!skipBuild && buildActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${buildActionId}', 'Build Logs', '${escapeHtml(repo.name)}')" title="View build logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
-                            ${buildStep === 'running' && buildActionId ? `<span class="pipeline-stop-btn" onclick="event.stopPropagation(); cancelAction('${buildActionId}')" title="Stop build"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="10" height="10"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></span>` : ''}
+                            ${!skipBuild && buildActionId ? `<span class="pipeline-log-btn" data-click="openActionLogs" data-args="${uiArgs(buildActionId, 'Build Logs', repo.name)}" data-click-stop title="View build logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
+                            ${buildStep === 'running' && buildActionId ? `<span class="pipeline-stop-btn" data-click="cancelAction" data-args="${uiArgs(buildActionId)}" data-click-stop title="Stop build"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="10" height="10"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></span>` : ''}
                         </div>
-                        <span class="pipeline-transition-btn ${_gateArrowClass(pipeline, 'build', buildStep, testStep)}${gateBuildTest ? ' has-gate' : ''}${_transitionModeClass(pipeline, 'build_to_test')}" onclick="event.stopPropagation(); openTransitionConfig('${escapeHtml(repo.name)}', 'build_to_test')" title="Build → Test transition (click to configure)">
+                        <span class="pipeline-transition-btn ${_gateArrowClass(pipeline, 'build', buildStep, testStep)}${gateBuildTest ? ' has-gate' : ''}${_transitionModeClass(pipeline, 'build_to_test')}" data-click="openTransitionConfig" data-args="${uiArgs(repo.name, 'build_to_test')}" data-click-stop title="Build → Test transition (click to configure)">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
                             ${_transitionModeIcon(pipeline, 'build_to_test')}
                         </span>
-                        <div class="pipeline-step step-${testStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'test')" title="Test">
+                        <div class="pipeline-step step-${testStep}" data-click="pipelineStepClick" data-args="${uiArgs(repo.name, repo.ssh_url, 'test')}" data-click-stop title="Test">
                             ${stepIcon(testStep)}
                             <span>Test</span>
-                            ${testActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${testActionId}', 'Test Logs', '${escapeHtml(repo.name)}')" title="View test logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
-                            ${testStep === 'running' && testActionId ? `<span class="pipeline-stop-btn" onclick="event.stopPropagation(); cancelAction('${testActionId}')" title="Stop test"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="10" height="10"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></span>` : ''}
+                            ${testActionId ? `<span class="pipeline-log-btn" data-click="openActionLogs" data-args="${uiArgs(testActionId, 'Test Logs', repo.name)}" data-click-stop title="View test logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
+                            ${testStep === 'running' && testActionId ? `<span class="pipeline-stop-btn" data-click="cancelAction" data-args="${uiArgs(testActionId)}" data-click-stop title="Stop test"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="10" height="10"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></span>` : ''}
                         </div>
-                        <span class="pipeline-transition-btn ${_gateArrowClass(pipeline, 'test', testStep, qaEnabled ? qaStep : deployStep)}${gateTestDeploy ? ' has-gate' : ''}${_transitionModeClass(pipeline, 'test_to_deploy')}" onclick="event.stopPropagation(); openTransitionConfig('${escapeHtml(repo.name)}', 'test_to_deploy')" title="Test → ${qaEnabled ? 'QA → ' : ''}Deploy transition (click to configure)">
+                        <span class="pipeline-transition-btn ${_gateArrowClass(pipeline, 'test', testStep, qaEnabled ? qaStep : deployStep)}${gateTestDeploy ? ' has-gate' : ''}${_transitionModeClass(pipeline, 'test_to_deploy')}" data-click="openTransitionConfig" data-args="${uiArgs(repo.name, 'test_to_deploy')}" data-click-stop title="Test → ${qaEnabled ? 'QA → ' : ''}Deploy transition (click to configure)">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
                             ${_transitionModeIcon(pipeline, 'test_to_deploy')}
                             ${qaEnabled ? '<span class="transition-badge badge-qa" title="QA pre-deploy enabled">QA</span>' : ''}
                         </span>
                         ${qaEnabled ? `
-                        <div class="pipeline-step step-${qaStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'qa')" title="QA deploy (qa-${escapeHtml(stackName)} on qa.&lt;domain&gt;)${qaStageVersion ? ' — current: ' + escapeHtml(qaStageVersion) : ''}" style="cursor:pointer">
+                        <div class="pipeline-step step-${qaStep}" data-click="pipelineStepClick" data-args="${uiArgs(repo.name, repo.ssh_url, 'qa')}" data-click-stop title="QA deploy (qa-${escapeHtml(stackName)} on qa.&lt;domain&gt;)${qaStageVersion ? ' — current: ' + escapeHtml(qaStageVersion) : ''}">
                             ${stepIcon(qaStep)}
                             <span>QA</span>
                             ${stageVersionLabel(qaStageVersion, 'QA deployed')}
-                            ${qaActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${qaActionId}', 'QA Deploy Logs', '${escapeHtml(repo.name)}')" title="View QA deploy logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
-                            ${qaStep === 'running' && qaActionId ? `<span class="pipeline-stop-btn" onclick="event.stopPropagation(); cancelAction('${qaActionId}')" title="Stop QA deploy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="10" height="10"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></span>` : ''}
+                            ${qaActionId ? `<span class="pipeline-log-btn" data-click="openActionLogs" data-args="${uiArgs(qaActionId, 'QA Deploy Logs', repo.name)}" data-click-stop title="View QA deploy logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
+                            ${qaStep === 'running' && qaActionId ? `<span class="pipeline-stop-btn" data-click="cancelAction" data-args="${uiArgs(qaActionId)}" data-click-stop title="Stop QA deploy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="10" height="10"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></span>` : ''}
                         </div>
                         <span class="pipeline-transition-btn ${_gateArrowClass(pipeline, 'qa', qaStep, deployStep)}" title="QA → Deploy">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
                         </span>` : ''}
-                        <div class="pipeline-step step-${deployStep}" onclick="event.stopPropagation(); pipelineStepClick('${escapeHtml(repo.name)}', '${escapeHtml(repo.ssh_url)}', 'deploy')" title="Deploy (prod)${deployStageVersion ? ' — current: ' + escapeHtml(deployStageVersion) : ''}">
+                        <div class="pipeline-step step-${deployStep}" data-click="pipelineStepClick" data-args="${uiArgs(repo.name, repo.ssh_url, 'deploy')}" data-click-stop title="Deploy (prod)${deployStageVersion ? ' — current: ' + escapeHtml(deployStageVersion) : ''}">
                             ${stepIcon(deployStep)}
                             <span>Deploy</span>
                             ${stageVersionLabel(deployStageVersion, 'Prod deployed')}
-                            ${deployActionId ? `<span class="pipeline-log-btn" onclick="event.stopPropagation(); openActionLogs('${deployActionId}', 'Deploy Logs', '${escapeHtml(repo.name)}')" title="View deploy logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
-                            ${deployStep === 'running' && deployActionId ? `<span class="pipeline-stop-btn" onclick="event.stopPropagation(); cancelAction('${deployActionId}')" title="Stop deploy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="10" height="10"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></span>` : ''}
+                            ${deployActionId ? `<span class="pipeline-log-btn" data-click="openActionLogs" data-args="${uiArgs(deployActionId, 'Deploy Logs', repo.name)}" data-click-stop title="View deploy logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
+                            ${deployStep === 'running' && deployActionId ? `<span class="pipeline-stop-btn" data-click="cancelAction" data-args="${uiArgs(deployActionId)}" data-click-stop title="Stop deploy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="10" height="10"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></span>` : ''}
                         </div>
                     </div>
 
                     ${isDeployed ? `
-                    <button class="btn btn-sm btn-danger" onclick="removeDeployedStack('${escapeHtml(repo.name)}')" title="Remove deployed stack">
+                    <button class="btn btn-sm btn-danger" data-click="removeDeployedStack" data-args="${uiArgs(repo.name)}" title="Remove deployed stack">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <polyline points="3 6 5 6 21 6"/>
                             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -4733,6 +4718,7 @@ function renderStacksList() {
         </div>
     `;
     }).join('');
+    adoptStartHidden(listEl);
 }
 
 // ============== Pipeline Step Click ==============
@@ -4786,30 +4772,30 @@ function showGateDecision(repoName, transition) {
         m.className = 'modal';
         m.onclick = (e) => { if (e.target === m) m.classList.remove('active'); };
         m.innerHTML = `
-            <div class="modal-content" style="max-width: 800px; width: 90%;">
+            <div class="modal-content modal-gate">
                 <div class="modal-header">
                     <h3 id="gate-decision-title">Gate Decision</h3>
-                    <button class="modal-close" onclick="document.getElementById('gate-decision-modal').classList.remove('active');">&times;</button>
+                    <button class="modal-close" data-click="closeGateDecisionModal">&times;</button>
                 </div>
-                <div class="modal-body" style="padding: 20px;">
-                    <div id="gate-decision-info" style="display: flex; align-items: center; gap: 16px; margin-bottom: 16px; padding: 12px 16px; background: var(--bg-tertiary); border-radius: 8px; flex-wrap: wrap;">
-                        <div id="gate-decision-status" style="font-size: 15px; font-weight: 600;"></div>
-                        <div style="width: 1px; height: 20px; background: var(--border-color);"></div>
-                        <div id="gate-decision-meta" style="font-size: 13px; color: var(--text-muted); flex: 1;"></div>
+                <div class="modal-body modal-body-compact">
+                    <div id="gate-decision-info" class="decision-info">
+                        <div id="gate-decision-status" class="decision-status"></div>
+                        <div class="decision-separator"></div>
+                        <div id="gate-decision-meta" class="decision-meta"></div>
                     </div>
-                    <div style="margin-bottom: 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px;">AI Analysis</div>
-                    <div id="gate-decision-reason" class="markdown-body" style="font-size: 13px; line-height: 1.6; background: var(--bg-secondary); padding: 16px; border-radius: 8px; max-height: 500px; overflow-y: auto; border: 1px solid var(--border-color);"></div>
+                    <div class="section-caption">AI Analysis</div>
+                    <div id="gate-decision-reason" class="markdown-body decision-reason"></div>
                 </div>
                 <div class="modal-footer">
-                    <button class="btn btn-secondary" onclick="document.getElementById('gate-decision-modal').classList.remove('active')">Close</button>
+                    <button class="btn btn-secondary" data-click="closeGateDecisionModal">Close</button>
                 </div>
             </div>`;
         document.body.appendChild(m);
     }
 
     const statusIcon = decision.approved
-        ? '<span style="color: var(--status-success); display: inline-flex; align-items: center; gap: 6px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Approved</span>'
-        : '<span style="color: var(--status-error); display: inline-flex; align-items: center; gap: 6px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> Rejected</span>';
+        ? '<span class="decision-verdict decision-approved"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Approved</span>'
+        : '<span class="decision-verdict decision-rejected"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> Rejected</span>';
 
     document.getElementById('gate-decision-title').textContent = `Gate: ${label}`;
     document.getElementById('gate-decision-meta').innerHTML = `<strong>${escapeHtml(repoName)}</strong>${pipeline.project_name && pipeline.project_name !== repoName ? ` (${escapeHtml(pipeline.project_name)})` : ''}${pipeline.stack_name ? ` &mdash; Stack: <code>${escapeHtml(pipeline.stack_name)}</code>` : ''}${ts ? ` &mdash; <span title="${escapeHtml(decision.timestamp || '')}">${ts}</span>` : ''}`;
@@ -4840,15 +4826,15 @@ async function openTransitionConfig(repoName, transition) {
         modal.className = 'modal';
         modal.onclick = (e) => { if (e.target === modal) modal.classList.remove('active'); };
         modal.innerHTML = `
-            <div class="modal-content" style="max-width: 600px; width: 90%;">
+            <div class="modal-content modal-transition">
                 <div class="modal-header">
                     <h3 id="transition-config-title">Transition Config</h3>
-                    <button class="modal-close" onclick="document.getElementById('transition-config-modal').classList.remove('active');">&times;</button>
+                    <button class="modal-close" data-click="closeTransitionConfigModal">&times;</button>
                 </div>
-                <div class="modal-body" style="padding: 20px;">
+                <div class="modal-body modal-body-compact">
                     <div id="transition-config-loading" class="loading-placeholder">Loading...</div>
-                    <div id="transition-config-content" style="display:none;">
-                        <div style="margin-bottom: 16px; font-size: 13px; color: var(--text-muted);">
+                    <div id="transition-config-content" class="start-hidden">
+                        <div class="transition-config-intro">
                             Configure how the pipeline transitions between stages for this project.
                         </div>
                         <div class="transition-mode-options" id="transition-mode-options">
@@ -4893,12 +4879,12 @@ async function openTransitionConfig(repoName, transition) {
                                 </div>
                             </label>
                         </div>
-                        <div id="transition-qa-section" style="margin-top: 20px; display: none; padding: 14px 16px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-secondary);">
-                            <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer;">
-                                <input type="checkbox" id="transition-qa-enabled" style="margin-top: 3px;">
+                        <div id="transition-qa-section" class="transition-qa-section start-hidden">
+                            <label class="transition-qa-label">
+                                <input type="checkbox" id="transition-qa-enabled">
                                 <span>
-                                    <div style="font-weight: 600; margin-bottom: 4px;">Enable QA pre-deploy step</div>
-                                    <div style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">
+                                    <div class="transition-qa-title">Enable QA pre-deploy step</div>
+                                    <div class="transition-qa-help">
                                         Before the production deploy, also deploy an isolated QA copy of the stack.
                                         The QA stack name is prefixed with <code>qa-</code> and any
                                         <code>TRAEFIK_HOST</code> / <code>*_HOST</code> / <code>*_DOMAIN</code>
@@ -4914,22 +4900,23 @@ async function openTransitionConfig(repoName, transition) {
                                 </span>
                             </label>
                         </div>
-                        <div id="transition-ai-logs-section" style="margin-top: 20px; display: none;">
-                            <div style="margin-bottom: 8px; font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px;">Last AI Decision</div>
-                            <div id="transition-ai-decision-info" style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding: 10px 14px; background: var(--bg-tertiary); border-radius: 8px; flex-wrap: wrap;">
-                                <div id="transition-ai-decision-status" style="font-size: 14px; font-weight: 600;"></div>
-                                <div style="width: 1px; height: 18px; background: var(--border-color);"></div>
-                                <div id="transition-ai-decision-meta" style="font-size: 12px; color: var(--text-muted); flex: 1;"></div>
+                        <div id="transition-ai-logs-section" class="transition-ai-logs-section start-hidden">
+                            <div class="section-caption">Last AI Decision</div>
+                            <div id="transition-ai-decision-info" class="decision-info decision-info-compact">
+                                <div id="transition-ai-decision-status" class="decision-status decision-status-compact"></div>
+                                <div class="decision-separator decision-separator-compact"></div>
+                                <div id="transition-ai-decision-meta" class="decision-meta decision-meta-compact"></div>
                             </div>
-                            <div id="transition-ai-decision-reason" class="markdown-body" style="font-size: 13px; line-height: 1.6; background: var(--bg-secondary); padding: 14px; border-radius: 8px; max-height: 300px; overflow-y: auto; border: 1px solid var(--border-color);"></div>
+                            <div id="transition-ai-decision-reason" class="markdown-body decision-reason decision-reason-compact"></div>
                         </div>
                     </div>
                 </div>
                 <div class="modal-footer">
-                    <button class="btn btn-secondary" onclick="document.getElementById('transition-config-modal').classList.remove('active')">Cancel</button>
-                    <button class="btn btn-primary" id="transition-config-save" onclick="saveTransitionConfig()">Save</button>
+                    <button class="btn btn-secondary" data-click="closeTransitionConfigModal">Cancel</button>
+                    <button class="btn btn-primary" id="transition-config-save" data-click="saveTransitionConfig">Save</button>
                 </div>
             </div>`;
+        adoptStartHidden(modal);
         document.body.appendChild(modal);
     }
 
@@ -4980,12 +4967,12 @@ async function openTransitionConfig(repoName, transition) {
         if (lastDecision) {
             aiSection.style.display = '';
             const statusIcon = lastDecision.approved
-                ? '<span style="color: var(--status-success); display: inline-flex; align-items: center; gap: 5px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Approved</span>'
-                : '<span style="color: var(--status-error); display: inline-flex; align-items: center; gap: 5px;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> Rejected</span>';
+                ? '<span class="decision-verdict decision-approved"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Approved</span>'
+                : '<span class="decision-verdict decision-rejected"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="14" height="14"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> Rejected</span>';
             document.getElementById('transition-ai-decision-status').innerHTML = statusIcon;
             const ts = lastDecision.timestamp ? new Date(lastDecision.timestamp).toLocaleString() : '';
-            const versionTag = lastDecision.version ? `<span style="background: var(--bg-secondary); padding: 2px 8px; border-radius: 4px; font-family: var(--font-mono, monospace); font-size: 11px; border: 1px solid var(--border-color);">v${escapeHtml(lastDecision.version)}</span>` : '';
-            document.getElementById('transition-ai-decision-meta').innerHTML = [versionTag, ts ? `<span>${ts}</span>` : ''].filter(Boolean).join(' <span style="width: 1px; height: 14px; background: var(--border-color); display: inline-block; vertical-align: middle; margin: 0 4px;"></span> ');
+            const versionTag = lastDecision.version ? `<span class="decision-version">v${escapeHtml(lastDecision.version)}</span>` : '';
+            document.getElementById('transition-ai-decision-meta').innerHTML = [versionTag, ts ? `<span>${ts}</span>` : ''].filter(Boolean).join(' <span class="decision-inline-separator"></span> ');
             document.getElementById('transition-ai-decision-reason').innerHTML = simpleMarkdown(lastDecision.reason || 'No details available');
         } else {
             aiSection.style.display = 'none';
@@ -5138,14 +5125,14 @@ function renderPipelineUntaggedList(commits) {
         const timeAgo = formatTimeAgo(commit.date);
         const msgFirstLine = (commit.message || '').split('\n')[0].substring(0, 60);
         html += `
-            <div class="tag-item untagged-commit-item" data-commit="${escapeHtml(commit.sha)}" onclick="selectPipelineCommit('${escapeHtml(commit.sha)}')">
-                <span class="tag-name" style="display:flex;align-items:center;gap:6px;">
-                    <span class="tag-sha" style="font-weight:600;color:var(--accent)">${escapeHtml(commit.short_sha)}</span>
-                    <span style="color:var(--text-secondary);font-size:0.85em;">${escapeHtml(msgFirstLine)}</span>
+            <div class="tag-item untagged-commit-item" data-commit="${escapeHtml(commit.sha)}" data-click="selectPipelineCommit" data-args="${uiArgs(commit.sha)}">
+                <span class="tag-name untagged-commit-name">
+                    <span class="tag-sha untagged-commit-sha">${escapeHtml(commit.short_sha)}</span>
+                    <span class="untagged-commit-message">${escapeHtml(msgFirstLine)}</span>
                 </span>
                 <span class="tag-meta">
                     ${timeAgo ? `<span class="tag-age">${timeAgo}</span>` : ''}
-                    <span style="font-size:0.8em;color:var(--text-muted)">${escapeHtml(commit.author_name || '')}</span>
+                    <span class="untagged-commit-author">${escapeHtml(commit.author_name || '')}</span>
                 </span>
             </div>
         `;
@@ -5169,7 +5156,7 @@ function renderPipelineTagsList(tags, defaultBranch) {
     for (const tag of tags) {
         const timeAgo = formatTimeAgo(tag.created_at);
         html += `
-            <div class="tag-item" data-tag="${escapeHtml(tag.name)}" onclick="selectPipelineTag('${escapeHtml(tag.name)}')">
+            <div class="tag-item" data-tag="${escapeHtml(tag.name)}" data-click="selectPipelineTag" data-args="${uiArgs(tag.name)}">
                 <span class="tag-name">${escapeHtml(tag.name)}</span>
                 <span class="tag-meta">
                     ${timeAgo ? `<span class="tag-age">${timeAgo}</span>` : ''}
@@ -5401,7 +5388,7 @@ function renderBuildTagsList(tags, defaultBranch) {
     for (const tag of tags) {
         const timeAgo = formatTimeAgo(tag.created_at);
         html += `
-            <div class="tag-item" data-tag="${escapeHtml(tag.name)}" onclick="selectBuildTag('${escapeHtml(tag.name)}')">
+            <div class="tag-item" data-tag="${escapeHtml(tag.name)}" data-click="selectBuildTag" data-args="${uiArgs(tag.name)}">
                 <span class="tag-name">${escapeHtml(tag.name)}</span>
                 <span class="tag-meta">
                     ${timeAgo ? `<span class="tag-age">${timeAgo}</span>` : ''}
@@ -5614,7 +5601,7 @@ function renderTestTagsList(tags, defaultBranch) {
     for (const tag of tags) {
         const timeAgo = formatTimeAgo(tag.created_at);
         html += `
-            <div class="tag-item" data-tag="${escapeHtml(tag.name)}" onclick="selectTestTag('${escapeHtml(tag.name)}')">
+            <div class="tag-item" data-tag="${escapeHtml(tag.name)}" data-click="selectTestTag" data-args="${uiArgs(tag.name)}">
                 <span class="tag-name">${escapeHtml(tag.name)}</span>
                 <span class="tag-meta">
                     ${timeAgo ? `<span class="tag-age">${timeAgo}</span>` : ''}
@@ -5839,7 +5826,7 @@ function renderDeployTagsList(tags, defaultBranch) {
     for (const tag of tags) {
         const timeAgo = formatTimeAgo(tag.created_at);
         html += `
-            <div class="tag-item" data-tag="${escapeHtml(tag.name)}" onclick="selectDeployTag('${escapeHtml(tag.name)}')">
+            <div class="tag-item" data-tag="${escapeHtml(tag.name)}" data-click="selectDeployTag" data-args="${uiArgs(tag.name)}">
                 <span class="tag-name">${escapeHtml(tag.name)}</span>
                 <span class="tag-meta">
                     ${timeAgo ? `<span class="tag-age">${timeAgo}</span>` : ''}
@@ -5980,7 +5967,7 @@ function renderServiceDeployTagsList(tags, defaultBranch) {
     for (const tag of tags) {
         const timeAgo = formatTimeAgo(tag.created_at);
         html += `
-            <div class="tag-item" data-tag="${escapeHtml(tag.name)}" onclick="selectServiceDeployTag('${escapeHtml(tag.name)}')">
+            <div class="tag-item" data-tag="${escapeHtml(tag.name)}" data-click="selectServiceDeployTag" data-args="${uiArgs(tag.name)}">
                 <span class="tag-name">${escapeHtml(tag.name)}</span>
                 <span class="tag-meta">
                     ${timeAgo ? `<span class="tag-age">${timeAgo}</span>` : ''}
@@ -6246,13 +6233,13 @@ async function showStackActivity(owner, repo) {
             </svg>
             <span>GitHub</span>
         </a>
-        <button class="btn btn-sm btn-ghost" onclick="cleanupRepoTags('${owner.replace(/'/g, '\\\'')}', '${repo.replace(/'/g, '\\\'')}')" title="Clean up old tags (keep latest 5)">
+        <button class="btn btn-sm btn-ghost" data-click="cleanupRepoTags" data-args="${uiArgs(owner, repo)}" title="Clean up old tags (keep latest 5)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                 <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
             </svg>
             <span>Tags</span>
         </button>
-        <button class="modal-close" onclick="closeActivityModal()">&times;</button>
+        <button class="modal-close" data-click="closeActivityModal">&times;</button>
     `;
     graphContainer.innerHTML = '<div class="loading-placeholder">Loading activity...</div>';
     diffPanel.style.display = 'none';
@@ -6267,7 +6254,7 @@ async function loadActivityData() {
     const data = await apiGet(`/stacks/${encodeURIComponent(activityOwner)}/${encodeURIComponent(activityRepo)}/activity?per_page=30`);
 
     if (!data) {
-        graphContainer.innerHTML = '<div class="loading-placeholder" style="color: var(--status-error);">Failed to load activity data. Check browser console for details.</div>';
+        graphContainer.innerHTML = '<div class="loading-placeholder text-error">Failed to load activity data. Check browser console for details.</div>';
         return;
     }
 
@@ -6278,7 +6265,7 @@ async function loadActivityData() {
     activityCommitBranches = data.commit_branches || {};
 
     if (data.error && activityCommits.length === 0) {
-        graphContainer.innerHTML = `<div class="loading-placeholder" style="color: var(--status-error);">${escapeHtml(data.error)}</div>`;
+        graphContainer.innerHTML = `<div class="loading-placeholder text-error">${escapeHtml(data.error)}</div>`;
         return;
     }
 
@@ -6287,9 +6274,9 @@ async function loadActivityData() {
         graphContainer.innerHTML = '<div class="loading-placeholder">No commits found. Checking permissions...</div>';
         const diagData = await apiGet(`/stacks/test-permissions/${encodeURIComponent(activityOwner)}/${encodeURIComponent(activityRepo)}`);
         if (diagData && diagData.summary) {
-            graphContainer.innerHTML = `<div class="loading-placeholder" style="color: var(--status-error);">${escapeHtml(diagData.summary)}</div>`;
+            graphContainer.innerHTML = `<div class="loading-placeholder text-error">${escapeHtml(diagData.summary)}</div>`;
         } else {
-            graphContainer.innerHTML = '<div class="loading-placeholder" style="color: var(--status-error);">No commits found. Ensure your GitHub token has \'Contents: Read\' permission.</div>';
+            graphContainer.innerHTML = '<div class="loading-placeholder text-error">No commits found. Ensure your GitHub token has \'Contents: Read\' permission.</div>';
         }
         return;
     }
@@ -6439,14 +6426,13 @@ function renderActivityGraph() {
         });
 
         // Commit circle
-        svgCircles += `<circle cx="${cx}" cy="${cy}" r="${RADIUS}" fill="${color}" stroke="var(--bg-card)" stroke-width="2" class="activity-commit-dot" onclick="showCommitDiff('${commit.sha}')"/>`;
+        svgCircles += `<circle cx="${cx}" cy="${cy}" r="${RADIUS}" fill="${color}" stroke="var(--bg-card)" stroke-width="2" class="activity-commit-dot" data-click="showCommitDiff" data-args="${uiArgs(commit.sha)}"/>`;
     }
 
     // Build commit rows
     let rowsHtml = '';
     for (let i = 0; i < activityCommits.length; i++) {
         const commit = activityCommits[i];
-        const cy = 22 + i * ROW_HEIGHT;
 
         // Branch tip labels
         const branchLabels = (activityBranchTipMap[commit.sha] || []).map(name =>
@@ -6460,8 +6446,8 @@ function renderActivityGraph() {
         const labels = branchLabels + tagLabels;
 
         rowsHtml += `
-        <div class="activity-row" style="height:${ROW_HEIGHT}px;top:${cy - ROW_HEIGHT / 2 + RADIUS}px;" data-sha="${commit.sha}" onclick="showCommitDiff('${commit.sha}')">
-            <div class="activity-row-info" style="padding-left:${graphWidth}px;">
+        <div class="activity-row" data-sha="${commit.sha}" data-click="showCommitDiff" data-args="${uiArgs(commit.sha)}">
+            <div class="activity-row-info">
                 ${labels ? `<span class="activity-labels">${labels}</span>` : ''}
                 <span class="activity-sha">${escapeHtml(commit.short_sha)}</span>
                 <span class="activity-msg">${escapeHtml(firstLine)}</span>
@@ -6474,8 +6460,8 @@ function renderActivityGraph() {
     }
 
     container.innerHTML = `
-        <div class="activity-graph" style="position:relative;min-height:${totalHeight}px;">
-            <svg class="activity-svg" width="${graphWidth}" height="${totalHeight}" style="position:absolute;left:0;top:0;">
+        <div class="activity-graph">
+            <svg class="activity-svg" width="${graphWidth}" height="${totalHeight}">
                 ${svgLines}
                 ${svgCircles}
             </svg>
@@ -6484,6 +6470,15 @@ function renderActivityGraph() {
             </div>
         </div>
     `;
+
+    // Geometry goes through the CSSOM: the CSP refuses inline style attributes.
+    container.querySelector('.activity-graph').style.minHeight = `${totalHeight}px`;
+    container.querySelectorAll('.activity-row').forEach((row, i) => {
+        const cy = 22 + i * ROW_HEIGHT;
+        row.style.height = `${ROW_HEIGHT}px`;
+        row.style.top = `${cy - ROW_HEIGHT / 2 + RADIUS}px`;
+        row.querySelector('.activity-row-info').style.paddingLeft = `${graphWidth}px`;
+    });
 }
 
 // ---- Diff Viewer ----
@@ -6505,7 +6500,7 @@ async function showCommitDiff(sha) {
     const data = await apiGet(`/stacks/${encodeURIComponent(activityOwner)}/${encodeURIComponent(activityRepo)}/commits/${sha}/diff`);
 
     if (!data || !data.files) {
-        diffContent.innerHTML = '<div class="loading-placeholder" style="color:var(--status-error);">Failed to load diff</div>';
+        diffContent.innerHTML = '<div class="loading-placeholder text-error">Failed to load diff</div>';
         return;
     }
 
@@ -6533,7 +6528,7 @@ async function showCommitDiff(sha) {
 
         return `
             <div class="diff-file">
-                <div class="diff-file-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                <div class="diff-file-header" data-click="toggleDiffFile">
                     <span class="diff-file-status ${sc}">${si}</span>
                     <span class="diff-file-name">${escapeHtml(file.filename)}${renamed}</span>
                     <span class="diff-file-stats">
@@ -6626,7 +6621,7 @@ function showActionToast(actionId, actionType, repoName) {
                 <span class="action-toast-elapsed">0s</span>
             </div>
             <div class="action-toast-actions">
-                <button class="btn btn-sm btn-ghost" onclick="openActionLogs('${actionId}', '${escapeHtml(actionType)}', '${escapeHtml(repoName)}')" title="View logs">
+                <button class="btn btn-sm btn-ghost" data-click="openActionLogs" data-args="${uiArgs(actionId, actionType, repoName)}" title="View logs">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                         <polyline points="14 2 14 8 20 8"/>
@@ -6635,7 +6630,7 @@ function showActionToast(actionId, actionType, repoName) {
                     </svg>
                     Logs
                 </button>
-                <button class="btn btn-sm btn-danger" onclick="cancelAction('${actionId}')" title="Stop">
+                <button class="btn btn-sm btn-danger" data-click="cancelAction" data-args="${uiArgs(actionId)}" title="Stop">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                         <rect x="6" y="6" width="12" height="12"/>
                     </svg>
@@ -7192,6 +7187,19 @@ document.getElementById('container-modal').addEventListener('click', (e) => {
     }
 });
 
+document.getElementById('recurring-error-modal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) {
+        closeRecurringErrorModal();
+    }
+});
+
+// Enter key sends the agent chat message
+document.getElementById('llm-test-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        sendLLMTest();
+    }
+});
+
 // Enter key to search with AI
 document.getElementById('ai-query').addEventListener('keypress', (e) => {
     if (e.key === 'Enter') {
@@ -7256,7 +7264,8 @@ function initTerminal() {
     terminalInstance.loadAddon(terminalFitAddon);
     terminalInstance.loadAddon(new WebLinksAddon.WebLinksAddon());
 
-    terminalInstance.open(container);
+    withStyleNonce(() => terminalInstance.open(container));
+    loadTerminalWebglRenderer();
     terminalFitAddon.fit();
 
     terminalInitialized = true;
@@ -7275,6 +7284,24 @@ function initTerminal() {
     resizeObserver.observe(container);
 
     connectTerminal();
+}
+
+/**
+ * Draw the terminal with WebGL instead of xterm's default DOM renderer, which
+ * colours 24-bit text through inline style attributes: the CSP refuses those, and
+ * a nonce only vouches for <style> elements. Without WebGL, or once its
+ * context is lost, xterm is back on the DOM renderer, where such text shows in
+ * the default colour.
+ */
+function loadTerminalWebglRenderer() {
+    try {
+        const webgl = new WebglAddon.WebglAddon();
+        // Disposing the addon rebuilds the DOM renderer, <style> elements included.
+        webgl.onContextLoss(() => withStyleNonce(() => webgl.dispose()));
+        terminalInstance.loadAddon(webgl);
+    } catch (e) {
+        console.warn('WebGL terminal renderer unavailable, using the DOM renderer:', e);
+    }
 }
 
 function connectTerminal() {
@@ -7345,4 +7372,173 @@ function updateTerminalStatus(status) {
     if (!el) return;
     el.className = `terminal-status ${status}`;
     el.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+// ============== Content Security Policy ==============
+//
+// The CSP accepts no inline script and no inline style, so the markup (the
+// page and every template in this file) carries neither on* handler attributes
+// nor style attributes. What those attributes used to do happens here instead.
+
+/**
+ * Move the initial display:none of each .start-hidden element into its inline
+ * style. The class keeps the element hidden until this runs; afterwards the
+ * show/hide code finds the inline display it has always toggled, so setting
+ * style.display = '' still shows the element. Run it on markup right after
+ * inserting it.
+ */
+function adoptStartHidden(root) {
+    root.querySelectorAll('.start-hidden').forEach(el => {
+        el.style.display = 'none';
+        el.classList.remove('start-hidden');
+    });
+}
+
+/**
+ * The per-response nonce the CSP accepts on <style> elements. It is read
+ * through the property: the browser blanks the attribute once the page loads.
+ */
+function cspNonce() {
+    return document.querySelector('meta[name="csp-nonce"]')?.nonce || '';
+}
+
+/**
+ * Run fn while document.createElement stamps new <style> elements with the
+ * page's nonce. xterm's DOM renderer injects two of them and offers no way to
+ * pass a nonce; without one the CSP drops them and the terminal loses its
+ * colours and cell layout. The override lasts for the call only.
+ */
+function withStyleNonce(fn) {
+    const nonce = cspNonce();
+    const createElement = document.createElement;
+    document.createElement = function (tagName, options) {
+        const el = createElement.call(this, tagName, options);
+        if (nonce && String(tagName).toLowerCase() === 'style') el.nonce = nonce;
+        return el;
+    };
+    try {
+        return fn();
+    } finally {
+        delete document.createElement;
+    }
+}
+
+// Declarative event handlers. An element names its handler, and one listener
+// per event type on the document runs it:
+//
+//   data-click / data-change / data-input / data-focus = "handlerName"
+//   data-args = JSON array of arguments, built with uiArgs()
+//   data-click-stop: the click does not reach handlers on enclosing elements,
+//                    as event.stopPropagation() did in an inline handler
+//
+// A handler runs with `this` bound to the element that names it. Names resolve
+// against UI_HANDLERS only, never against window, so markup that got past
+// escaping still cannot call an arbitrary global.
+const UI_HANDLERS = Object.freeze({
+    addMCPServer, aiSearchLogs, analyzeActionLogs, applyLLMPreset, cancelAction,
+    cancelCurrentActionLogs, cleanupRepoTags, clearLLMChat, clearRecentQueries,
+    closeActionLogsModal, closeActivityDiff, closeActivityModal, closeAgentModal,
+    closeBuildModal, closeCreateTaskModal, closeDeployModal, closeModal, closePipelineModal,
+    closeRecurringErrorModal, closeServiceDeployModal, closeServiceLogsModal,
+    closeServiceStatusModal, closeSettingsModal, closeStackEnvModal, closeStackOutputModal,
+    closeTestModal, containerAction, createUser, deleteRecentQuery, deleteUser, editStackEnv,
+    executeGeneratedQuery, exportLogs, filterContainerEnv, filterContainerLogs,
+    filterContainers, filterServiceLogs, hostAction, loadAgentHistory, loadContainerMetrics,
+    logout, nextPage, onPipelineBranchChange, openActionLogs, openAgentModal, openContainer,
+    openCreateTaskModal, openServiceDeploy, openServiceLogs, openServiceStatus,
+    openTransitionConfig, pipelineStepClick, prevPage, quickAction, reconnectTerminal,
+    refreshContainerEnv, refreshContainerLogs, refreshContainers, refreshDashboard,
+    refreshLogsSearch, refreshServiceLogs, refreshServiceStatus, refreshStacks,
+    removeDeployedStack, removeMCPServer, removeService, saveSettings, saveSettingsFromAgent,
+    saveStackEnv, saveTransitionConfig, searchHttpErrors, selectBuildTag, selectDeployTag,
+    selectPipelineCommit, selectPipelineTag, selectServiceDeployTag, selectTestTag, sendLLMTest,
+    setUserRole, showCommitDiff, showRecentQueries, showRecurringErrorDetail, showStackActivity,
+    submitBuild, submitCreateTask, submitDeploy, submitPipeline, submitServiceDeploy,
+    submitTest, switchAgentTab, switchSettingsTab, testLLMConnection, testMCPServer,
+    toggleBuildSource, toggleDeploySource, toggleMobileMenu, togglePasswordLogin,
+    toggleServiceDeploySource, toggleServiceLogsAutoRefresh, toggleServiceStatusAutoRefresh,
+    toggleStackExpand, toggleStackSubSection, toggleTaskPreview, toggleTestSource,
+    toggleUserMenu, updateTaskPreview, useRecentQuery,
+
+    // Handlers that use the element, or make more than one call
+    closeGateDecisionModal() {
+        document.getElementById('gate-decision-modal').classList.remove('active');
+    },
+    closeTransitionConfigModal() {
+        document.getElementById('transition-config-modal').classList.remove('active');
+    },
+    dismissToast() {
+        const toast = this.closest('.action-toast');
+        toast.classList.add('toast-exit');
+        setTimeout(() => toast.remove(), 300);
+    },
+    openSettingsFromUserMenu() {
+        openSettingsModal();
+        closeUserMenu();
+    },
+    refreshContainerStatsAndMetrics() {
+        refreshContainerStats();
+        loadContainerMetrics();
+    },
+    toggleComposeHeader() {
+        toggleComposeGroup(this);
+    },
+    toggleContainerLogRow(index) {
+        toggleContainerLogExpand(this, index);
+    },
+    toggleDiffFile() {
+        this.parentElement.classList.toggle('collapsed');
+    },
+    toggleExpanded() {
+        this.classList.toggle('expanded');
+    },
+    toggleHostHeader() {
+        toggleHostGroup(this);
+    },
+    toggleLogRow(index) {
+        toggleLogExpand(this, index);
+    },
+});
+
+const UI_HANDLER_ATTRIBUTES = {
+    click: 'data-click',
+    change: 'data-change',
+    input: 'data-input',
+    focusin: 'data-focus',
+};
+
+function runUiHandler(el, name) {
+    const handler = Object.hasOwn(UI_HANDLERS, name) ? UI_HANDLERS[name] : null;
+    if (!handler) {
+        console.error(`No UI handler named "${name}"`);
+        return;
+    }
+    let args;
+    try {
+        args = JSON.parse(el.getAttribute('data-args') || '[]');
+    } catch (e) {
+        console.error(`Invalid data-args for "${name}":`, e);
+        return;
+    }
+    try {
+        handler.apply(el, args);
+    } catch (e) {
+        // As with inline handlers, one failing does not stop the enclosing ones.
+        console.error(e);
+    }
+}
+
+for (const [type, attribute] of Object.entries(UI_HANDLER_ATTRIBUTES)) {
+    document.addEventListener(type, (event) => {
+        // The path is fixed when the event is dispatched, as it was for inline
+        // handlers: a handler that re-renders its own markup does not change
+        // which enclosing handlers run next.
+        for (const el of event.composedPath()) {
+            if (!(el instanceof Element)) break;
+            if (el.disabled) return;
+            const name = el.getAttribute(attribute);
+            if (name) runUiHandler(el, name);
+            if (type === 'click' && el.hasAttribute('data-click-stop')) return;
+        }
+    });
 }

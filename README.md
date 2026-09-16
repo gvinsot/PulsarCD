@@ -2,6 +2,8 @@
 
 # PulsarCD
 
+Encrypted `.env` and SSH recovery backups: [configuration and recovery procedure](docs/RECOVERY.md).
+
 ### The fastest path from code to deploy. No gates. No waiting. Just ship.
 
 ![Dashboard Screenshot](docs/Screenshot2.png)

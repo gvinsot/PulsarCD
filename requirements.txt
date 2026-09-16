@@ -25,6 +25,8 @@ PyJWT==2.8.0
 # Present transitively via paramiko/asyncssh, but declared here because
 # backend/google_auth.py depends on it directly.
 cryptography>=42.0.0
+# Encrypted recovery versions, stored separately from application log indexes.
+psycopg[binary]>=3.2,<4
 # Break-glass administrator password only; everyone else signs in with Google.
 bcrypt>=4.0.0
 

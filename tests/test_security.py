@@ -444,28 +444,26 @@ class TestC1NoCommandReachesTheShell:
         assert await deployer.has_build_config("a;id") is False
         assert commands == []
 
-    async def test_env_content_cannot_escape_the_write_command(self):
+    async def test_env_content_cannot_escape_the_write_command(self, tmp_path):
         """The old heredoc could be closed from inside the .env content."""
         deployer, commands = _deployer()
+        deployer.config.repos_path = str(tmp_path)
         payload = "A=1\nENVEOF\nid > /tmp/pwned\nENVEOF\nB='$(id)'\n`id`\n"
         ok, _ = await deployer.save_env_file("myrepo", payload)
         assert ok is True
-        write_cmd = commands[-1]
-        # Nothing from the payload is interpolated verbatim into the command.
-        assert "ENVEOF" not in write_cmd
-        assert "id > /tmp/pwned" not in write_cmd
-        assert "$(id)" not in write_cmd
-        assert "`id`" not in write_cmd
-        # The content travels base64-encoded and is decoded on the host.
-        encoded = base64.b64encode(payload.encode("utf-8")).decode("ascii")
-        assert encoded in write_cmd
-        assert base64.b64decode(encoded).decode("utf-8") == payload
+        # Secret content now travels over stdin, never through _run_command.
+        assert commands == []
+        assert (tmp_path / "myrepo/devops/.env").read_bytes() == payload.encode()
 
-    async def test_read_path_is_terminated_for_a_legitimate_repo(self):
-        """`cat -- <path>` keeps a name starting with '-' from becoming a flag."""
+    async def test_read_path_is_not_interpreted_by_the_shell(self, tmp_path):
         deployer, commands = _deployer()
-        await deployer.get_env_file("my-repo")
-        assert any("cat --" in c for c in commands), commands
+        deployer.config.repos_path = str(tmp_path)
+        path = tmp_path / "my-repo/devops/.env"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"A=1\n\n")
+        ok, content = await deployer.get_env_file("my-repo")
+        assert ok and content == "A=1\n\n"
+        assert commands == []
 
 
 # ===========================================================================
@@ -1852,7 +1850,7 @@ class TestStackEnvNeverReturnsValues:
         async def _get(self, repo_name):
             return True, state["content"]
 
-        async def _save(self, repo_name, content):
+        async def _save(self, repo_name, content, actor="operator"):
             state["content"] = content
             return True, "File saved successfully"
 

@@ -57,6 +57,7 @@ google_verifier: Optional[GoogleIdTokenVerifier] = None
 llm_agent = None
 pipeline_state: Optional[PipelineStateManager] = None
 tag_cleaner = None
+_recovery_task = None
 
 
 async def _notify_agent_failure(stage: str, repo_name: str, version: str, error_output: str):
@@ -189,6 +190,14 @@ async def lifespan(app: FastAPI):
     # Initialize GitHub service
     github_service = GitHubService(settings.github)
 
+    # Reconcile existing .env files and SSH material immediately, then every
+    # minute. Editor writes are backed up synchronously before replacement.
+    global _recovery_task
+    if os.environ.get("PULSARCD_BACKUP__ENABLED", "false").lower() == "true":
+        from .recovery import monitor, status as recovery_status
+        recovery_status["enabled"] = True
+        _recovery_task = asyncio.create_task(monitor(settings.github))
+
     # Initialize LLM agent for error handling (replaces Swarm API notifications)
     if settings.pulsar_config:
         try:
@@ -245,6 +254,13 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down PulsarCD API")
+    if _recovery_task:
+        _recovery_task.cancel()
+        try:
+            await _recovery_task
+        except asyncio.CancelledError:
+            pass
+        _recovery_task = None
     if tag_cleaner:
         await tag_cleaner.stop()
     if error_detector:
@@ -3406,12 +3422,57 @@ async def save_stack_env(repo_name: str, request: Request):
     content = body.get("content", "")
     
     deployer = StackDeployer(settings.github, None)
-    success, message = await deployer.save_env_file(repo_name, content)
+    success, message = await deployer.save_env_file(
+        repo_name, content, actor=getattr(request.state, "user", "operator"))
     
     if not success:
         raise HTTPException(status_code=500, detail=message)
     
     return {"success": True, "message": message, "repo": repo_name}
+
+
+@app.get("/api/admin/recovery/status")
+async def recovery_status():
+    from .recovery import status
+    return dict(status)
+
+
+@app.get("/api/admin/recovery/env/{repo_name}/history")
+async def env_backup_history(repo_name: str):
+    from .backup_vault import get_vault, BackupError
+    from .github_service import _validate_repo_name
+    try:
+        _validate_repo_name(repo_name)
+        vault = await asyncio.to_thread(get_vault)
+        if vault is None:
+            raise HTTPException(503, "Encrypted backup is disabled")
+        versions = await asyncio.to_thread(vault.history, "env", f"{repo_name}/devops/.env")
+        return {"versions": versions}
+    except ValueError:
+        raise HTTPException(400, "Invalid repository name") from None
+    except BackupError as exc:
+        raise HTTPException(503, str(exc)) from None
+
+
+@app.post("/api/admin/recovery/env/{repo_name}/restore/{revision}")
+async def restore_env_backup(repo_name: str, revision: str, request: Request):
+    from .backup_vault import get_vault, BackupError
+    from .github_service import _validate_repo_name
+    try:
+        _validate_repo_name(repo_name)
+        vault = await asyncio.to_thread(get_vault)
+        if vault is None:
+            raise HTTPException(503, "Encrypted backup is disabled")
+        content = await asyncio.to_thread(vault.read, "env", f"{repo_name}/devops/.env", revision)
+        success, message = await StackDeployer(settings.github).save_env_file(
+            repo_name, content.decode("utf-8"), actor=getattr(request.state, "user", "operator"))
+        if not success:
+            raise HTTPException(503, message)
+        return {"success": True, "message": message}
+    except (ValueError, UnicodeError):
+        raise HTTPException(400, "Invalid repository or environment content") from None
+    except BackupError as exc:
+        raise HTTPException(503, str(exc)) from None
 
 
 _deployed_tags_cache = None

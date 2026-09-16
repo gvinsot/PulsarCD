@@ -1,9 +1,11 @@
 """Integration tests for the FastAPI backend — all infrastructure mocked."""
 
 import json
+import re
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
@@ -1296,7 +1298,8 @@ class TestSecurityHeaders:
         assert "frame-ancestors 'none'" in csp
         assert "object-src 'none'" in csp
         assert "base-uri 'self'" in csp
-        assert "script-src 'self' 'unsafe-inline'" in csp
+        assert "script-src 'self' https://cdn.jsdelivr.net" in csp
+        assert "'unsafe-inline'" not in csp
 
     def test_csp_allows_the_same_origin_websocket(self, client):
         csp = client.get("/api/health").headers["Content-Security-Policy"]
@@ -1312,7 +1315,7 @@ class TestSecurityHeaders:
     def test_csp_carries_the_google_sign_in_sources(self, client):
         """The GIS button is a cross-origin iframe with its own script and CSS."""
         csp = client.get("/api/health").headers["Content-Security-Policy"]
-        assert "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net " \
+        assert "script-src 'self' https://cdn.jsdelivr.net " \
                "https://accounts.google.com/gsi/client" in csp
         assert "https://accounts.google.com/gsi/style" in csp
         assert "frame-src https://accounts.google.com/gsi/" in csp
@@ -1345,6 +1348,77 @@ class TestSecurityHeaders:
         assert resp.headers["cache-control"] == "no-cache"
         assert resp.headers["x-accel-buffering"] == "no"
         assert resp.headers["X-Content-Type-Options"] == "nosniff"
+
+
+# ---------------------------------------------------------------------------
+# The page itself: what it sends, and what the CSP would refuse
+# ---------------------------------------------------------------------------
+
+_FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
+_NONCE_META_RE = re.compile(r'<meta name="csp-nonce" nonce="([^"]+)">')
+
+
+def _directive(csp: str, name: str) -> str:
+    return next(d.strip() for d in csp.split(";") if d.strip().startswith(name + " "))
+
+
+class TestFrontendPage:
+    """index.html and app.js must hold up under a CSP with no 'unsafe-inline'."""
+
+    def test_page_sends_no_html_comments(self, client):
+        """Comments are notes for the people editing the page, not for its visitors."""
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "<!--" in (_FRONTEND / "index.html").read_text(encoding="utf-8")
+        assert "<!--" not in resp.text and "-->" not in resp.text
+
+    def test_style_nonce_is_in_the_page_and_the_policy(self, client):
+        resp = client.get("/")
+        nonce = _NONCE_META_RE.search(resp.text).group(1)
+        csp = resp.headers["Content-Security-Policy"]
+        assert f"'nonce-{nonce}'" in _directive(csp, "style-src")
+        assert "nonce-" not in _directive(csp, "script-src")
+        assert "'unsafe-inline'" not in csp
+        assert "__CSP_NONCE__" not in resp.text
+
+    def test_style_nonce_changes_on_every_load(self, client):
+        nonces = {_NONCE_META_RE.search(client.get("/").text).group(1) for _ in range(3)}
+        assert len(nonces) == 3
+        assert all(len(n) >= 24 for n in nonces)
+
+    def test_other_responses_get_no_nonce(self, client):
+        assert "nonce-" not in client.get("/api/health").headers["Content-Security-Policy"]
+
+    def test_markup_has_no_inline_script_or_style(self):
+        """on*= handlers, style= attributes and inline <script>/<style> blocks are all refused."""
+        for name in ("index.html", "static/js/app.js"):
+            source = (_FRONTEND / name).read_text(encoding="utf-8")
+            assert not re.findall(r'\son[a-z]+\s*=\s*["\']', source), name
+            assert not re.findall(r'\sstyle\s*=\s*["\']', source), name
+        index = (_FRONTEND / "index.html").read_text(encoding="utf-8")
+        assert not re.findall(r"<script(?![^>]*\ssrc=)[^>]*>", index)
+        assert "<style" not in index
+        assert "javascript:" not in index
+
+    def test_third_party_files_are_pinned_by_hash(self):
+        index = (_FRONTEND / "index.html").read_text(encoding="utf-8")
+        tags = re.findall(r"<(?:script|link)\b[^>]*>", index)
+        external = [t for t in tags if re.search(r'\s(?:src|href)="https?://', t)]
+        assert external, "expected the CDN scripts and stylesheet"
+        for tag in external:
+            assert re.search(r'\sintegrity="sha(?:384|512)-[A-Za-z0-9+/=]+"', tag), tag
+            assert 'crossorigin="anonymous"' in tag, tag
+            assert "fonts.googleapis.com" not in tag, tag
+
+    def test_every_declared_handler_is_registered(self):
+        """A data-click naming no UI_HANDLERS entry is a dead button, not an error."""
+        index = (_FRONTEND / "index.html").read_text(encoding="utf-8")
+        app_js = (_FRONTEND / "static/js/app.js").read_text(encoding="utf-8")
+        names = set(re.findall(r'data-(?:click|change|input|focus)="(\w+)"', index + app_js))
+        registry = app_js[app_js.index("const UI_HANDLERS = Object.freeze({"):]
+        registry = registry[:registry.index("\n});")]
+        assert names
+        assert not {n for n in names if not re.search(rf"\b{n}\b", registry)}
 
 
 # ---------------------------------------------------------------------------
