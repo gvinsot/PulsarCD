@@ -48,7 +48,9 @@ RUN pip install --no-cache-dir pytest pytest-asyncio "httpx>=0.23.0,<0.28.0"
 # configuration than a developer machine.
 COPY pytest.ini ./
 
-# Copy test files
+# Copy test files. The agent's code is tested here too (its requirements are
+# a subset of requirements.txt); it stays out of the production image.
+COPY agent/ ./agent/
 COPY tests/ ./tests/
 COPY scripts/build-push.sh ./scripts/build-push.sh
 # Build contexts may come from a Windows checkout, while these tests run Bash
