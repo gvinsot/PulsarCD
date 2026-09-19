@@ -23,6 +23,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
+from shared.access_log import is_internal_ip, normalize_ip
+
 from .auth import AUTH_SOURCE_GOOGLE, AUTH_SOURCE_LOCAL, create_token, decode_token
 from .allowlist import EmailAllowlist
 from .google_auth import GoogleIdTokenVerifier, GoogleTokenError
@@ -1457,6 +1459,33 @@ async def get_system_errors(limit: int = Query(default=20, ge=1, le=100)) -> Lis
     if not llm_agent:
         return []
     return llm_agent.get_system_errors(limit=limit)
+
+
+# ============== Security ==============
+
+@app.get("/api/security/overview")
+async def get_security_overview(
+    minutes: int = Query(default=60, ge=5, le=10080),
+    include_internal: bool = Query(default=False),
+):
+    """Suspicious client IPs and hot endpoints, from the Traefik access logs."""
+    return await opensearch.get_security_overview(minutes=minutes, include_internal=include_internal)
+
+
+@app.get("/api/security/ips/{ip}")
+async def get_security_ip_events(
+    ip: str,
+    minutes: int = Query(default=60, ge=5, le=10080),
+):
+    """Latest requests and WAF blocks of one client IP."""
+    normalized = normalize_ip(ip)
+    if normalized is None:
+        raise HTTPException(status_code=400, detail="Invalid IP address")
+    return {
+        "ip": normalized,
+        "internal": is_internal_ip(normalized),
+        "events": await opensearch.get_security_ip_events(normalized, minutes=minutes),
+    }
 
 
 @app.get("/api/admin/error-detector-status")

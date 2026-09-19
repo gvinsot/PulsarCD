@@ -120,6 +120,12 @@
                             </svg>
                             <span>Logs</span>
                         </a>
+                        <a href="#" class="nav-item" data-view="security">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                            </svg>
+                            <span>Security</span>
+                        </a>
                         <a href="#" class="nav-item" data-view="terminal">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polyline points="4 17 10 11 4 5"/>
@@ -193,6 +199,7 @@
                 <a href="#" class="nav-item" data-view="stacks"><span>Stacks</span></a>
                 <a href="#" class="nav-item" data-view="containers"><span>Computers</span></a>
                 <a href="#" class="nav-item" data-view="logs"><span>Logs</span></a>
+                <a href="#" class="nav-item" data-view="security"><span>Security</span></a>
                 <a href="#" class="nav-item" data-view="terminal"><span>Terminal</span></a>
             </div>
         </header>
@@ -485,6 +492,185 @@
                         <span id="page-info">Page 1</span>
                         <button class="btn btn-sm" id="next-page" data-click="nextPage">Next</button>
                     </div>
+                </div>
+            </section>
+
+            <!-- Security View -->
+            <section id="security-view" class="view">
+                <header class="view-header">
+                    <h1>Security</h1>
+                    <div class="header-actions">
+                        <div class="filter-group">
+                            <label for="security-window">Window:</label>
+                            <select id="security-window" data-change="loadSecurity">
+                                <option value="15">15 min</option>
+                                <option value="60" selected>1 hour</option>
+                                <option value="360">6 hours</option>
+                                <option value="1440">24 hours</option>
+                                <option value="10080">7 days</option>
+                            </select>
+                        </div>
+                        <label class="checkbox-label" title="Private addresses: CI pushing to the registry, nodes pulling images, clients coming back through the router's NAT loopback">
+                            <input type="checkbox" id="security-internal" data-change="loadSecurity">
+                            Include internal traffic
+                        </label>
+                        <button class="btn btn-secondary" data-click="loadSecurity">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                <polyline points="23 4 23 10 17 10"/>
+                                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                            </svg>
+                            Refresh
+                        </button>
+                    </div>
+                </header>
+
+                <div class="security-error start-hidden" id="security-error"></div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon hosts">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="security-requests">-</span>
+                            <span class="stat-label">Requests</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon cpu">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"/>
+                                <line x1="2" y1="12" x2="22" y2="12"/>
+                                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="security-unique-ips">-</span>
+                            <span class="stat-label">Client IPs</span>
+                        </div>
+                    </div>
+                    <div class="stat-card error">
+                        <div class="stat-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                                <line x1="12" y1="8" x2="12" y2="12"/>
+                                <line x1="12" y1="16" x2="12.01" y2="16"/>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="security-flagged">-</span>
+                            <span class="stat-label">Suspicious IPs</span>
+                        </div>
+                    </div>
+                    <div class="stat-card error">
+                        <div class="stat-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"/>
+                                <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="security-waf">-</span>
+                            <span class="stat-label">WAF blocks</span>
+                        </div>
+                    </div>
+                    <div class="stat-card warning">
+                        <div class="stat-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="security-denied">-</span>
+                            <span class="stat-label">Denied (401/403)</span>
+                        </div>
+                    </div>
+                    <div class="stat-card warning">
+                        <div class="stat-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                                <line x1="12" y1="9" x2="12" y2="13"/>
+                                <line x1="12" y1="17" x2="12.01" y2="17"/>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="security-4xx">-</span>
+                            <span class="stat-label">HTTP 4xx</span>
+                        </div>
+                    </div>
+                    <div class="stat-card warning">
+                        <div class="stat-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"/>
+                                <polyline points="12 6 12 12 16 14"/>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="security-429">-</span>
+                            <span class="stat-label">Rate limited (429)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chart-card security-chart-card">
+                    <h3>Requests per <span id="security-interval">minute</span></h3>
+                    <div class="chart-wrapper"><canvas id="security-chart"></canvas></div>
+                </div>
+
+                <div class="chart-card security-table-card">
+                    <h3>Client IPs <span class="security-hint">flagged first &middot; click a row for its requests</span></h3>
+                    <div class="security-table-scroll">
+                        <table class="security-table">
+                            <thead>
+                                <tr>
+                                    <th>IP</th>
+                                    <th>Signals</th>
+                                    <th class="num">Requests</th>
+                                    <th class="num" title="Busiest minute of the window. Beyond 6 hours, busiest 5 minutes (beyond 24 hours, busiest hour) divided back to a per-minute rate, so short bursts show smaller there.">Peak/min</th>
+                                    <th class="num">4xx</th>
+                                    <th class="num">WAF</th>
+                                    <th class="num" title="Distinct paths requested">Paths</th>
+                                    <th>Top hosts</th>
+                                    <th>User agent</th>
+                                    <th>Last seen</th>
+                                </tr>
+                            </thead>
+                            <tbody id="security-ips-body">
+                                <tr><td colspan="10" class="security-empty">Loading&hellip;</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="chart-card security-table-card">
+                    <h3>Endpoints <span class="security-hint">host + path, query string ignored</span></h3>
+                    <div class="security-table-scroll">
+                        <table class="security-table">
+                            <thead>
+                                <tr>
+                                    <th>Endpoint</th>
+                                    <th>Signals</th>
+                                    <th class="num">Requests</th>
+                                    <th class="num" title="Busiest minute of the window (averaged over 5 minutes beyond 6 hours, over 1 hour beyond 24 hours)">Peak/min</th>
+                                    <th class="num">Client IPs</th>
+                                    <th class="num">4xx</th>
+                                    <th class="num">5xx</th>
+                                    <th>Top client</th>
+                                </tr>
+                            </thead>
+                            <tbody id="security-endpoints-body">
+                                <tr><td colspan="8" class="security-empty">Loading&hellip;</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="chart-card security-table-card start-hidden" id="security-waf-card">
+                    <h3>WAF rules triggered</h3>
+                    <div id="security-waf-rules" class="security-waf-rules"></div>
                 </div>
             </section>
 
@@ -1006,6 +1192,37 @@
                 </header>
                 <div id="terminal-container" class="terminal-wrapper"></div>
             </section>
+
+            <!-- Security: requests of one client IP -->
+            <div id="security-ip-modal" class="modal">
+                <div class="modal-content modal-lg">
+                    <div class="modal-header">
+                        <h2>Client <span id="security-ip-modal-ip" class="security-ip-title"></span></h2>
+                        <button class="modal-close" data-click="closeSecurityIpModal">&times;</button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="security-ip-modal-summary" class="security-ip-summary"></div>
+                        <div class="security-table-scroll security-ip-events">
+                            <table class="security-table">
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Status</th>
+                                        <th>Method</th>
+                                        <th>Host</th>
+                                        <th>URI</th>
+                                        <th>User agent</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="security-ip-modal-events"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" data-click="closeSecurityIpModal">Close</button>
+                    </div>
+                </div>
+            </div>
 
             <!-- Recurring Error Detail Modal -->
             <div id="recurring-error-modal" class="modal">

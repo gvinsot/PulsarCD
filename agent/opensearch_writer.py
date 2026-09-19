@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional
 import structlog
 from opensearchpy import AsyncOpenSearch, helpers
 
+from shared.access_log import ACCESS_INDEX_MAPPING, build_access_doc
+
 from .config import OpenSearchConfig
 
 logger = structlog.get_logger()
@@ -21,6 +23,7 @@ class OpenSearchWriter:
         self.logs_index = f"{config.index_prefix}-logs"
         self.metrics_index = f"{config.index_prefix}-metrics"
         self.host_metrics_index = f"{config.index_prefix}-host-metrics"
+        self.access_index = f"{config.index_prefix}-access"
 
         auth = None
         if config.username and config.password:
@@ -192,8 +195,11 @@ class OpenSearchWriter:
             }
         })
 
+        await self._ensure_index(self.access_index, ACCESS_INDEX_MAPPING)
+
         # Verify indices exist
-        for idx in [self.logs_index, self.metrics_index, self.host_metrics_index]:
+        for idx in [self.logs_index, self.metrics_index, self.host_metrics_index,
+                    self.access_index]:
             try:
                 count_resp = await self._client.count(index=idx)
                 logger.warning("Index verified", index=idx,
@@ -337,6 +343,7 @@ class OpenSearchWriter:
             return
 
         actions = []
+        access_actions = []
         for entry in entries:
             doc_id = self._generate_log_id(entry)
             doc = entry.copy()
@@ -350,6 +357,16 @@ class OpenSearchWriter:
                 "_id": doc_id,
                 "_source": doc,
             })
+
+            # Traefik requests and WAF blocks also go to the access index.
+            # Same _id as the log line, so a re-collected line stays one doc.
+            access_doc = build_access_doc(doc)
+            if access_doc is not None:
+                access_actions.append({
+                    "_index": self.access_index,
+                    "_id": doc_id,
+                    "_source": access_doc,
+                })
 
         try:
             success, failed = await helpers.async_bulk(
@@ -365,10 +382,29 @@ class OpenSearchWriter:
                                sample_keys=list(sample.keys()), sample_host=sample.get("host"),
                                sample_container=sample.get("container_name"))
             logger.debug("Indexed logs", count=success)
-            return success
         except Exception as e:
             logger.error("Failed to index logs", error=str(e))
-            return 0
+            success = 0
+
+        if access_actions:
+            await self._index_access_docs(access_actions)
+        return success
+
+    async def _index_access_docs(self, actions: List[Dict[str, Any]]):
+        """Bulk index access-log documents (Traefik requests, WAF blocks).
+
+        A separate bulk call from the log lines, so the log count reported by
+        index_logs keeps meaning "log lines indexed".
+        """
+        try:
+            _, failed = await helpers.async_bulk(
+                self._client, actions, raise_on_error=False
+            )
+            if failed:
+                logger.warning("Some access docs failed to index", failed=len(failed),
+                               sample_error=str(failed[0])[:300])
+        except Exception as e:
+            logger.error("Failed to index access docs", error=str(e))
 
     async def index_container_stats(self, stats: Dict[str, Any]):
         """Index container statistics."""

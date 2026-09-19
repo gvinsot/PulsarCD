@@ -6173,3 +6173,234 @@ strong.md-h2 {
 .transition-ai-logs-section {
     margin-top: 20px;
 }
+
+/* ============== Security View ============== */
+
+#security-view .header-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+#security-view .stats-grid {
+    flex-shrink: 0;
+}
+
+.security-error {
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    border-radius: var(--radius-sm);
+    color: var(--status-warning);
+    font-size: 0.85rem;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    flex-shrink: 0;
+}
+
+.security-chart-card {
+    height: 260px;
+    flex-shrink: 0;
+    margin-bottom: 12px;
+}
+
+.security-table-card {
+    height: auto;
+    flex-shrink: 0;
+    margin-bottom: 12px;
+}
+
+.security-hint {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-left: 8px;
+}
+
+.security-table-scroll {
+    max-height: 480px;
+    overflow: auto;
+}
+
+/* Not .logs-table: on mobile that one turns rows into cards, which breaks a
+   numeric table; this one keeps its columns and scrolls sideways instead. */
+.security-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.security-table th,
+.security-table td {
+    padding: 6px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: middle;
+}
+
+.security-table th {
+    background: var(--bg-elevated);
+    font-weight: 500;
+    padding: 8px 10px;
+    color: var(--text-secondary);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    white-space: nowrap;
+}
+
+.security-table tbody tr:hover {
+    background: var(--bg-tertiary);
+}
+
+.security-table th.num,
+.security-table td.num {
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.security-table .mono {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+}
+
+.security-row {
+    cursor: pointer;
+}
+
+.security-row-high {
+    background: rgba(239, 68, 68, 0.08);
+    box-shadow: inset 3px 0 0 var(--status-error);
+}
+
+.security-row-medium {
+    background: rgba(245, 158, 11, 0.06);
+    box-shadow: inset 3px 0 0 var(--status-warning);
+}
+
+.security-flags-cell {
+    white-space: nowrap;
+}
+
+.security-flag {
+    display: inline-block;
+    padding: 1px 8px;
+    margin: 1px 4px 1px 0;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: help;
+}
+
+.security-flag-high {
+    background: rgba(239, 68, 68, 0.18);
+    color: #fca5a5;
+}
+
+.security-flag-medium {
+    background: rgba(245, 158, 11, 0.18);
+    color: #fcd34d;
+}
+
+.security-internal {
+    font-family: var(--font-sans);
+    font-size: 0.7rem;
+    color: var(--accent-secondary);
+    margin-left: 4px;
+}
+
+.security-ellipsis {
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.security-nowrap {
+    white-space: nowrap;
+}
+
+.security-uri {
+    max-width: 420px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.security-link {
+    color: var(--accent-secondary);
+    cursor: pointer;
+}
+
+.security-link:hover {
+    text-decoration: underline;
+}
+
+.security-empty {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 16px;
+}
+
+.security-status-ok { color: var(--status-success); }
+.security-status-warning { color: var(--status-warning); }
+.security-status-error { color: var(--status-error); }
+
+.security-waf-rules,
+.security-ip-paths {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.security-ip-title {
+    font-family: var(--font-mono);
+    color: var(--accent-secondary);
+}
+
+.security-ip-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 14px;
+}
+
+.security-ip-summary:empty {
+    display: none;
+}
+
+.security-ip-facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.security-ip-facts strong {
+    color: var(--text-primary);
+}
+
+.security-ip-events {
+    max-height: 55vh;
+}
+
+@media (max-width: 768px) {
+    #security-view .header-actions {
+        justify-content: flex-start;
+    }
+
+    .security-chart-card {
+        height: 220px;
+    }
+
+    .security-table {
+        min-width: 720px;
+    }
+
+    .security-ellipsis {
+        max-width: 140px;
+    }
+
+    .security-uri {
+        max-width: 200px;
+    }
+}

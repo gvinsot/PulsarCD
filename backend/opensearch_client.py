@@ -8,6 +8,9 @@ from typing import Any, Dict, List, Optional
 import structlog
 from opensearchpy import AsyncOpenSearch, ConflictError, helpers
 
+from shared.access_log import ACCESS_INDEX_MAPPING
+
+from . import security_analytics as security
 from .config import OpenSearchConfig
 from .models import (
     ContainerStats, DashboardStats, HostMetrics, LogEntry,
@@ -164,6 +167,7 @@ class OpenSearchClient:
         self.logs_index = f"{config.index_prefix}-logs"
         self.metrics_index = f"{config.index_prefix}-metrics"
         self.host_metrics_index = f"{config.index_prefix}-host-metrics"
+        self.access_index = f"{config.index_prefix}-access"
         
         # Parse hosts
         hosts = []
@@ -304,9 +308,11 @@ class OpenSearchClient:
         await self._create_logs_index()
         await self._create_metrics_index()
         await self._create_host_metrics_index()
+        await self._ensure_index(self.access_index, ACCESS_INDEX_MAPPING)
 
         # Verify indices actually exist after creation
-        for idx in [self.logs_index, self.metrics_index, self.host_metrics_index]:
+        for idx in [self.logs_index, self.metrics_index, self.host_metrics_index,
+                    self.access_index]:
             try:
                 count_resp = await self._client.count(index=idx)
                 logger.warning("Index verified", index=idx,
@@ -1378,11 +1384,50 @@ class OpenSearchClient:
             logger.error("Failed to get error counts by service", error=str(e))
             return {"hours": hours, "services": []}
 
+    async def get_security_overview(self, minutes: int = security.DEFAULT_WINDOW_MINUTES,
+                                    include_internal: bool = False) -> Dict[str, Any]:
+        """Request volume, suspicious client IPs and hot endpoints (security view)."""
+        minutes = security.clamp_window(minutes)
+        now = datetime.utcnow()
+        start = now - timedelta(minutes=minutes)
+        try:
+            overview_body = security.build_overview_query(start, now, minutes, include_internal)
+            overview_body["timeout"] = SEARCH_TIMEOUT
+            overview = await self._client.search(index=self.access_index, body=overview_body)
+
+            ip_stats = None
+            candidates = security.candidate_ips(overview)
+            if candidates:
+                stats_body = security.build_ip_stats_query(start, minutes, include_internal, candidates)
+                stats_body["timeout"] = SEARCH_TIMEOUT
+                ip_stats = await self._client.search(index=self.access_index, body=stats_body)
+
+            return security.summarize(overview, ip_stats, minutes=minutes,
+                                      include_internal=include_internal, generated_at=now)
+        except Exception as e:
+            logger.error("Failed to get security overview", error=str(e))
+            return security.empty_overview(minutes, include_internal, now,
+                                           error="Access data unavailable")
+
+    async def get_security_ip_events(self, ip: str,
+                                     minutes: int = security.DEFAULT_WINDOW_MINUTES) -> List[Dict[str, Any]]:
+        """Latest requests and WAF blocks of one client IP, newest first."""
+        start = datetime.utcnow() - timedelta(minutes=security.clamp_window(minutes))
+        body = security.build_ip_events_query(ip, start)
+        body["timeout"] = SEARCH_TIMEOUT
+        try:
+            response = await self._client.search(index=self.access_index, body=body)
+            return [hit["_source"] for hit in response.get("hits", {}).get("hits", [])]
+        except Exception as e:
+            logger.error("Failed to get security IP events", ip=ip, error=str(e))
+            return []
+
     async def cleanup_old_data(self, retention_days: int):
         """Delete data older than retention period."""
         cutoff = datetime.utcnow() - timedelta(days=retention_days)
         
-        for index in [self.logs_index, self.metrics_index, self.host_metrics_index]:
+        for index in [self.logs_index, self.metrics_index, self.host_metrics_index,
+                      self.access_index]:
             try:
                 result = await self._client.delete_by_query(
                     index=index,

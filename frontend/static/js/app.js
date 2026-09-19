@@ -10,8 +10,8 @@ const API_BASE = '/api';
 let currentView = 'dashboard';
 
 // Hash ↔ view mapping
-const HASH_TO_VIEW = { dashboard: 'dashboard', stacks: 'stacks', computers: 'containers', logs: 'logs', terminal: 'terminal' };
-const VIEW_TO_HASH = { dashboard: 'Dashboard', stacks: 'Stacks', containers: 'Computers', logs: 'Logs', terminal: 'Terminal' };
+const HASH_TO_VIEW = { dashboard: 'dashboard', stacks: 'stacks', computers: 'containers', logs: 'logs', security: 'security', terminal: 'terminal' };
+const VIEW_TO_HASH = { dashboard: 'Dashboard', stacks: 'Stacks', containers: 'Computers', logs: 'Logs', security: 'Security', terminal: 'Terminal' };
 
 function getViewFromHash() {
     const h = location.hash.replace('#', '').toLowerCase();
@@ -1051,6 +1051,9 @@ function switchView(view, skipHash) {
     if (view !== 'stacks') {
         stopStacksPolling();
     }
+    if (view !== 'security') {
+        stopSecurityPolling();
+    }
 
     // Load view data
     switch (view) {
@@ -1070,6 +1073,10 @@ function switchView(view, skipHash) {
             break;
         case 'stacks':
             loadStacks();
+            break;
+        case 'security':
+            loadSecurity();
+            startSecurityPolling();
             break;
         case 'terminal':
             initTerminal();
@@ -2294,6 +2301,287 @@ function getChartOptions(isPercent = false) {
         }
     };
 }
+
+// ============== Security ==============
+
+// Requests per client IP and per endpoint, from the Traefik access logs the
+// agents copy into the access index. The detection rules (flags) are computed
+// by the backend, see backend/security_analytics.py.
+
+const SECURITY_POLL_INTERVAL = 30000;
+const SECURITY_INTERVAL_LABELS = { '1m': 'minute', '5m': '5 minutes', '15m': '15 minutes', '1h': 'hour' };
+let securityPollTimer = null;
+let securityLoading = false;
+let securityData = null;
+let securityIpRequest = 0;
+
+function startSecurityPolling() {
+    stopSecurityPolling();
+    securityPollTimer = setInterval(() => {
+        if (currentView === 'security' && !document.hidden) loadSecurity();
+    }, SECURITY_POLL_INTERVAL);
+}
+
+function stopSecurityPolling() {
+    if (securityPollTimer) {
+        clearInterval(securityPollTimer);
+        securityPollTimer = null;
+    }
+}
+
+function securityWindow() {
+    return document.getElementById('security-window').value;
+}
+
+/** Access-index timestamps are UTC; those read from _source carry no zone. */
+function parseUtc(iso) {
+    if (!iso) return null;
+    return new Date(/(Z|[+-]\d\d:?\d\d)$/.test(iso) ? iso : `${iso}Z`);
+}
+
+async function loadSecurity() {
+    if (securityLoading) return;
+    securityLoading = true;
+    try {
+        const internal = document.getElementById('security-internal').checked;
+        const data = await apiGet(
+            `/security/overview?minutes=${encodeURIComponent(securityWindow())}&include_internal=${internal}`);
+        if (!data) return;
+        securityData = data;
+        renderSecurity(data);
+    } finally {
+        securityLoading = false;
+    }
+}
+
+function renderSecurity(data) {
+    const errorEl = document.getElementById('security-error');
+    if (data.error) {
+        errorEl.textContent = `${data.error}. The access index is filled by the PulsarCD agent running on the Traefik node, from Traefik's JSON access log.`;
+        errorEl.style.display = '';
+    } else {
+        errorEl.style.display = 'none';
+    }
+
+    const t = data.totals;
+    document.getElementById('security-requests').textContent = formatNumber(t.requests);
+    document.getElementById('security-unique-ips').textContent = formatNumber(t.unique_ips);
+    document.getElementById('security-flagged').textContent = formatNumber(t.flagged_ips);
+    document.getElementById('security-waf').textContent = formatNumber(t.waf_blocks);
+    document.getElementById('security-denied').textContent = formatNumber(t.denied);
+    document.getElementById('security-4xx').textContent = formatNumber(t.client_errors);
+    document.getElementById('security-429').textContent = formatNumber(t.rate_limited);
+    document.getElementById('security-interval').textContent =
+        SECURITY_INTERVAL_LABELS[data.timeline_interval] || data.timeline_interval;
+
+    renderSecurityChart(data.timeline, data.window_minutes);
+    renderSecurityIps(data.ips);
+    renderSecurityEndpoints(data.endpoints);
+    renderSecurityWafRules(data.waf_rules);
+}
+
+function formatSecurityBucket(iso, windowMinutes) {
+    const date = parseUtc(iso);
+    if (windowMinutes > 1440) {
+        return date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', hour12: false });
+    }
+    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function renderSecurityChart(timeline, windowMinutes) {
+    const labels = timeline.map(p => formatSecurityBucket(p.timestamp, windowMinutes));
+    const series = [
+        timeline.map(p => p.ok || 0),
+        timeline.map(p => p.client_errors || 0),
+        timeline.map(p => p.server_errors || 0),
+    ];
+
+    // Updated in place on refresh: rebuilding the chart every 30 s flickers.
+    if (charts.security) {
+        charts.security.data.labels = labels;
+        charts.security.data.datasets.forEach((ds, i) => { ds.data = series[i]; });
+        charts.security.update('none');
+        return;
+    }
+
+    const options = getChartOptions();
+    options.interaction = { mode: 'index', intersect: false };
+    options.scales.x.stacked = true;
+    options.scales.y.stacked = true;
+    options.scales.x.ticks.autoSkip = true;
+    options.scales.x.ticks.maxTicksLimit = 12;
+
+    charts.security = new Chart(document.getElementById('security-chart').getContext('2d'), {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [
+                { label: '2xx/3xx', data: series[0], backgroundColor: 'rgba(34, 197, 94, 0.6)' },
+                { label: '4xx', data: series[1], backgroundColor: 'rgba(245, 158, 11, 0.75)' },
+                { label: '5xx', data: series[2], backgroundColor: 'rgba(239, 68, 68, 0.8)' },
+            ],
+        },
+        options,
+    });
+}
+
+function securityFlagBadges(flags) {
+    if (!flags || !flags.length) return '<span class="text-muted">&mdash;</span>';
+    return flags.map(f =>
+        `<span class="security-flag security-flag-${escapeHtml(f.severity)}" title="${escapeHtml(f.detail)}">${escapeHtml(f.label)}</span>`
+    ).join('');
+}
+
+function securityRowClass(score) {
+    if (score >= 3) return 'security-row-high';
+    if (score > 0) return 'security-row-medium';
+    return '';
+}
+
+function securityShare(part, total) {
+    return total ? ` <span class="text-muted">(${Math.round(100 * part / total)}%)</span>` : '';
+}
+
+function renderSecurityIps(ips) {
+    const body = document.getElementById('security-ips-body');
+    if (!ips.length) {
+        body.innerHTML = '<tr><td colspan="10" class="security-empty">No request in this window</td></tr>';
+        return;
+    }
+    body.innerHTML = ips.map(ip => {
+        const hosts = ip.top_hosts.map(h => h.key).join(', ');
+        return `
+        <tr class="security-row ${securityRowClass(ip.score)}" data-click="openSecurityIp" data-args="${uiArgs(ip.ip)}">
+            <td class="mono">${escapeHtml(ip.ip)}${ip.internal ? ' <span class="security-internal">internal</span>' : ''}</td>
+            <td class="security-flags-cell">${securityFlagBadges(ip.flags)}</td>
+            <td class="num">${formatNumber(ip.requests)}</td>
+            <td class="num">${formatNumber(ip.peak_per_minute)}</td>
+            <td class="num">${formatNumber(ip.client_errors)}${securityShare(ip.client_errors, ip.requests)}</td>
+            <td class="num">${formatNumber(ip.waf_blocks)}</td>
+            <td class="num">${formatNumber(ip.distinct_paths)}</td>
+            <td class="security-ellipsis" title="${escapeHtml(hosts)}">${escapeHtml(hosts) || '&mdash;'}</td>
+            <td class="security-ellipsis" title="${escapeHtml(ip.user_agent || '')}">${escapeHtml(ip.user_agent || '') || '&mdash;'}</td>
+            <td>${formatRelativeTime(ip.last_seen)}</td>
+        </tr>`;
+    }).join('');
+}
+
+function renderSecurityEndpoints(endpoints) {
+    const body = document.getElementById('security-endpoints-body');
+    if (!endpoints.length) {
+        body.innerHTML = '<tr><td colspan="8" class="security-empty">No request in this window</td></tr>';
+        return;
+    }
+    body.innerHTML = endpoints.map(ep => {
+        const top = ep.top_ips[0];
+        const topClient = top
+            ? `<span class="mono security-link" data-click="openSecurityIp" data-args="${uiArgs(top.key)}">${escapeHtml(top.key)}</span>${securityShare(top.count, ep.requests)}`
+            : '&mdash;';
+        const endpoint = `${ep.host}${ep.path}`;
+        return `
+        <tr class="${securityRowClass(ep.score)}">
+            <td class="mono security-ellipsis" title="${escapeHtml(endpoint)}"><span class="text-muted">${escapeHtml(ep.host)}</span>${escapeHtml(ep.path)}</td>
+            <td class="security-flags-cell">${securityFlagBadges(ep.flags)}</td>
+            <td class="num">${formatNumber(ep.requests)}</td>
+            <td class="num">${formatNumber(ep.peak_per_minute)}</td>
+            <td class="num">${formatNumber(ep.distinct_ips)}</td>
+            <td class="num">${formatNumber(ep.client_errors)}${securityShare(ep.client_errors, ep.requests)}</td>
+            <td class="num">${formatNumber(ep.server_errors)}</td>
+            <td>${topClient}</td>
+        </tr>`;
+    }).join('');
+}
+
+function renderSecurityWafRules(rules) {
+    const card = document.getElementById('security-waf-card');
+    if (!rules || !rules.length) {
+        card.style.display = 'none';
+        return;
+    }
+    document.getElementById('security-waf-rules').innerHTML = rules.map(r =>
+        `<span class="rerr-service-chip">${escapeHtml(r.key)} <span class="text-muted">&times;${formatNumber(r.count)}</span></span>`
+    ).join('');
+    card.style.display = '';
+}
+
+function securityStatusClass(status) {
+    if (status >= 500) return 'security-status-error';
+    if (status >= 400) return 'security-status-warning';
+    return 'security-status-ok';
+}
+
+function securityIpSummary(ip) {
+    const paths = ip.top_paths.map(p =>
+        `<span class="rerr-service-chip mono">${escapeHtml(p.key)} <span class="text-muted">&times;${formatNumber(p.count)}</span></span>`
+    ).join('');
+    return `
+        <div class="security-ip-flags">${securityFlagBadges(ip.flags)}</div>
+        <div class="security-ip-facts">
+            <span><strong>${formatNumber(ip.requests)}</strong> requests</span>
+            <span><strong>${formatNumber(ip.peak_per_minute)}</strong> peak/min</span>
+            <span><strong>${formatNumber(ip.client_errors)}</strong> 4xx</span>
+            <span><strong>${formatNumber(ip.denied)}</strong> 401/403</span>
+            <span><strong>${formatNumber(ip.waf_blocks)}</strong> WAF blocks</span>
+            <span><strong>${formatNumber(ip.distinct_paths)}</strong> paths</span>
+            <span>first seen ${formatRelativeTime(ip.first_seen)}</span>
+        </div>
+        ${paths ? `<div class="security-ip-paths">${paths}</div>` : ''}`;
+}
+
+async function openSecurityIp(ip) {
+    const modal = document.getElementById('security-ip-modal');
+    const eventsBody = document.getElementById('security-ip-modal-events');
+    const known = securityData && securityData.ips.find(i => i.ip === ip);
+    document.getElementById('security-ip-modal-ip').textContent = ip;
+    document.getElementById('security-ip-modal-summary').innerHTML = known ? securityIpSummary(known) : '';
+    eventsBody.innerHTML = '<tr><td colspan="6" class="security-empty">Loading&hellip;</td></tr>';
+    modal.classList.add('open');
+
+    // A slower answer for a previously opened IP must not overwrite this one.
+    const requestId = ++securityIpRequest;
+    const data = await apiGet(
+        `/security/ips/${encodeURIComponent(ip)}?minutes=${encodeURIComponent(securityWindow())}`);
+    if (requestId !== securityIpRequest) return;
+    if (!data) {
+        eventsBody.innerHTML = '<tr><td colspan="6" class="security-empty">Could not load the requests of this client</td></tr>';
+        return;
+    }
+    if (!data.events.length) {
+        eventsBody.innerHTML = '<tr><td colspan="6" class="security-empty">No request from this client in this window</td></tr>';
+        return;
+    }
+    eventsBody.innerHTML = data.events.map(e => {
+        const status = e.event === 'waf_block'
+            ? `<span class="security-flag security-flag-high" title="${escapeHtml(e.rule_msg || '')}">WAF</span>`
+            : `<span class="${securityStatusClass(e.status)}">${escapeHtml(String(e.status ?? '-'))}</span>`;
+        const time = parseUtc(e.timestamp).toLocaleString('en-US', {
+            month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+        });
+        const host = e.request_host || e.router || '';
+        return `
+        <tr>
+            <td class="mono security-nowrap">${escapeHtml(time)}</td>
+            <td>${status}</td>
+            <td>${escapeHtml(e.method || '')}</td>
+            <td class="security-ellipsis" title="${escapeHtml(host)}">${escapeHtml(host)}</td>
+            <td class="mono security-uri" title="${escapeHtml(e.uri || '')}">${escapeHtml(e.uri || '')}</td>
+            <td class="security-ellipsis" title="${escapeHtml(e.user_agent || '')}">${escapeHtml(e.user_agent || '')}</td>
+        </tr>`;
+    }).join('');
+}
+
+function closeSecurityIpModal() {
+    securityIpRequest++;
+    document.getElementById('security-ip-modal').classList.remove('open');
+}
+
+document.getElementById('security-ip-modal').addEventListener('click', (e) => {
+    if (e.target.classList.contains('modal')) closeSecurityIpModal();
+});
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeSecurityIpModal();
+});
 
 // ============== Containers ==============
 
@@ -7439,13 +7727,14 @@ const UI_HANDLERS = Object.freeze({
     cancelCurrentActionLogs, cleanupRepoTags, clearLLMChat, clearRecentQueries,
     closeActionLogsModal, closeActivityDiff, closeActivityModal, closeAgentModal,
     closeBuildModal, closeCreateTaskModal, closeDeployModal, closeModal, closePipelineModal,
-    closeRecurringErrorModal, closeServiceDeployModal, closeServiceLogsModal,
-    closeServiceStatusModal, closeSettingsModal, closeStackEnvModal, closeStackOutputModal,
-    closeTestModal, containerAction, createUser, deleteRecentQuery, deleteUser, editStackEnv,
-    executeGeneratedQuery, exportLogs, filterContainerEnv, filterContainerLogs,
-    filterContainers, filterServiceLogs, hostAction, loadAgentHistory, loadContainerMetrics,
-    logout, nextPage, onPipelineBranchChange, openActionLogs, openAgentModal, openContainer,
-    openCreateTaskModal, openServiceDeploy, openServiceLogs, openServiceStatus,
+    closeRecurringErrorModal, closeSecurityIpModal, closeServiceDeployModal,
+    closeServiceLogsModal, closeServiceStatusModal, closeSettingsModal, closeStackEnvModal,
+    closeStackOutputModal, closeTestModal, containerAction, createUser, deleteRecentQuery,
+    deleteUser, editStackEnv, executeGeneratedQuery, exportLogs, filterContainerEnv,
+    filterContainerLogs, filterContainers, filterServiceLogs, hostAction, loadAgentHistory,
+    loadContainerMetrics, loadSecurity, logout, nextPage, onPipelineBranchChange,
+    openActionLogs, openAgentModal, openContainer,
+    openCreateTaskModal, openSecurityIp, openServiceDeploy, openServiceLogs, openServiceStatus,
     openTransitionConfig, pipelineStepClick, prevPage, quickAction, reconnectTerminal,
     refreshContainerEnv, refreshContainerLogs, refreshContainers, refreshDashboard,
     refreshLogsSearch, refreshServiceLogs, refreshServiceStatus, refreshStacks,
