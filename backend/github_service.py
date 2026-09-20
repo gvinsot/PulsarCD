@@ -1495,6 +1495,7 @@ class StackDeployer:
             from . import swiftproof
             proof = None
             guard = None
+            commit_ref = None
             if swiftproof.enabled(repo_name):
                 if output_callback:
                     output_callback("SwiftProof: verifying deployment evidence (may take several minutes)...")
@@ -1507,7 +1508,9 @@ class StackDeployer:
                     result["gate_rejected"] = True
                     return result
                 guard = await swiftproof.prepare_deploy(self, repo_name, deploy_version, proof)
-                checkout_ref = proof["head"]
+                # The reviewed SHA belongs in the commit argument; the branch
+                # argument only resolves branches and tags.
+                commit_ref = proof["head"]
 
             # Run deploy script
             repos_path = self.config.repos_path
@@ -1515,13 +1518,15 @@ class StackDeployer:
             repo_path = f"{repos_path}/{repo_name}"
 
             # Pass absolute repo_path to avoid path computation mismatch
-            # Script format: deploy-service.sh [--qa] <folder> <version> [branch/tag]
+            # Script format: deploy-service.sh [--qa] <folder> <version> [branch/tag] [commit]
             qa_flag = "--qa " if qa else ""
             deploy_cmd = f"cd {_shell_quote_path(scripts_path)} && bash deploy-service.sh {qa_flag}{_shell_quote_path(repo_path)} {shlex.quote(deploy_version)}"
             if guard:
                 deploy_cmd = deploy_cmd.replace("&& bash ", "&& SWIFTPROOF_GUARD_FILE=" + shlex.quote(guard["path"]) + " bash ", 1)
-            if checkout_ref:
-                deploy_cmd += f" {shlex.quote(checkout_ref)}"
+            if checkout_ref or commit_ref:
+                deploy_cmd += " " + (shlex.quote(checkout_ref) if checkout_ref else '""')
+            if commit_ref:
+                deploy_cmd += f" {shlex.quote(commit_ref)}"
 
             if output_callback and clone_msg:
                 for line in clone_msg.split('\n'):

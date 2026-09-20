@@ -320,12 +320,14 @@ if [ -n "$BRANCH" ] || [ -n "$COMMIT" ]; then
     git fetch --all --prune --tags --force
 
     # Checkout the branch or tag
+    BRANCH_IS_MOVABLE=false
     if [ -n "$BRANCH" ]; then
         log_info "Checking out branch: $BRANCH"
-        
+
         # Check if branch exists locally
         if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
             # Local branch exists - checkout
+            BRANCH_IS_MOVABLE=true
             git checkout "$BRANCH" || {
                 log_error "Failed to checkout branch: $BRANCH"
                 exit 1
@@ -333,6 +335,7 @@ if [ -n "$BRANCH" ] || [ -n "$COMMIT" ]; then
         elif git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
             # Branch exists on remote but not locally - create tracking branch
             log_info "Creating local tracking branch for origin/$BRANCH"
+            BRANCH_IS_MOVABLE=true
             git checkout -b "$BRANCH" "origin/$BRANCH" || {
                 log_error "Failed to checkout remote branch: origin/$BRANCH"
                 exit 1
@@ -344,14 +347,21 @@ if [ -n "$BRANCH" ] || [ -n "$COMMIT" ]; then
                 log_error "Failed to checkout tag: $BRANCH"
                 exit 1
             }
+        elif git rev-parse --verify --quiet "${BRANCH}^{commit}" >/dev/null; then
+            # A commit ID, as a SwiftProof-reviewed deployment pins it
+            log_info "Checking out commit: $BRANCH"
+            git checkout --detach "$BRANCH" || {
+                log_error "Failed to checkout commit: $BRANCH"
+                exit 1
+            }
         else
             # Not found anywhere
             log_error "Branch or tag not found: $BRANCH (checked locally, remotely, and tags)"
             exit 1
         fi
 
-        # Force reset to remote if no specific commit requested and not a tag
-        if [ -z "$COMMIT" ] && ! git show-ref --verify --quiet "refs/tags/$BRANCH"; then
+        # Force reset to remote only for an actual branch with no pinned commit
+        if [ -z "$COMMIT" ] && [ "$BRANCH_IS_MOVABLE" = "true" ]; then
             log_info "Resetting to latest remote version..."
             git reset --hard "origin/$BRANCH" 2>/dev/null || {
                 log_warning "Could not reset to origin/$BRANCH (may be a local-only branch)"

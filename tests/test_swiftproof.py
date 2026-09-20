@@ -176,7 +176,9 @@ async def test_common_deploy_pins_sha_and_qa_does_not_advance_baseline(manager, 
     result = await deployer.deploy("demo", "git@github.com:owner/demo.git", tag="v1.0.1", qa=True)
     assert result["success"]
     command = execute.call_args.args[0]
-    assert identity["head"] in command and "SWIFTPROOF_GUARD_FILE=/trusted/guard.json" in command
+    # The reviewed SHA must reach the script's commit argument: its branch
+    # argument only resolves branches and tags, never a commit ID.
+    assert command.endswith(" v1.0.1 " + identity["head"]) and "SWIFTPROOF_GUARD_FILE=/trusted/guard.json" in command
     record.assert_not_called()
     result = await deployer.deploy("demo", "git@github.com:owner/demo.git", tag="v1.0.1")
     assert result["success"]
