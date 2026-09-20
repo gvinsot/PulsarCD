@@ -29,7 +29,9 @@ class TestLogsViewer {
             </nav>
             <section data-pane="results">
                 <div class="test-toolbar">
-                    <label class="test-search">Search tests<input type="search" data-control="query" placeholder="Name, file, theme…"></label>
+                    <form class="test-search" role="search" autocomplete="off">
+                        <label>Search tests<input type="search" name="test-log-search" data-control="query" placeholder="Name, file, theme…" autocomplete="off" data-lpignore="true" data-1p-ignore></label>
+                    </form>
                     <label>Result<select data-control="status"><option value="">All results</option><option value="failed">Failures & errors</option><option value="passed">Passed</option><option value="skipped">Skipped</option></select></label>
                     <label>Group by<select data-control="group"><option value="result">Result (ERROR / SUCCESS)</option><option value="type">Test type</option><option value="framework">Framework</option><option value="theme">Theme (automatic)</option><option value="file">File</option><option value="llm" disabled>Theme (LLM)</option></select></label>
                     <button class="btn btn-sm btn-secondary" data-action="themes" ${isAdmin() ? '' : 'hidden'}>Group with LLM</button>
@@ -46,6 +48,8 @@ class TestLogsViewer {
         rawContent.hidden = true;
         rawContent.before(this.root);
         document.getElementById('action-logs-modal').classList.add('test-logs-modal');
+        // Keep this filter separate from the page's credential fields; Enter only filters locally.
+        this.root.querySelector('form.test-search').addEventListener('submit', event => event.preventDefault());
         this.root.addEventListener('click', event => this.click(event));
         this.root.addEventListener('input', event => {
             if (event.target.dataset.control !== 'query') return;
