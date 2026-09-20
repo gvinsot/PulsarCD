@@ -34,6 +34,11 @@ l'interface, de l'API, du pipeline et du MCP.
    sélection de modèle supplémentaire n'est nécessaire. Reconstruire la prochaine
    version avec les nouveaux scripts pour disposer de sa provenance.
 
+Si une de ces étapes manque, la modale **Test Logs** nomme le point à corriger
+plutôt qu'un nom d'exception : provenance de build absente, tag de release absent
+du dépôt de l'hôte, `.swiftproof.json` absent du commit de référence, binaire
+absent de l'hôte. Ces messages n'exposent jamais la sortie d'erreur des commandes.
+
 La fonctionnalité est désactivée par défaut sur les projets existants. Le pilote
 GitHub de SwiftProof est informatif ; le contrôle PulsarCD, une fois activé,
 bloque effectivement les déploiements qui ne satisfont pas la politique.
@@ -80,9 +85,12 @@ Les titres du rapport servent de raccourcis ; l'archive reste téléchargeable.
 L'explorateur regroupe par défaut les résultats sous **ERROR** (échecs et erreurs)
 et **SUCCESS**, puis les tests ignorés ou indéterminés. Il propose aussi les
 groupements par type, framework, fichier ou thème automatique, une recherche
-et un filtre de résultat. Les formats pytest, Jest/Vitest, TAP, .NET et Go sont
-reconnus au mieux ; les suites et totaux du runner restent distincts des tests
-nommés. Chaque entrée pointe vers sa ligne de log. Les dernières 20 000 lignes
+et un filtre de résultat. Les formats pytest, Jest/Vitest, `node --test`
+(rapporteur `spec` comme TAP), TAP, .NET et Go sont reconnus au mieux ; les
+suites et totaux du runner restent distincts des tests nommés. Pour `node
+--test`, un test ouvrant des sous-tests devient leur suite, et le récapitulatif
+`failing tests` apporte le fichier et l'erreur au test déjà listé plutôt qu'un
+doublon. Chaque entrée pointe vers sa ligne de log. Les dernières 20 000 lignes
 sont conservées dans la modale, affichées par fenêtres de 500 lignes ; le suivi
 automatique s'arrête lorsqu'on remonte ou consulte une entrée.
 

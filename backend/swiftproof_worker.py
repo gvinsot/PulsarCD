@@ -18,8 +18,14 @@ import zipfile
 LIMIT = 8 * 1024 * 1024
 
 
-def command(*args, timeout=120, env=None):
-    return subprocess.check_output(args, stderr=subprocess.PIPE, timeout=timeout, env=env).decode().strip()
+def command(*args, timeout=120, env=None, failure=None):
+    """Report what the administrator must fix; never the command's own stderr."""
+    try:
+        return subprocess.check_output(args, stderr=subprocess.PIPE, timeout=timeout, env=env).decode().strip()
+    except subprocess.CalledProcessError:
+        raise ValueError(failure or args[0] + " failed on the deployment host") from None
+    except subprocess.TimeoutExpired:
+        raise ValueError(args[0] + " timed out on the deployment host") from None
 
 
 def digest(data):
@@ -39,10 +45,11 @@ def save(path, value):
 
 
 def live_services(stack):
-    ids = command("docker", "stack", "services", "--quiet", stack).split()
+    unreadable = "Cannot read the live services of stack " + stack + " on the deployment host"
+    ids = command("docker", "stack", "services", "--quiet", stack, failure=unreadable).split()
     if not ids:
         return {}
-    specs = json.loads(command("docker", "service", "inspect", *ids))
+    specs = json.loads(command("docker", "service", "inspect", *ids, failure=unreadable))
     return {s["Spec"]["Name"]: s["Spec"]["TaskTemplate"]["ContainerSpec"]["Image"] for s in specs}
 
 
@@ -69,10 +76,15 @@ def inspect(request):
         raise ValueError("SwiftProof requires an exact release version")
     root = Path.home() / ".local/share/pulsarcd/swiftproof"
     checkout = Path(request["repos_path"]).expanduser() / repo
-    build = json.loads((root / "builds" / repo / (version + ".json")).read_text())
+    provenance = root / "builds" / repo / (version + ".json")
+    if not provenance.is_file():
+        raise ValueError("No build provenance for " + repo + " " + version
+                         + ": rebuild this release with the current PulsarCD scripts")
+    build = json.loads(provenance.read_text())
     if build.get("repo") != repo or build.get("release") != version or not build.get("images"):
         raise ValueError("Missing build provenance")
-    head = command("git", "-C", str(checkout), "rev-parse", "--verify", "refs/tags/v" + version + "^{commit}")
+    head = command("git", "-C", str(checkout), "rev-parse", "--verify", "refs/tags/v" + version + "^{commit}",
+                   failure="Tag v" + version + " is missing from the " + repo + " checkout on the deployment host")
     if head != build.get("commit") or not re.fullmatch(r"[0-9a-f]{40}", head):
         raise ValueError("Release tag does not match the built commit")
     deployed_file = root / "deployed" / (repo + ".json")
@@ -82,8 +94,14 @@ def inspect(request):
         raise ValueError("Set the verified production commit as initial_baseline before the first review")
     if deployed and request["action"] != "deployed" and not same_images(live_services(request["stack"]), deployed["services"]):
         raise ValueError("Live production images no longer match the recorded baseline")
-    policy = command("git", "-C", str(checkout), "show", base + ":.swiftproof.json")
-    binary = Path(request["binary"]).expanduser().resolve(strict=True)
+    policy = command("git", "-C", str(checkout), "show", base + ":.swiftproof.json",
+                     failure="No .swiftproof.json in the baseline commit " + base[:12] + " of " + repo
+                             + ": add the policy to the project, deploy it, then set that commit as the initial baseline")
+    try:
+        binary = Path(request["binary"]).expanduser().resolve(strict=True)
+    except OSError:
+        raise ValueError("No SwiftProof binary at " + str(request["binary"])
+                         + " on the deployment host: run scripts/install-swiftproof.sh there") from None
     identity = {
         "repo": repo, "release": version, "base": base, "head": head,
         "images": build["images"], "binary_sha256": digest(binary.read_bytes()),
@@ -143,7 +161,10 @@ def execute(request):
                 "--head", identity["head"], "--exact", "--ci", "--config", str(config_file),
                 "--reviewer=" + ("true" if provider else "false"), "--out", str(output)]
         with open(work / "run.log", "wb") as log:
-            process = subprocess.run(args, stdout=log, stderr=log, env=env, timeout=1800)
+            try:
+                process = subprocess.run(args, stdout=log, stderr=log, env=env, timeout=1800)
+            except subprocess.TimeoutExpired:
+                raise ValueError("SwiftProof did not finish within 30 minutes") from None
         report_file = output / "confidence-report.json"
         if not report_file.is_file() or report_file.stat().st_size > LIMIT:
             raise ValueError("SwiftProof did not produce a bounded report; check binary, policy and sandbox image")

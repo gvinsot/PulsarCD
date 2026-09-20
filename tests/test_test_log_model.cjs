@@ -75,6 +75,47 @@ test('Vitest file results and verbose tests including failure indicators', () =>
     assert.equal(parsed.summaries.length, 1);
 });
 
+test('node --test spec results keep nested names, suites, and the failing recap', () => {
+    const parsed = model.parse([
+        '✔ loads the session token (1.0585ms)',
+        '✖ rejects an expired token (0.8758ms)',
+        '﹣ refreshes in the background (0.2188ms) # not ready',
+        '✔ deletes the account (0.0614ms) # TODO',
+        '▶ database migrations',
+        '  ✔ applies the schema (0.0646ms)',
+        '  ✖ rolls back on failure (0.062ms)',
+        '✖ database migrations (0.6879ms)',
+        'ℹ tests 7',
+        'ℹ suites 0',
+        'ℹ pass 2',
+        'ℹ fail 3',
+        'ℹ skipped 1',
+        'ℹ todo 1',
+        'ℹ duration_ms 66.8708',
+        '',
+        '✖ failing tests:',
+        '',
+        'test at tests/unit/auth.test.js:4:1',
+        '✖ rejects an expired token (0.8758ms)',
+        '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:',
+        '      at TestContext.<anonymous> (tests/unit/auth.test.js:4:35)',
+    ]);
+    assert.equal(parsed.counts.total, 6);
+    assert.equal(parsed.counts.suites, 1);
+    assert.deepEqual([parsed.counts.passed, parsed.counts.failed, parsed.counts.skipped], [2, 2, 2]);
+    assert.equal(parsed.entries[0].framework, 'node:test');
+    assert.equal(parsed.entries[0].duration, '1.0585ms');
+    assert.equal(parsed.entries[5].name, 'database migrations › rolls back on failure');
+    assert.equal(parsed.entries[6].kind, 'suite');
+    // The recap repeats a failure: it carries its file and error, it is not a second test.
+    assert.equal(parsed.entries[1].file, 'tests/unit/auth.test.js');
+    assert.equal(parsed.entries[1].detailLine, 19);
+    assert.ok(parsed.entries[1].diagnostic.startsWith('AssertionError'));
+    assert.equal(parsed.summaries.length, 1);
+    assert.deepEqual(parsed.summaries[0].counts, { passed: 2, failed: 3, skipped: 2 });
+    assert.ok(parsed.sections.some(section => section.name === '✖ failing tests:' && section.line === 16));
+});
+
 test('nested TAP counts leaf results and honours SKIP / TODO directives', () => {
     const parsed = model.parse([
         'TAP version 13',

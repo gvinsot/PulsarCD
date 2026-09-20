@@ -11,6 +11,9 @@
         skipped: 'skipped', skip: 'skipped', pending: 'skipped', todo: 'skipped', xfail: 'skipped', xpass: 'passed' };
     const FILE = /(?:[^\s()]+\.(?:[cm]?[jt]sx?|py|cs|go|feature|rb))(?:\b|$)/i;
     const STATUS_SYMBOLS = { '✓': 'passed', '✔': 'passed', '√': 'passed', '×': 'failed', '✕': 'failed', '✗': 'failed', '✖': 'failed', '↓': 'skipped', '○': 'skipped', '-': 'skipped' };
+    // node --test, spec reporter: ✔ pass, ✖ fail, ﹣ (small hyphen) skip, ▶ suite heading.
+    const NODE_SYMBOLS = { '✔': 'passed', '✖': 'failed', '﹣': 'skipped' };
+    const NODE_TOTALS = { pass: 'passed', fail: 'failed', cancelled: 'error', skipped: 'skipped', todo: 'skipped' };
 
     function cleanLine(value) {
         let text = String(value == null ? '' : value);
@@ -63,6 +66,8 @@
         let framework = '', currentFile = '', suiteName = '';
         let lastEntry = null;
         const tapSubtests = new Map();
+        const nodeParents = new Map(), nodeFailed = new Map(), nodeSuites = new Set();
+        let nodeRecap = false, nodeTotals = null, nodeFailure = null, nodeFile = '';
 
         function add(entry, index, duplicate) {
             const file = entry.file || '';
@@ -83,6 +88,11 @@
             byName.set(key, record);
             lastEntry = record;
             return record;
+        }
+
+        function nodeParent(depth) {
+            const levels = [...nodeParents.keys()].filter(level => level < depth);
+            return levels.length ? nodeParents.get(Math.max(...levels)) + ' › ' : '';
         }
 
         function section(name, index) {
@@ -150,6 +160,57 @@
             }
             if (/\b\d+ (?:passed|failed|skipped|errors?|xfailed|xpassed)\b/.test(text) && /\bin \d|[=]{3}/.test(text)) {
                 summary(text, index, framework || 'pytest'); return;
+            }
+
+            // node --test reports no file header, so the symbols and the fractional
+            // millisecond duration identify a result line. A heading is printed when a
+            // test opens subtests; the test is reported again after them as their suite.
+            match = line.match(/^(\s*)▶\s+(.+?)\s*$/);
+            if (match) {
+                framework = 'node:test';
+                const depth = match[1].length;
+                for (const level of [...nodeParents.keys()]) if (level >= depth) nodeParents.delete(level);
+                nodeParents.set(depth, nodeParent(depth) + match[2]);
+                nodeSuites.add(nodeParents.get(depth));
+                return;
+            }
+            match = line.match(/^(\s*)([✔✖﹣])\s+(.+?)\s+\((\d+(?:\.\d+)?ms)\)(?:\s+#\s*(.*))?$/);
+            if (match) {
+                framework = 'node:test';
+                // The failing-tests recap repeats each failure with its file and error.
+                const repeated = nodeRecap && nodeFailed.get(match[3]);
+                if (repeated) {
+                    repeated.detailLine = index + offset;
+                    repeated.file = repeated.file || nodeFile;
+                    nodeFailure = repeated;
+                    return;
+                }
+                const name = nodeParent(match[1].length) + match[3];
+                const status = /^TODO\b/i.test(match[5] || '') ? 'skipped' : NODE_SYMBOLS[match[2]];
+                const record = add({ name, file: nodeFile, duration: match[4], status,
+                    kind: nodeSuites.has(name) ? 'suite' : 'test' }, index);
+                if (status === 'failed') nodeFailed.set(match[3], record);
+                nodeFailure = nodeRecap && status === 'failed' ? record : null;
+                return;
+            }
+            if (nodeFailure) {
+                if (/^\s+\S/.test(line)) { nodeFailure.diagnostic = nodeFailure.diagnostic || text.slice(0, 200); return; }
+                nodeFailure = null;
+            }
+            if (/^✖\s+failing tests:$/.test(text)) { framework = 'node:test'; nodeRecap = true; nodeFile = ''; section(text, index); return; }
+            if (nodeRecap && (match = text.match(/^test at (.+?):\d+:\d+$/))) { nodeFile = match[1]; return; }
+            match = text.match(/^ℹ\s+(tests|suites|pass|fail|cancelled|skipped|todo|duration_ms)\s+([\d.]+)$/);
+            if (match) {
+                framework = 'node:test';
+                // One metric per line: keep the block as a single runner summary.
+                if (nodeTotals && nodeTotals.index === index - 1) { nodeTotals.index = index; nodeTotals.summary.text += ' · ' + text.replace(/^ℹ\s+/, ''); }
+                else {
+                    nodeTotals = { index, summary: { text, line: index + offset, framework: 'node:test', counts: {} } };
+                    summaries.push(nodeTotals.summary);
+                }
+                const status = NODE_TOTALS[match[1]];
+                if (status) nodeTotals.summary.counts[status] = (nodeTotals.summary.counts[status] || 0) + Number(match[2]);
+                return;
             }
 
             // Jest and Vitest file headers; a suite is kept separate from its named tests.

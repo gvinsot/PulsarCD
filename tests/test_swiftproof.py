@@ -238,6 +238,32 @@ def test_worker_revalidates_identity_and_records_only_actual_rollout(tmp_path, m
         worker.execute(request)
 
 
+def test_worker_setup_failures_name_what_to_fix_without_leaking_stderr(tmp_path, monkeypatch, identity):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    root = tmp_path / ".local/share/pulsarcd/swiftproof"
+    request = dict(action="inspect", repo="demo", release="1.0.1", repos_path=str(tmp_path),
+                   stack="demo", binary=str(tmp_path / "absent"), initial_baseline=identity["base"])
+    with pytest.raises(ValueError, match="rebuild this release"):
+        worker.execute(request)
+    worker.save(root / "builds/demo/1.0.1.json",
+                {"repo": "demo", "release": "1.0.1", "commit": identity["head"], "images": identity["images"]})
+
+    def outputs(args, **kwargs):
+        if "show" in args:
+            raise subprocess.CalledProcessError(128, args, stderr=b"fatal: secret-token")
+        return identity["head"].encode()
+
+    monkeypatch.setattr(subprocess, "check_output", outputs)
+    with pytest.raises(ValueError) as missing_policy:
+        worker.execute(request)
+    assert ".swiftproof.json" in str(missing_policy.value) and "secret-token" not in str(missing_policy.value)
+
+    monkeypatch.setattr(subprocess, "check_output",
+                        lambda args, **kwargs: b'{"version":1}' if "show" in args else identity["head"].encode())
+    with pytest.raises(ValueError, match="install-swiftproof.sh"):
+        worker.execute(request)
+
+
 def test_state_persistence_and_older_clients_preserve_gate(manager):
     manager.get_or_create("demo").swiftproof = {"id": "a", "status": "needs_review"}
     manager.get_or_create("demo").swiftproof_revision = 3
