@@ -1,6 +1,5 @@
-"""Trusted build/deploy provenance for SwiftProof; never imported from a candidate repo."""
+"""Trusted build provenance for SwiftProof; never imported from a candidate repo."""
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -55,44 +54,6 @@ def record(repo, version, commit, images, reuse=False):
     return result
 
 
-def pin(guard_path, compose_path, stack):
-    import yaml
-    guard_file = Path(guard_path).resolve()
-    guard_file.relative_to((root() / "guards").resolve())
-    guard = json.loads(guard_file.read_text(encoding="utf-8"))
-    if run("git", "rev-parse", "HEAD") != guard["head"]:
-        raise ValueError("Compose commit does not match the reviewed commit")
-    current = root() / "deployed" / (guard["repo"] + ".json")
-    deployed_hash = hashlib.sha256(current.read_bytes()).hexdigest() if current.exists() else None
-    if deployed_hash != guard["deployed_hash"]:
-        raise ValueError("Production baseline changed since review")
-    compose_file = Path(compose_path)
-    compose = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
-    mapping = dict(guard["images"])
-    by_base = {}
-    for source, digest in guard["images"].items():
-        base = source.rsplit(":", 1)[0]
-        by_base.setdefault(base, []).append((source, digest))
-    for base, variants in by_base.items():
-        if len(variants) == 1:
-            mapping[base + ":" + guard["release"]] = variants[0][1]
-        else:
-            for source, digest in variants:
-                mapping[source + "-" + guard["release"]] = digest
-    services = {}
-    for name, service in compose["services"].items():
-        image = service.get("image", "")
-        if image in mapping:
-            image = mapping[image]
-        elif not re.fullmatch(r"[^\s@$]+@sha256:[0-9a-f]{64}", image):
-            raise ValueError("Every deployed image needs build provenance or an explicit digest")
-        service["image"] = image
-        services[stack + "_" + name] = image
-    compose_file.write_text(yaml.safe_dump(compose, sort_keys=False), encoding="utf-8")
-    guard["services"] = services
-    atomic_json(guard_file, guard)
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     commands = parser.add_subparsers(dest="command", required=True)
@@ -101,11 +62,5 @@ if __name__ == "__main__":
         build.add_argument(field)
     build.add_argument("--reuse", action="store_true")
     build.add_argument("images", nargs="+")
-    deploy = commands.add_parser("pin")
-    for field in ("guard", "compose", "stack"):
-        deploy.add_argument(field)
     args = parser.parse_args()
-    if args.command == "record":
-        record(args.repo, args.version, args.commit, args.images, args.reuse)
-    else:
-        pin(args.guard, args.compose, args.stack)
+    record(args.repo, args.version, args.commit, args.images, args.reuse)

@@ -68,6 +68,22 @@ class StageState:
         )
 
 
+def _migrate_swiftproof(configs: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Move SwiftProof settings saved under the old test_to_deploy transition.
+
+    The review used to gate deployment; it now belongs to the Test stage, so
+    the settings live on build_to_test. Projects configured before the move
+    keep their choices instead of silently losing the review.
+    """
+    legacy = configs.get("test_to_deploy") or {}
+    moved = {k: legacy.pop(k) for k in list(legacy) if k.startswith("swiftproof_")}
+    if moved:
+        target = configs.setdefault("build_to_test", {"mode": "auto_with_success"})
+        for key, value in moved.items():
+            target.setdefault(key, value)
+    return configs
+
+
 class GateDecision:
     """Record of a single gate evaluation."""
 
@@ -170,7 +186,7 @@ class PipelineEntry:
             GateDecision.from_dict(g) for g in data.get("gates", [])
         ]
         entry.last_deployed_at = data.get("last_deployed_at")
-        entry.transition_configs = data.get("transition_configs", {})
+        entry.transition_configs = _migrate_swiftproof(data.get("transition_configs", {}))
         entry.swiftproof = data.get("swiftproof", {})
         entry.swiftproof_revision = data.get("swiftproof_revision", 0)
         return entry
@@ -436,6 +452,8 @@ class PipelineStateManager:
             repo_name: Repository name
             transition: "version_to_build", "build_to_test" or "test_to_deploy"
             config: {"mode": "auto"|"auto_with_success"|"agent"|"manual",
+                     "swiftproof_enabled", "swiftproof_reviewer",
+                     "swiftproof_initial_baseline" (build_to_test only),
                      "qa_enabled": bool (test_to_deploy only),
                      "multi_arch": bool (version_to_build only),
                      "platforms": str (version_to_build only, e.g. "linux/amd64,linux/arm64")}
@@ -452,6 +470,10 @@ class PipelineStateManager:
         # test_to_deploy supports an optional QA-pre-deploy step
         if transition == "test_to_deploy":
             new_config["qa_enabled"] = bool(config.get("qa_enabled", False))
+        # build_to_test carries the SwiftProof review, which runs at the end of
+        # the Test stage. Settings absent from the payload keep their value so
+        # that changing only the mode cannot silently disable the review.
+        if transition == "build_to_test":
             previous = entry.transition_configs.get(transition, {})
             for key, default in (("swiftproof_enabled", False), ("swiftproof_reviewer", True), ("swiftproof_initial_baseline", "")):
                 new_config[key] = config.get(key, previous.get(key, default))

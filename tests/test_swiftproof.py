@@ -27,7 +27,7 @@ from scripts import swiftproof_provenance as provenance
 def manager(tmp_path, monkeypatch):
     manager = PipelineStateManager(str(tmp_path))
     monkeypatch.setattr(PipelineStateManager, "_instance", manager)
-    manager.set_transition_config("demo", "test_to_deploy", {"mode": "auto", "swiftproof_enabled": True})
+    manager.set_transition_config("demo", "build_to_test", {"mode": "auto", "swiftproof_enabled": True})
     return manager
 
 
@@ -35,7 +35,7 @@ def manager(tmp_path, monkeypatch):
 def identity():
     return dict(repo="demo", release="1.0.1", base="a" * 40, head="b" * 40,
                 images={"registry:5000/demo:latest": "registry:5000/demo@sha256:" + "c" * 64},
-                binary_sha256="d" * 64, policy_sha256="e" * 64, deployed_hash=None)
+                binary_sha256="d" * 64, policy_sha256="e" * 64)
 
 
 def reply(identity, code, report_extra=None):
@@ -103,7 +103,7 @@ async def test_report_tampering_regenerates_and_provider_failure_fails_closed(ma
 
 async def test_reviewer_can_be_disabled_without_changing_global_llm(manager, monkeypatch, identity):
     calls = mock_review(monkeypatch, identity, 0)
-    manager.set_transition_config("demo", "test_to_deploy", {"swiftproof_reviewer": False})
+    manager.set_transition_config("demo", "build_to_test", {"swiftproof_reviewer": False})
     assert gate.enabled("demo")
     assert (await gate.review(None, "demo", "1.0.1"))["status"] == "passed"
     assert calls[1][1] is None
@@ -144,23 +144,8 @@ async def test_bridge_authentication_model_budget_and_chunked_response():
         await runner.cleanup()
 
 
-async def test_common_deploy_blocks_before_running_script(manager, monkeypatch):
-    from backend.github_service import StackDeployer
-    from backend.config import GitHubConfig
-    from backend import recovery
-    deployer = StackDeployer(GitHubConfig())
-    monkeypatch.setattr(recovery, "snapshot_envs", AsyncMock())
-    monkeypatch.setattr(deployer, "_ensure_repo_cloned", AsyncMock(return_value=(True, "")))
-    execute = AsyncMock(return_value=(True, ""))
-    monkeypatch.setattr(deployer, "_run_command", execute)
-    monkeypatch.setattr(gate, "review", AsyncMock(return_value={"status": "needs_review", "reason": "Review required", "code": 2}))
-    for qa in (False, True):
-        result = await deployer.deploy("demo", "git@github.com:owner/demo.git", tag="v1.0.1", qa=qa)
-        assert not result["success"] and result["gate_rejected"]
-    execute.assert_not_called()
-
-
-async def test_common_deploy_pins_sha_and_qa_does_not_advance_baseline(manager, monkeypatch, identity):
+async def test_deploy_is_only_a_deploy(manager, monkeypatch, identity):
+    """QA and production deploys must not call, or be blocked by, SwiftProof."""
     from backend.github_service import StackDeployer
     from backend.config import GitHubConfig
     from backend import recovery
@@ -169,39 +154,15 @@ async def test_common_deploy_pins_sha_and_qa_does_not_advance_baseline(manager, 
     monkeypatch.setattr(deployer, "_ensure_repo_cloned", AsyncMock(return_value=(True, "")))
     execute = AsyncMock(return_value=(True, "deployed"))
     monkeypatch.setattr(deployer, "_run_command", execute)
-    monkeypatch.setattr(gate, "review", AsyncMock(return_value={"status": "passed", "reason": "Passed", "head": identity["head"]}))
-    monkeypatch.setattr(gate, "prepare_deploy", AsyncMock(return_value={"path": "/trusted/guard.json"}))
-    record = AsyncMock()
-    monkeypatch.setattr(gate, "record_deployed", record)
-    result = await deployer.deploy("demo", "git@github.com:owner/demo.git", tag="v1.0.1", qa=True)
-    assert result["success"]
+    review = AsyncMock(return_value={"status": "blocked", "reason": "Reproduced", "head": identity["head"]})
+    monkeypatch.setattr(gate, "review", review)
+    for qa in (True, False):
+        result = await deployer.deploy("demo", "git@github.com:owner/demo.git", tag="v1.0.1", qa=qa)
+        assert result["success"] and "gate_rejected" not in result
+    review.assert_not_called()
+    assert not hasattr(gate, "prepare_deploy") and not hasattr(gate, "record_deployed")
     command = execute.call_args.args[0]
-    # The reviewed SHA must reach the script's commit argument: its branch
-    # argument only resolves branches and tags, never a commit ID.
-    assert command.endswith(" v1.0.1 " + identity["head"]) and "SWIFTPROOF_GUARD_FILE=/trusted/guard.json" in command
-    record.assert_not_called()
-    result = await deployer.deploy("demo", "git@github.com:owner/demo.git", tag="v1.0.1")
-    assert result["success"]
-    record.assert_awaited_once()
-
-
-def test_pin_preserves_image_variants_and_rejects_changed_commit(tmp_path, monkeypatch, identity):
-    monkeypatch.setattr(provenance, "root", lambda: tmp_path)
-    monkeypatch.setattr(provenance, "run", lambda *args: identity["head"])
-    guard = dict(identity, images={"registry:5000/demo:rocm": "registry:5000/demo@sha256:" + "c" * 64,
-                                  "registry:5000/demo:cuda": "registry:5000/demo@sha256:" + "d" * 64})
-    path = tmp_path / "guards" / "test.json"
-    provenance.atomic_json(path, guard)
-    compose = tmp_path / "compose.yml"
-    compose.write_text(yaml.safe_dump({"services": {"a": {"image": "registry:5000/demo:rocm"},
-                                                    "b": {"image": "registry:5000/demo:cuda-1.0.1"}}}))
-    provenance.pin(path, compose, "demo")
-    services = yaml.safe_load(compose.read_text())["services"]
-    assert services["a"]["image"] != services["b"]["image"]
-    assert json.loads(path.read_text())["services"]["demo_a"] == services["a"]["image"]
-    monkeypatch.setattr(provenance, "run", lambda *args: "0" * 40)
-    with pytest.raises(ValueError, match="commit"):
-        provenance.pin(path, compose, "demo")
+    assert command.endswith(" v1.0.1") and "SWIFTPROOF_GUARD_FILE" not in command
 
 
 def test_record_reused_image_requires_matching_commit(tmp_path, monkeypatch):
@@ -214,34 +175,61 @@ def test_record_reused_image_requires_matching_commit(tmp_path, monkeypatch):
         provenance.record("demo", "1.0.1", "b" * 40, images, reuse=True)
 
 
-def test_worker_revalidates_identity_and_records_only_actual_rollout(tmp_path, monkeypatch, identity):
+def test_worker_revalidates_identity_and_refuses_unknown_actions(tmp_path, monkeypatch, identity):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     root = tmp_path / ".local/share/pulsarcd/swiftproof"
     binary = tmp_path / "swiftproof"
     binary.write_bytes(b"trusted binary")
     worker.save(root / "builds/demo/1.0.1.json", {"repo": "demo", "release": "1.0.1", "commit": identity["head"], "images": identity["images"]})
     monkeypatch.setattr(worker, "command", lambda *args, **kwargs: '{"version":1}' if "show" in args else identity["head"])
+    monkeypatch.setattr(worker, "live_services", lambda *_: {})
     request = dict(action="inspect", repo="demo", release="1.0.1", repos_path=str(tmp_path), stack="demo", binary=str(binary), initial_baseline=identity["base"])
     actual = worker.execute(request)
+    assert actual["base"] == identity["base"] and "deployed_hash" not in actual
     with pytest.raises(ValueError, match="changed"):
-        worker.execute(dict(request, action="guard", identity=dict(actual, head="0" * 40), id="f" * 64))
-    guard_path = Path(worker.execute(dict(request, action="guard", identity=actual, id="f" * 64))["path"])
-    guard = json.loads(guard_path.read_text())
-    guard["services"] = {"demo_app": next(iter(identity["images"].values()))}
-    worker.save(guard_path, guard)
-    monkeypatch.setattr(worker, "live_services", lambda *_: {})
-    with pytest.raises(ValueError, match="digests"):
-        worker.execute(dict(request, action="deployed", identity=actual, id="f" * 64))
-    monkeypatch.setattr(worker, "live_services", lambda *_: guard["services"])
-    assert worker.execute(dict(request, action="deployed", identity=actual, id="f" * 64))["recorded"]
-    assert worker.execute(request)["base"] == identity["head"]
-    monkeypatch.setattr(worker, "live_services", lambda *_: {})
-    with pytest.raises(ValueError, match="baseline"):
-        worker.execute(request)
+        worker.execute(dict(request, action="review", identity=dict(actual, head="0" * 40)))
+    for gone in ("guard", "deployed"):
+        with pytest.raises(ValueError, match="Unknown action"):
+            worker.execute(dict(request, action=gone, identity=actual, id="f" * 64))
+
+
+def test_baseline_is_derived_from_the_images_production_runs(tmp_path, monkeypatch, identity):
+    """A deploy records nothing: the baseline is whichever build is live."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    root = tmp_path / ".local/share/pulsarcd/swiftproof"
+    binary = tmp_path / "swiftproof"
+    binary.write_bytes(b"trusted binary")
+    digest = "sha256:" + "c" * 64
+    for release, commit in (("1.0.1", identity["head"]), ("1.0.0", "1" * 40), ("0.9.0", "2" * 40)):
+        worker.save(root / "builds/demo" / (release + ".json"),
+                    {"repo": "demo", "release": release, "commit": commit,
+                     "images": {"registry:5000/demo:latest": "registry:5000/demo@" + digest}})
+    monkeypatch.setattr(worker, "command", lambda *args, **kwargs: '{"version":1}' if "show" in args else identity["head"])
+    request = dict(action="inspect", repo="demo", release="1.0.1", repos_path=str(tmp_path),
+                   stack="demo", binary=str(binary), initial_baseline=identity["base"])
+
+    # A release tag identifies the live build exactly.
+    monkeypatch.setattr(worker, "live_services", lambda *_: {"demo_app": "registry:5000/demo:1.0.0"})
+    assert worker.execute(request)["base"] == "1" * 40
+
+    # A shared digest cannot tell 1.0.0 from 0.9.0; the lower release wins so
+    # the review never sees a smaller diff than reality.
+    monkeypatch.setattr(worker, "live_services", lambda *_: {"demo_app": "registry:5000/demo@" + digest})
+    assert worker.execute(request)["base"] == "2" * 40
+
+    # The candidate is never its own baseline, and an unexplained stack falls
+    # back to the administrator's declared commit.
+    monkeypatch.setattr(worker, "live_services", lambda *_: {"demo_app": "registry:5000/demo:1.0.1"})
+    assert worker.execute(request)["base"] == identity["base"]
+    monkeypatch.setattr(worker, "live_services", lambda *_: {"demo_app": "other:1.2.3"})
+    assert worker.execute(request)["base"] == identity["base"]
+    with pytest.raises(ValueError, match="initial baseline"):
+        worker.execute(dict(request, initial_baseline=""))
 
 
 def test_worker_setup_failures_name_what_to_fix_without_leaking_stderr(tmp_path, monkeypatch, identity):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(worker, "live_services", lambda *_: {})
     root = tmp_path / ".local/share/pulsarcd/swiftproof"
     request = dict(action="inspect", repo="demo", release="1.0.1", repos_path=str(tmp_path),
                    stack="demo", binary=str(tmp_path / "absent"), initial_baseline=identity["base"])
@@ -265,21 +253,57 @@ def test_worker_setup_failures_name_what_to_fix_without_leaking_stderr(tmp_path,
     with pytest.raises(ValueError, match="install-swiftproof.sh"):
         worker.execute(request)
 
+    # An unreadable Swarm is named as such, not as a decoding exception.
+    monkeypatch.undo()
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(worker, "command",
+                        lambda *args, **kwargs: identity["head"] if "rev-parse" in args else "not-json")
+    with pytest.raises(ValueError, match="Cannot read the live services"):
+        worker.execute(request)
+
 
 def test_state_persistence_and_older_clients_preserve_gate(manager):
     manager.get_or_create("demo").swiftproof = {"id": "a", "status": "needs_review"}
     manager.get_or_create("demo").swiftproof_revision = 3
-    manager.set_transition_config("demo", "test_to_deploy", {"mode": "manual"})
+    manager.set_transition_config("demo", "build_to_test", {"mode": "manual"})
     restored = PipelineStateManager(str(manager._path.parent)).get("demo")
-    assert restored.transition_configs["test_to_deploy"]["swiftproof_enabled"]
+    assert restored.transition_configs["build_to_test"]["swiftproof_enabled"]
     assert restored.swiftproof["id"] == "a" and restored.swiftproof_revision == 3
     assert PipelineEntry.from_dict({}).swiftproof == {}
+
+
+def test_settings_saved_before_the_move_are_migrated_not_lost():
+    """A project configured while SwiftProof gated deployment keeps its review."""
+    entry = PipelineEntry.from_dict({"transition_configs": {
+        "test_to_deploy": {"mode": "manual", "qa_enabled": True,
+                           "swiftproof_enabled": True, "swiftproof_initial_baseline": "a" * 40}}})
+    assert entry.transition_configs["build_to_test"]["swiftproof_enabled"]
+    assert entry.transition_configs["build_to_test"]["swiftproof_initial_baseline"] == "a" * 40
+    assert entry.transition_configs["test_to_deploy"] == {"mode": "manual", "qa_enabled": True}
+
+
+async def test_failed_setup_names_the_check_that_broke(manager, monkeypatch, identity):
+    """A code 3/4 must say what to fix without opening the archive."""
+    checks = [{"id": "check-1", "kind": "test", "status": "ERROR", "exit_code": 125,
+               "output": "docker: Error response from daemon: No such image: demo-swiftproof:local\n"}]
+    mock_review(monkeypatch, identity, 4, {"checks": checks})
+    result = await gate.review(None, "demo", "1.0.1")
+    assert result["status"] == "error"
+    assert "test failed (exit 125)" in result["reason"] and "No such image" in result["reason"]
+
+    manager.get_or_create("demo").swiftproof_revision += 1
+    mock_review(monkeypatch, identity, 3, {"unverified": ["Reviewer incomplete: reviewer request failed"]})
+    assert "Reviewer incomplete" in (await gate.review(None, "demo", "1.0.1"))["reason"]
+
+    manager.get_or_create("demo").swiftproof_revision += 1
+    mock_review(monkeypatch, identity, 0, {"checks": checks})
+    assert (await gate.review(None, "demo", "1.0.1"))["reason"].endswith("blocking finding")
 
 
 def test_api_config_rejects_coercion_and_readable_report(client, auth_headers, manager, monkeypatch, identity):
     import backend.api as api
     monkeypatch.setattr(api, "pipeline_state", manager)
-    url = "/api/stacks/pipeline/demo/transition/test_to_deploy"
+    url = "/api/stacks/pipeline/demo/transition/build_to_test"
     assert client.put(url, headers=auth_headers, json={"swiftproof_enabled": "false"}).status_code == 400
     assert client.put(url, headers=auth_headers, json={"swiftproof_initial_baseline": "main"}).status_code == 400
     mock_review(monkeypatch, identity, 2)
@@ -382,7 +406,7 @@ def test_structured_report_api_preserves_raw_report_and_integrity(client, auth_h
 @pytest.mark.parametrize("transition", ["build_to_test", "test_to_deploy"])
 async def test_pipeline_agent_gate_without_llm_stops(client, manager, monkeypatch, transition):
     import backend.api as api
-    manager.set_transition_config("demo", "test_to_deploy", {"mode": "auto", "swiftproof_enabled": False})
+    manager.set_transition_config("demo", "build_to_test", {"mode": "auto", "swiftproof_enabled": False})
     manager.set_transition_config("demo", transition, {"mode": "agent"})
     monkeypatch.setattr(api, "pipeline_state", manager)
     monkeypatch.setattr(api, "llm_agent", None)

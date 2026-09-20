@@ -5332,17 +5332,17 @@ async function openTransitionConfig(repoName, transition) {
                             </label>
                         </div>
                         <div id="transition-swiftproof-section" class="transition-qa-section start-hidden">
-                            <label><input type="checkbox" id="transition-swiftproof-enabled"> Require SwiftProof before deployment</label>
+                            <label><input type="checkbox" id="transition-swiftproof-enabled"> Run SwiftProof after the automated tests</label>
                             <p><label><input type="checkbox" id="transition-swiftproof-reviewer"> Use the LLM configured in PulsarCD</label></p>
                             <label>Initial production commit (full SHA)
                                 <input id="transition-swiftproof-baseline" type="text" maxlength="40" placeholder="40-character SHA" autocomplete="off">
                             </label>
-                            <p>Required for the first review. Later reviews use the last recorded production deployment. The host needs SwiftProof, Docker and a trusted .swiftproof.json policy.</p>
+                            <p>Used only while no build provenance matches the images running in production; afterwards the baseline is the release Swarm actually runs. A rejected review fails the Test stage, so the Test → QA/Deploy transition decides what happens next. The host needs SwiftProof, Docker, a preloaded sandbox test image and a trusted .swiftproof.json policy.</p>
                             <p id="transition-swiftproof-status"></p>
                             <div id="transition-swiftproof-actions" hidden>
                                 <button class="btn btn-secondary" data-click="viewSwiftproofReport">Read report</button>
                                 <button class="btn btn-secondary" data-click="downloadSwiftproofReport">Download evidence</button>
-                                <button class="btn btn-secondary" data-click="retrySwiftproofReport">Require a new review on next deploy</button>
+                                <button class="btn btn-secondary" data-click="retrySwiftproofReport">Require a new review on next test run</button>
                                 <div id="transition-swiftproof-approval" hidden>
                                     <label>Review decision <input id="transition-swiftproof-reason" maxlength="2000" placeholder="Explain why deployment is acceptable"></label>
                                     <button class="btn btn-primary" data-click="approveSwiftproofReport">Approve this report</button>
@@ -5387,7 +5387,7 @@ async function openTransitionConfig(repoName, transition) {
         const lastDecision = data && data.last_decision;
         const proof = data.swiftproof || {};
         modal.dataset.reviewId = proof.id || '';
-        document.getElementById('transition-swiftproof-section').style.display = transition === 'test_to_deploy' ? '' : 'none';
+        document.getElementById('transition-swiftproof-section').style.display = transition === 'build_to_test' ? '' : 'none';
         document.getElementById('transition-swiftproof-enabled').checked = !!config.swiftproof_enabled;
         document.getElementById('transition-swiftproof-reviewer').checked = config.swiftproof_reviewer !== false;
         document.getElementById('transition-swiftproof-baseline').value = config.swiftproof_initial_baseline || '';
@@ -5463,6 +5463,8 @@ async function saveTransitionConfig() {
         if (transition === 'test_to_deploy') {
             const qaCb = document.getElementById('transition-qa-enabled');
             body.qa_enabled = !!(qaCb && qaCb.checked);
+        }
+        if (transition === 'build_to_test') {
             body.swiftproof_enabled = document.getElementById('transition-swiftproof-enabled').checked;
             body.swiftproof_reviewer = document.getElementById('transition-swiftproof-reviewer').checked;
             body.swiftproof_initial_baseline = document.getElementById('transition-swiftproof-baseline').value.trim();

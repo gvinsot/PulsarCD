@@ -49,23 +49,55 @@ def live_services(stack):
     ids = command("docker", "stack", "services", "--quiet", stack, failure=unreadable).split()
     if not ids:
         return {}
-    specs = json.loads(command("docker", "service", "inspect", *ids, failure=unreadable))
-    return {s["Spec"]["Name"]: s["Spec"]["TaskTemplate"]["ContainerSpec"]["Image"] for s in specs}
+    try:
+        specs = json.loads(command("docker", "service", "inspect", *ids, failure=unreadable))
+        return {s["Spec"]["Name"]: s["Spec"]["TaskTemplate"]["ContainerSpec"]["Image"] for s in specs}
+    except (ValueError, KeyError, TypeError):
+        raise ValueError(unreadable) from None
 
 
-def same_images(actual, expected):
-    # Swarm may preserve the original tag before @sha256; digest and repository
-    # still identify the exact image. Compare services as well as digest values.
-    def normalized(image):
-        name, sha = image.rsplit("@", 1)
+def released_commit(root, repo, stack, candidate):
+    """Derive the production commit from the images Swarm actually runs.
+
+    PulsarCD no longer records deployments: a deploy is just a deploy. The
+    baseline is whichever build provenance explains the live production images.
+    A release tag identifies a build exactly, so it outranks a digest match,
+    which two builds can share when images were reused. The candidate release
+    is never its own baseline. On a tie the lowest release wins: reviewing too
+    large a diff is recoverable, reviewing too small a one is not.
+    """
+    builds = root / "builds" / repo
+    if not builds.is_dir():
+        return None
+    tags, digests = set(), set()
+    for image in live_services(stack).values():
+        name, _, sha = image.partition("@")
+        if sha:
+            digests.add(sha)
         leaf = name.rsplit("/", 1)[-1]
         if ":" in leaf:
-            name = name.rsplit(":", 1)[0]
-        return name, sha
-    try:
-        return {k: normalized(v) for k, v in actual.items()} == {k: normalized(v) for k, v in expected.items()}
-    except ValueError:
-        return False
+            tags.add(name)
+    best = None
+    for path in sorted(builds.glob("*.json")):
+        try:
+            build = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        release = build.get("release", "")
+        if (build.get("repo") != repo or release == candidate
+                or not re.fullmatch(r"\d+\.\d+\.\d+", release)
+                or not re.fullmatch(r"[0-9a-f]{40}", build.get("commit", ""))):
+            continue
+        by_tag = by_digest = 0
+        for source, pinned in build.get("images", {}).items():
+            by_tag += source.rsplit(":", 1)[0] + ":" + release in tags
+            by_digest += pinned.rsplit("@", 1)[-1] in digests
+        if not by_tag and not by_digest:
+            continue
+        rank = (by_tag, by_digest, tuple(-int(part) for part in release.split(".")))
+        if best is None or rank > best[0]:
+            best = (rank, build["commit"])
+    return best[1] if best else None
 
 
 def inspect(request):
@@ -87,13 +119,10 @@ def inspect(request):
                    failure="Tag v" + version + " is missing from the " + repo + " checkout on the deployment host")
     if head != build.get("commit") or not re.fullmatch(r"[0-9a-f]{40}", head):
         raise ValueError("Release tag does not match the built commit")
-    deployed_file = root / "deployed" / (repo + ".json")
-    deployed = json.loads(deployed_file.read_text()) if deployed_file.exists() else None
-    base = deployed["head"] if deployed else request.get("initial_baseline", "")
+    base = released_commit(root, repo, request["stack"], version) or request.get("initial_baseline", "")
     if not re.fullmatch(r"[0-9a-f]{40}", base):
-        raise ValueError("Set the verified production commit as initial_baseline before the first review")
-    if deployed and request["action"] != "deployed" and not same_images(live_services(request["stack"]), deployed["services"]):
-        raise ValueError("Live production images no longer match the recorded baseline")
+        raise ValueError("No build provenance matches the images running in production: set the verified"
+                         " production commit as the initial baseline for " + repo)
     policy = command("git", "-C", str(checkout), "show", base + ":.swiftproof.json",
                      failure="No .swiftproof.json in the baseline commit " + base[:12] + " of " + repo
                              + ": add the policy to the project, deploy it, then set that commit as the initial baseline")
@@ -106,36 +135,17 @@ def inspect(request):
         "repo": repo, "release": version, "base": base, "head": head,
         "images": build["images"], "binary_sha256": digest(binary.read_bytes()),
         "policy_sha256": digest(policy.encode()),
-        "deployed_hash": digest(deployed_file.read_bytes()) if deployed else None,
     }
-    return root, checkout, binary, policy, identity
+    return checkout, binary, policy, identity
 
 
 def execute(request):
-    root, checkout, binary, policy, identity = inspect(request)
+    checkout, binary, policy, identity = inspect(request)
     action = request["action"]
     if action == "inspect":
         return identity
     if request.get("identity") != identity:
         raise ValueError("Build, baseline, binary or policy changed since review")
-    if action == "guard":
-        key = request["id"]
-        if not re.fullmatch(r"[0-9a-f]{64}", key):
-            raise ValueError("Invalid review ID")
-        path = root / "guards" / (key + ".json")
-        save(path, identity)
-        return {"path": str(path)}
-    if action == "deployed":
-        key = request["id"]
-        if not re.fullmatch(r"[0-9a-f]{64}", key):
-            raise ValueError("Invalid review ID")
-        guard = json.loads((root / "guards" / (key + ".json")).read_text())
-        if any(guard.get(k) != v for k, v in identity.items()):
-            raise ValueError("Deployment guard changed")
-        if not same_images(live_services(request["stack"]), guard["services"]):
-            raise ValueError("Deployed images do not match reviewed digests")
-        save(root / "deployed" / (identity["repo"] + ".json"), guard)
-        return {"recorded": True}
     if action != "review":
         raise ValueError("Unknown action")
     with tempfile.TemporaryDirectory(prefix="pulsarcd-swiftproof-") as temporary:
@@ -184,6 +194,12 @@ def execute(request):
                     if total > LIMIT:
                         raise ValueError("Report artifacts exceed the 8 MiB transfer budget")
                     archive.write(path, path.relative_to(output).as_posix())
+            # The binary's own console output is what explains a configuration
+            # or execution failure that the report can only point at. Keep a
+            # bounded tail so a noisy run cannot crowd out the evidence.
+            tail = (work / "run.log").read_bytes()[-65536:]
+            if total + len(tail) <= LIMIT:
+                archive.writestr("pulsarcd-run.log", tail)
         return {"identity": identity, "code": process.returncode, "tool_version": report["tool_version"],
                 "archive": base64.b64encode(buffer.getvalue()).decode()}
 

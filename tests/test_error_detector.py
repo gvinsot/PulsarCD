@@ -244,3 +244,60 @@ class TestGetZvecFallback:
         assert d._is_self_log("Failed to initialize zvec")
         # Real app errors should NOT match
         assert not d._is_self_log("Connection refused by database")
+
+
+# ── _is_benign ───────────────────────────────────────────────────────────────
+
+# Real lines from a distribution 3.1.1 registry, trimmed to the fields the
+# patterns rely on.
+_REFERRERS_FALLBACK = (
+    'time="2026-09-20T22:10:03.389310733Z" level=error msg="response completed with error" '
+    'environment=development err.code="manifest unknown" '
+    'err.detail="unknown tag=sha256-9d6819323dbe2303d1cb0330bfb9045187c92e2d991a8610da9a0770c09e9d22" '
+    'err.message="manifest unknown" http.request.method=GET '
+    'http.request.uri=/v2/office-service/manifests/sha256-9d6819323dbe'
+)
+
+_BLOB_PUSH_PROBE = (
+    'time="2026-09-20T22:06:43.658080066Z" level=error msg="response completed with error" '
+    'environment=development err.code="blob unknown" '
+    'err.detail="sha256:0c2e849b45b9915263f2a6df1792b2c1a269c894221c534fd803f09d172b316c" '
+    'err.message="blob unknown to registry" http.request.method=HEAD '
+    'http.request.uri="/v2/pulsarcd-test/blobs/sha256:0c2e849b45b99152"'
+)
+
+_MISSING_REAL_TAG = (
+    'time="2026-09-20T22:10:03.389310733Z" level=error msg="response completed with error" '
+    'err.code="manifest unknown" err.detail="unknown tag=1.0.1193" '
+    'err.message="manifest unknown" http.request.method=GET '
+    'http.request.uri=/v2/office-service/manifests/1.0.1193'
+)
+
+_BLOB_GET_MISSING = (
+    'time="2026-09-20T22:06:43.658080066Z" level=error msg="response completed with error" '
+    'err.code="blob unknown" '
+    'err.detail="sha256:0c2e849b45b9915263f2a6df1792b2c1a269c894221c534fd803f09d172b316c" '
+    'err.message="blob unknown to registry" http.request.method=GET '
+    'http.request.uri="/v2/pulsarcd-test/blobs/sha256:0c2e849b45b99152"'
+)
+
+
+class TestIsBenign:
+    def test_referrers_fallback_tag_is_benign(self):
+        """Docker asks for sha256-<digest> only to look for attestations."""
+        assert _make_detector()._is_benign(_REFERRERS_FALLBACK)
+
+    def test_head_blob_probe_is_benign(self):
+        """A push HEADs every layer to learn which ones it must upload."""
+        assert _make_detector()._is_benign(_BLOB_PUSH_PROBE)
+
+    def test_missing_real_tag_is_kept(self):
+        """A deploy pulling a tag that does not exist is a real failure."""
+        assert not _make_detector()._is_benign(_MISSING_REAL_TAG)
+
+    def test_get_on_missing_blob_is_kept(self):
+        """A GET for an absent layer means a broken image, not a probe."""
+        assert not _make_detector()._is_benign(_BLOB_GET_MISSING)
+
+    def test_unrelated_error_is_kept(self):
+        assert not _make_detector()._is_benign("Connection refused by database")

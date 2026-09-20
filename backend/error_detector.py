@@ -167,6 +167,24 @@ class RecurringErrorDetector:
         re.compile(r'Failed to initialize zvec', re.IGNORECASE),
     ]
 
+    # Protocol-level 404s a Docker registry answers by design. The OCI
+    # distribution spec makes them the normal "nothing attached" / "not there
+    # yet" reply, but distribution logs every handler 404 at error level, so a
+    # single registry contributes thousands of ERROR lines a day and crowds
+    # real failures out of the pattern tracker.
+    #
+    # Both patterns stay narrow enough to keep genuine registry errors:
+    #   - a missing *real* tag logs `unknown tag=1.0.42`; only the digest-shaped
+    #     `sha256-<64 hex>` fallback tag is dropped, and a client asks for that
+    #     one solely because distribution 3.x serves no /v2/<name>/referrers/
+    #     route and falls back to the tag scheme to look for attestations;
+    #   - a GET for an absent blob means a broken image and is kept; only the
+    #     HEAD probe a push sends before uploading a layer is dropped.
+    _BENIGN_PATTERNS = [
+        re.compile(r'err\.code="manifest unknown".*err\.detail="unknown tag=sha256-[0-9a-f]{64}"'),
+        re.compile(r'err\.code="blob unknown".*http\.request\.method=HEAD\b'),
+    ]
+
     def __init__(
         self,
         opensearch_client,
@@ -485,6 +503,17 @@ class RecurringErrorDetector:
                 return True
         return False
 
+    def _is_benign(self, message: str) -> bool:
+        """Check if a log message is protocol noise logged at error level.
+
+        Not a failure to investigate: the service answered exactly what the
+        spec asks it to, and only its own log level makes it look like an error.
+        """
+        for pattern in self._BENIGN_PATTERNS:
+            if pattern.search(message):
+                return True
+        return False
+
     @staticmethod
     def _fixup_compose_project(entry: dict) -> None:
         """Fix compose_project from container_name for Swarm containers.
@@ -547,6 +576,11 @@ class RecurringErrorDetector:
             # Filter out PulsarCD's own internal log messages by content
             filtered = [h for h in hits if not self._is_self_log(h.get("message", ""))]
             self_filtered = len(hits) - len(filtered)
+
+            # Drop protocol noise services log at error level by design
+            kept_hits = [h for h in filtered if not self._is_benign(h.get("message", ""))]
+            benign_filtered = len(filtered) - len(kept_hits)
+            filtered = kept_hits
             if hits:
                 # Log compose_project distribution for debugging resolution
                 cp_counts: Dict[str, int] = {}
@@ -557,6 +591,7 @@ class RecurringErrorDetector:
                             total_in_index=total_count,
                             returned=len(hits),
                             self_filtered=self_filtered,
+                            benign_filtered=benign_filtered,
                             kept=len(filtered),
                             compose_project_distribution=cp_counts,
                             since=since.isoformat())

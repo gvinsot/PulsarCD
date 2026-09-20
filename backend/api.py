@@ -4078,18 +4078,28 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                 await _notify_agent_failure("test", repo_name, built_version or "", test_result.get("output", ""))
                 return
 
-            _set_pipeline(repo_name, "test", "success", built_version, build_id=build_id, test_id=test_id, deploy_id=None, log_lines=test_action.output_lines)
-            logger.info("Pipeline: test succeeded", repo=repo_name)
-
-            # ── Gate: Test → Deploy ──
+            # ── SwiftProof review: the closing step of the Test stage ──
+            # A rejection fails the Test stage, so the Test → QA/Deploy
+            # transition applies its own mode to the result like any other
+            # failure: auto_with_success stops, manual waits, agent judges.
             from . import swiftproof
             if swiftproof.enabled(repo_name):
+                test_action.append_output("SwiftProof: reviewing the change against production...")
                 proof = await deployer.review(repo_name, ssh_url, built_version or tag or "", test_action.cancel_event)
                 passed = proof["status"] in ("passed", "approved")
                 pipeline_state.record_gate(repo_name, "swiftproof", passed, proof["reason"], version=built_version)
+                test_action.append_output("SwiftProof: " + proof["status"] + " — " + proof["reason"])
                 if not passed:
-                    _set_pipeline(repo_name, "test", "gate_rejected", built_version, build_id=build_id, test_id=test_id)
+                    test_action.status = "failed"
+                    _set_pipeline(repo_name, "test", "failed", built_version, build_id=build_id, test_id=test_id,
+                                  deploy_id=None, log_lines=test_action.output_lines)
+                    logger.warning("Pipeline: SwiftProof rejected the candidate", repo=repo_name, reason=proof["reason"][:200])
+                    await _notify_agent_failure("test", repo_name, built_version or "", proof["reason"])
                     return
+
+            _set_pipeline(repo_name, "test", "success", built_version, build_id=build_id, test_id=test_id, deploy_id=None, log_lines=test_action.output_lines)
+            logger.info("Pipeline: test succeeded", repo=repo_name)
+
             _td_cfg = pipeline_state.get_transition_config(repo_name, "test_to_deploy")
             _td_mode = _td_cfg.get("mode", "auto_with_success") if _td_cfg else "auto_with_success"
             if _td_mode == "manual":
@@ -4361,6 +4371,10 @@ async def set_transition_config(repo_name: str, transition: str, request: Reques
     For test_to_deploy, accepts an optional ``qa_enabled`` boolean: when true,
     the pipeline runs an isolated QA deploy (stack prefixed ``qa-``, domains
     prefixed ``qa.``) before the production deploy.
+
+    For build_to_test, accepts the SwiftProof settings: the review runs at the
+    end of the Test stage, so a rejection fails that stage rather than gating
+    the deployment separately.
     """
     valid = {"version_to_build", "build_to_test", "test_to_deploy"}
     if transition not in valid:
@@ -4373,6 +4387,7 @@ async def set_transition_config(repo_name: str, transition: str, request: Reques
     cfg: Dict[str, Any] = {"mode": mode}
     if transition == "test_to_deploy":
         cfg["qa_enabled"] = bool(body.get("qa_enabled", False))
+    if transition == "build_to_test":
         for key in ("swiftproof_enabled", "swiftproof_reviewer"):
             if key in body:
                 if type(body[key]) is not bool:

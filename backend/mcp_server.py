@@ -1098,6 +1098,9 @@ async def get_pipeline_status(repo_name: Optional[str] = None) -> str:
         "test_to_deploy also carries qa_enabled: when true the pipeline deploys "
         "to the isolated QA environment first and then always waits for a manual "
         "approval before production.\n"
+        "build_to_test carries the SwiftProof settings: the review runs at the end "
+        "of the Test stage and a rejection fails that stage, so the test_to_deploy "
+        "mode then applies to the failure. Deploying is only deploying.\n"
         "Omit `transition` to get all three, each with its last recorded gate "
         "decision. Check this before assuming a pipeline will run to completion "
         "on its own."
@@ -1250,7 +1253,9 @@ async def trigger_pipeline(
         "mode: auto | auto_with_success | agent | manual\n"
         "qa_enabled (test_to_deploy only): run an isolated QA deploy before "
         "production. Omit it to keep the current value — passing false disables "
-        "QA. Read the current setting with get_transition_config first."
+        "QA. Read the current setting with get_transition_config first.\n"
+        "The SwiftProof settings on build_to_test are not editable here and keep "
+        "their value when the mode changes; use the web interface to change them."
     )
 )
 async def set_transition_config(

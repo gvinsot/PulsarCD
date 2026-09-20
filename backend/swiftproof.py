@@ -35,7 +35,10 @@ def state():
 
 
 def config(repo):
-    return state().get_transition_config(repo, "test_to_deploy")
+    # SwiftProof belongs to the Test stage: it runs once the automated suite
+    # passes, and its verdict is part of that stage's outcome. Deploying to QA
+    # or production is only a deployment.
+    return state().get_transition_config(repo, "build_to_test")
 
 
 def enabled(repo):
@@ -200,6 +203,27 @@ def read_result(review_id):
     return result
 
 
+def failure_detail(report):
+    """Name what broke, using the recorded report rather than raw command stderr.
+
+    A code 3 or 4 means the run never reached a verdict; the report already
+    holds the reason, so the administrator should not have to open the archive
+    to read it.
+    """
+    for check in report.get("checks", []):
+        if check.get("status") != "ERROR":
+            continue
+        detail = str(check.get("kind") or check.get("id") or "check") + " failed"
+        if type(check.get("exit_code")) is int:
+            detail += " (exit " + str(check["exit_code"]) + ")"
+        output = " ".join(str(check.get("output", "")).split())[:300]
+        return detail + (": " + output if output else "")
+    for note in report.get("unverified", []):
+        if isinstance(note, str) and note.strip():
+            return " ".join(note.split())[:300]
+    return ""
+
+
 def report_findings(report):
     """Index recorded v1 observations for navigation without re-evaluating risk.
 
@@ -349,6 +373,9 @@ async def review(deployer, repo, release, cancel_event=None):
                 3: ("error", "SwiftProof configuration or comparison failed"),
                 4: ("error", "SwiftProof execution failed"),
             }[code]
+            if code in (3, 4):
+                detail = failure_detail(report)
+                reason += " — " + detail if detail else ""
             result = dict(id=review_id, status=status, reason=reason, code=code, identity=identity,
                           head=identity["head"], base=identity["base"], release=identity["release"],
                           archive_sha256=hashlib.sha256(archive).hexdigest(), tool_version=reply["tool_version"])
@@ -383,12 +410,3 @@ def approve(repo, review_id, user, reason):
     remember(repo, result)
     return public_result(result)
 
-
-async def prepare_deploy(deployer, repo, release, result):
-    if result["status"] not in ("passed", "approved"):
-        raise ValueError(result["reason"])
-    return await worker(deployer, dict(request_for(deployer, repo, release), action="guard", identity=result["identity"], id=result["id"]))
-
-
-async def record_deployed(deployer, repo, release, result):
-    return await worker(deployer, dict(request_for(deployer, repo, release), action="deployed", identity=result["identity"], id=result["id"]))
