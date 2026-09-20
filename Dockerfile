@@ -53,6 +53,7 @@ COPY pytest.ini ./
 COPY agent/ ./agent/
 COPY tests/ ./tests/
 COPY scripts/build-push.sh ./scripts/build-push.sh
+COPY scripts/swiftproof_provenance.py ./scripts/swiftproof_provenance.py
 # Build contexts may come from a Windows checkout, while these tests run Bash
 # on Linux. Match the script's Linux line endings and validate it at build time.
 RUN sed -i 's/\r$//' scripts/build-push.sh && bash -n scripts/build-push.sh

@@ -1416,6 +1416,25 @@ class StackDeployer:
     async def deploy(self, repo_name: str, ssh_url: str, version: str = "1.0",
                     tag: str = None, qa: bool = False,
                     output_callback=None, cancel_event=None) -> Dict[str, Any]:
+        from . import swiftproof
+        async with swiftproof.deployment_lock(repo_name):
+            return await self._deploy(repo_name, ssh_url, version, tag, qa, output_callback, cancel_event)
+
+    async def review(self, repo_name, ssh_url, version, cancel_event=None):
+        from . import swiftproof
+        if not swiftproof.enabled(repo_name):
+            return {"status": "disabled", "reason": "SwiftProof is disabled for this project"}
+        async with swiftproof.deployment_lock(repo_name):
+            _validate_repo_name(repo_name)
+            _validate_ssh_url(ssh_url)
+            success, _ = await self._ensure_repo_cloned(repo_name, ssh_url)
+            if not success:
+                return {"status": "error", "reason": "Cannot prepare repository for SwiftProof"}
+            return await swiftproof.review(self, repo_name, version, cancel_event)
+
+    async def _deploy(self, repo_name: str, ssh_url: str, version: str = "1.0",
+                      tag: str = None, qa: bool = False,
+                      output_callback=None, cancel_event=None) -> Dict[str, Any]:
         """Deploy a stack from a repository.
 
         Args:
@@ -1473,6 +1492,23 @@ class StackDeployer:
                 result["output"] = clone_msg
                 return result
 
+            from . import swiftproof
+            proof = None
+            guard = None
+            if swiftproof.enabled(repo_name):
+                if output_callback:
+                    output_callback("SwiftProof: verifying deployment evidence (may take several minutes)...")
+                proof = await swiftproof.review(self, repo_name, deploy_version, cancel_event)
+                result["swiftproof"] = swiftproof.public_result(proof)
+                if output_callback:
+                    output_callback("SwiftProof: " + proof["status"] + " — " + proof["reason"])
+                if proof["status"] not in ("passed", "approved"):
+                    result["output"] = "SwiftProof blocked deployment: " + proof["reason"]
+                    result["gate_rejected"] = True
+                    return result
+                guard = await swiftproof.prepare_deploy(self, repo_name, deploy_version, proof)
+                checkout_ref = proof["head"]
+
             # Run deploy script
             repos_path = self.config.repos_path
             scripts_path = f"{repos_path}/PulsarCD/scripts"
@@ -1482,6 +1518,8 @@ class StackDeployer:
             # Script format: deploy-service.sh [--qa] <folder> <version> [branch/tag]
             qa_flag = "--qa " if qa else ""
             deploy_cmd = f"cd {_shell_quote_path(scripts_path)} && bash deploy-service.sh {qa_flag}{_shell_quote_path(repo_path)} {shlex.quote(deploy_version)}"
+            if guard:
+                deploy_cmd = deploy_cmd.replace("&& bash ", "&& SWIFTPROOF_GUARD_FILE=" + shlex.quote(guard["path"]) + " bash ", 1)
             if checkout_ref:
                 deploy_cmd += f" {shlex.quote(checkout_ref)}"
 
@@ -1496,6 +1534,9 @@ class StackDeployer:
 
             logger.info("Running deploy", repo=repo_name, version=deploy_version, tag=tag, qa=qa)
             success, output = await self._run_command(deploy_cmd, output_callback=output_callback, cancel_event=cancel_event)
+
+            if success and proof and not qa:
+                await swiftproof.record_deployed(self, repo_name, deploy_version, proof)
 
             result["success"] = success
             result["output"] = f"{clone_msg}\n\n{output}" if clone_msg else output

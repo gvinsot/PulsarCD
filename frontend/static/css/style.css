@@ -6404,3 +6404,8 @@ strong.md-h2 {
         max-width: 200px;
     }
 }
+
+#transition-swiftproof-section { display: block; }
+#transition-swiftproof-section label { display: block; margin-bottom: 0.5rem; }
+#transition-swiftproof-baseline, #transition-swiftproof-reason { width: 100%; }
+#transition-swiftproof-report { max-height: 24rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }

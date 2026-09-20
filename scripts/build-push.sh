@@ -702,7 +702,26 @@ for img in $IMAGES; do
     fi
 done
 
+# Keep provenance outside the candidate checkout. Missing provenance does not
+# break projects which have not enabled SwiftProof; their opt-in gate rejects it.
+record_swiftproof_build() {
+    local image resolved
+    local -a args=()
+    if [ -n "$IMAGES_SKIPPED" ]; then args+=(--reuse); fi
+    args+=("$(basename "$REPO_PATH")" "$FULL_VERSION" "$CURRENT_COMMIT")
+    for image in $IMAGES; do
+        resolved=$(echo "$image" | envsubst 2>/dev/null || echo "$image")
+        if [[ "$resolved" =~ \$\{ ]]; then
+            resolved=$(echo "$resolved" | sed -E 's/\$\{([^:}]+):-([^}]+)\}/\2/g' | sed -E 's/\$\{([^}]+)\}/\1/g')
+        fi
+        args+=("$resolved=$(image_version_tag "$resolved" "$FULL_VERSION")")
+    done
+    python3 "$SCRIPT_DIR/swiftproof_provenance.py" record "${args[@]}" ||
+        log_warning "SwiftProof build provenance unavailable: gated deployment will require a complete rebuild."
+}
+
 if [ "$ALL_IMAGES_EXIST" = true ]; then
+    record_swiftproof_build
     log_success "All images already exist in registry for version $FULL_VERSION — nothing to build"
     # Restore original state
     if [ -n "$ORIGINAL_BRANCH" ] && [ "$ORIGINAL_BRANCH" != "HEAD" ]; then
@@ -877,6 +896,7 @@ for img in $IMAGES_TO_BUILD; do
 done
 
 log_success "All images tagged and pushed!"
+record_swiftproof_build
 
 # ============================================================================
 # Step 7: Tag git repository with version (skip if full version was provided)

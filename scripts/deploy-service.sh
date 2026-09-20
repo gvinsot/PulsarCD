@@ -41,6 +41,7 @@
 #
 
 set -e
+readonly PULSARCD_REVIEW_GUARD="${SWIFTPROOF_GUARD_FILE:-}"
 
 # ============================================================================
 # Configuration
@@ -721,6 +722,9 @@ echo ""
 log_info "Deploying stack: $STACK_NAME"
 
 # Deploy the stack (rolling update if it already exists)
+if [ -n "$PULSARCD_REVIEW_GUARD" ]; then
+    (cd "$REPO_PATH" && python3 "$SCRIPT_DIR/swiftproof_provenance.py" pin "$PULSARCD_REVIEW_GUARD" "$DEPLOY_COMPOSE" "$STACK_NAME")
+fi
 docker stack deploy -c "$DEPLOY_COMPOSE" "$STACK_NAME" --with-registry-auth --prune || {
     log_error "Failed to deploy stack!"
     rm -f "$DEPLOY_COMPOSE"

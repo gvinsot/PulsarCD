@@ -136,6 +136,8 @@ class PipelineEntry:
         # Per-project transition configs: {"build_to_test": {"mode": "...", ...}, "test_to_deploy": {...}}
         # mode: "auto" (no gate), "auto_with_success" (auto if prev succeeded), "agent" (LLM gate), "manual"
         self.transition_configs: Dict[str, Dict[str, Any]] = {}
+        self.swiftproof: Dict[str, Any] = {}
+        self.swiftproof_revision: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -148,6 +150,8 @@ class PipelineEntry:
             "gates": [g.to_dict() for g in self.gates],
             "last_deployed_at": self.last_deployed_at,
             "transition_configs": self.transition_configs,
+            "swiftproof": self.swiftproof,
+            "swiftproof_revision": self.swiftproof_revision,
         }
 
     @classmethod
@@ -167,6 +171,8 @@ class PipelineEntry:
         ]
         entry.last_deployed_at = data.get("last_deployed_at")
         entry.transition_configs = data.get("transition_configs", {})
+        entry.swiftproof = data.get("swiftproof", {})
+        entry.swiftproof_revision = data.get("swiftproof_revision", 0)
         return entry
 
     # ── Convenience for backward-compatible API response ──
@@ -200,6 +206,7 @@ class PipelineEntry:
             "gates": [g.to_dict() for g in self.gates],
             "last_deployed_at": self.last_deployed_at,
             "transition_configs": self.transition_configs,
+            "swiftproof": self.swiftproof,
             # Enriched per-stage data. ``last_log`` is deliberately left out:
             # the UI polls this every couple of seconds and only reads statuses
             # and versions, while the log tail would make the payload change on
@@ -445,6 +452,9 @@ class PipelineStateManager:
         # test_to_deploy supports an optional QA-pre-deploy step
         if transition == "test_to_deploy":
             new_config["qa_enabled"] = bool(config.get("qa_enabled", False))
+            previous = entry.transition_configs.get(transition, {})
+            for key, default in (("swiftproof_enabled", False), ("swiftproof_reviewer", True), ("swiftproof_initial_baseline", "")):
+                new_config[key] = config.get(key, previous.get(key, default))
         # version_to_build supports an optional multi-arch build (uses the
         # heavier docker-container buildx driver, with QEMU emulation when
         # cross-building). Single-arch builds use the host docker engine.

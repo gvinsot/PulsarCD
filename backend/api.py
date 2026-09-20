@@ -3871,7 +3871,9 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                             return
                         logger.info("Pipeline: gate build→test approved", repo=repo_name, reason=reason[:100])
                     else:
-                        pipeline_state.record_gate(repo_name, "build_to_test", True, "Agent mode but no LLM configured, auto-approved", version=built_version)
+                        pipeline_state.record_gate(repo_name, "build_to_test", False, "Agent gate unavailable: no LLM configured", version=built_version)
+                        _set_pipeline(repo_name, "build", "gate_rejected", built_version, build_id=build_id)
+                        return
                 # else: "auto" or "auto_with_success" — proceed (success already checked above)
 
             else:
@@ -3886,7 +3888,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
             logger.info("Pipeline: starting test", repo=repo_name, action_id=test_id, tag=tag)
             test_result = await deployer.test(
                 repo_name, ssh_url,
-                tag=tag,
+                tag=(f"v{built_version}" if buildable and built_version else tag),
                 output_callback=test_action.append_output,
                 cancel_event=test_action.cancel_event,
             )
@@ -3905,6 +3907,14 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
             logger.info("Pipeline: test succeeded", repo=repo_name)
 
             # ── Gate: Test → Deploy ──
+            from . import swiftproof
+            if swiftproof.enabled(repo_name):
+                proof = await deployer.review(repo_name, ssh_url, built_version or tag or "", test_action.cancel_event)
+                passed = proof["status"] in ("passed", "approved")
+                pipeline_state.record_gate(repo_name, "swiftproof", passed, proof["reason"], version=built_version)
+                if not passed:
+                    _set_pipeline(repo_name, "test", "gate_rejected", built_version, build_id=build_id, test_id=test_id)
+                    return
             _td_cfg = pipeline_state.get_transition_config(repo_name, "test_to_deploy")
             _td_mode = _td_cfg.get("mode", "auto_with_success") if _td_cfg else "auto_with_success"
             if _td_mode == "manual":
@@ -3928,7 +3938,9 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                         return
                     logger.info("Pipeline: gate test→deploy approved", repo=repo_name, reason=reason[:100])
                 else:
-                    pipeline_state.record_gate(repo_name, "test_to_deploy", True, "Agent mode but no LLM configured, auto-approved", version=built_version)
+                    pipeline_state.record_gate(repo_name, "test_to_deploy", False, "Agent gate unavailable: no LLM configured", version=built_version)
+                    _set_pipeline(repo_name, "test", "gate_rejected", built_version, build_id=build_id, test_id=test_id)
+                    return
             # else: "auto" or "auto_with_success" — proceed (success already checked above)
 
             deploy_tag = tag if tag else (f"v{built_version}" if built_version else None)
@@ -4163,7 +4175,8 @@ async def get_transition_config(repo_name: str, transition: str):
             if g.transition == transition:
                 last_decision = g.to_dict()
                 break
-    return {"repo": repo_name, "transition": transition, "config": config, "last_decision": last_decision}
+    return {"repo": repo_name, "transition": transition, "config": config, "last_decision": last_decision,
+            "swiftproof": entry.swiftproof if entry else {}}
 
 
 @app.put("/api/stacks/pipeline/{repo_name}/transition/{transition}")
@@ -4185,10 +4198,64 @@ async def set_transition_config(repo_name: str, transition: str, request: Reques
     cfg: Dict[str, Any] = {"mode": mode}
     if transition == "test_to_deploy":
         cfg["qa_enabled"] = bool(body.get("qa_enabled", False))
+        for key in ("swiftproof_enabled", "swiftproof_reviewer"):
+            if key in body:
+                if type(body[key]) is not bool:
+                    return JSONResponse({"error": key + " must be a boolean"}, status_code=400)
+                cfg[key] = body[key]
+        if "swiftproof_initial_baseline" in body:
+            baseline = body["swiftproof_initial_baseline"]
+            if not isinstance(baseline, str) or (baseline and not re.fullmatch(r"[0-9a-f]{40}", baseline)):
+                return JSONResponse({"error": "Initial baseline must be an exact lowercase Git SHA"}, status_code=400)
+            cfg["swiftproof_initial_baseline"] = baseline
     pipeline_state.set_transition_config(repo_name, transition, cfg)
     logger.info("Transition config updated", repo=repo_name, transition=transition,
                 mode=mode, qa_enabled=cfg.get("qa_enabled"))
     return {"saved": True, "repo": repo_name, "transition": transition, **cfg}
+
+
+@app.get("/api/stacks/pipeline/{repo_name}/swiftproof/{review_id}/report")
+async def get_swiftproof_report(repo_name: str, review_id: str, download: bool = False):
+    from . import swiftproof
+    import zipfile
+    from fastapi.responses import PlainTextResponse
+    try:
+        result = swiftproof.read_result(review_id)
+        if result["identity"]["repo"] != repo_name:
+            raise ValueError("Repository mismatch")
+        path = swiftproof.report_file(review_id, "report.zip")
+        if download:
+            return FileResponse(path, media_type="application/zip", filename="swiftproof-" + review_id[:12] + ".zip")
+        with zipfile.ZipFile(path) as bundle:
+            return PlainTextResponse(bundle.read("CONFIDENCE_REPORT.md").decode("utf-8"))
+    except (ValueError, OSError, KeyError, zipfile.BadZipFile):
+        return JSONResponse({"error": "Report not found or integrity check failed"}, status_code=404)
+
+
+@app.post("/api/stacks/pipeline/{repo_name}/swiftproof/{review_id}/approve")
+async def approve_swiftproof_report(repo_name: str, review_id: str, request: Request):
+    from . import swiftproof
+    # A human decision must not be manufactured by an agent API credential.
+    if getattr(request.state, "role", "") != "admin" or getattr(request.state, "auth_source", "") not in (AUTH_SOURCE_LOCAL, AUTH_SOURCE_GOOGLE):
+        return JSONResponse({"error": "Administrator sign-in required"}, status_code=403)
+    body = await request.json()
+    try:
+        return swiftproof.approve(repo_name, review_id, request.state.user, body.get("reason"))
+    except (ValueError, OSError, KeyError) as error:
+        return JSONResponse({"error": str(error) if isinstance(error, ValueError) else "Report unavailable"}, status_code=409)
+
+
+@app.post("/api/stacks/pipeline/{repo_name}/swiftproof/{review_id}/retry")
+async def retry_swiftproof_report(repo_name: str, review_id: str):
+    from . import swiftproof
+    async with swiftproof.deployment_lock(repo_name):
+        entry = pipeline_state.get_or_create(repo_name)
+        if entry.swiftproof.get("id") != review_id:
+            return JSONResponse({"error": "Report is no longer current"}, status_code=409)
+        entry.swiftproof_revision += 1
+        entry.swiftproof = {}
+        pipeline_state._save()
+    return {"reset": True, "message": "The next deployment attempt will generate a new review"}
 
 
 @app.get("/api/stacks/auto-build/status")
