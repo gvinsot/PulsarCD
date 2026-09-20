@@ -185,6 +185,13 @@ services:
       # every agent stop reporting.
       - PULSARCD_AUTH__AGENT_KEYS=${PULSARCD_AUTH__AGENT_KEYS:-}
 
+      # Key the edge Traefik presents to poll the IP blocklist it enforces
+      # (Security > Blocked at the edge, see backend/ip_blocklist.py). Optional:
+      # unset means the endpoint answers 503 and blocking an address records it
+      # without refusing anything, which the view reports. The same value goes
+      # into the edge's providers.http.headers.
+      - PULSARCD_AUTH__EDGE_KEY=${PULSARCD_AUTH__EDGE_KEY:-}
+
       # Trust X-Forwarded-For: this stack is published behind Traefik, so the
       # per-address login rate limit only sees the proxy address without it.
       # Traefik must be configured to overwrite the header

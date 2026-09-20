@@ -2314,6 +2314,7 @@ let securityPollTimer = null;
 let securityLoading = false;
 let securityData = null;
 let securityIpRequest = 0;
+let securityIpModalIp = null;
 
 function startSecurityPolling() {
     stopSecurityPolling();
@@ -2344,8 +2345,11 @@ async function loadSecurity() {
     securityLoading = true;
     try {
         const internal = document.getElementById('security-internal').checked;
-        const data = await apiGet(
-            `/security/overview?minutes=${encodeURIComponent(securityWindow())}&include_internal=${internal}`);
+        const [data, blocklist] = await Promise.all([
+            apiGet(`/security/overview?minutes=${encodeURIComponent(securityWindow())}&include_internal=${internal}`),
+            apiGet('/security/blocklist'),
+        ]);
+        if (blocklist) renderSecurityBlocklist(blocklist);
         if (!data) return;
         securityData = data;
         renderSecurity(data);
@@ -2445,7 +2449,7 @@ function securityShare(part, total) {
 function renderSecurityIps(ips) {
     const body = document.getElementById('security-ips-body');
     if (!ips.length) {
-        body.innerHTML = '<tr><td colspan="10" class="security-empty">No request in this window</td></tr>';
+        body.innerHTML = '<tr><td colspan="11" class="security-empty">No request in this window</td></tr>';
         return;
     }
     body.innerHTML = ips.map(ip => {
@@ -2462,6 +2466,7 @@ function renderSecurityIps(ips) {
             <td class="security-ellipsis" title="${escapeHtml(hosts)}">${escapeHtml(hosts) || '&mdash;'}</td>
             <td class="security-ellipsis" title="${escapeHtml(ip.user_agent || '')}">${escapeHtml(ip.user_agent || '') || '&mdash;'}</td>
             <td>${formatRelativeTime(ip.last_seen)}</td>
+            <td class="security-action-cell">${securityBlockButton(ip.ip, ip.blocked, ip.internal, true)}</td>
         </tr>`;
     }).join('');
 }
@@ -2504,6 +2509,138 @@ function renderSecurityWafRules(rules) {
     card.style.display = '';
 }
 
+// ---- Blocking a client at the edge ----------------------------------------
+// A blocked address is refused by Traefik in front of Coraza, for every host
+// it serves. The backend keeps the list and the edge polls it, so a block is
+// live within one poll interval; see backend/ip_blocklist.py.
+
+/**
+ * The Block / Unblock control for one address.
+ *
+ * `blocked` is the entry the backend matched, which may be a CIDR range that
+ * merely covers this address: releasing that needs the range, not the address,
+ * so the row shows what blocks it instead of a button that would fail.
+ */
+function securityBlockButton(ip, blocked, internal, stopClick) {
+    const stop = stopClick ? ' data-click-stop' : '';
+    if (blocked && blocked.ip !== ip) {
+        return `<span class="security-flag security-flag-high" title="Covered by the blocked range ${escapeHtml(blocked.ip)}">Blocked</span>`;
+    }
+    if (!isAdmin()) {
+        return blocked ? '<span class="security-flag security-flag-high">Blocked</span>' : '';
+    }
+    if (blocked) {
+        return `<button class="btn btn-sm btn-secondary security-action-btn" data-click="unblockIp" data-args="${uiArgs(ip)}"${stop}>Unblock</button>`;
+    }
+    if (internal) {
+        // The backend refuses these outright: blocking a cluster address would
+        // cut the fleet's own traffic.
+        return '<span class="text-muted" title="Internal addresses cannot be blocked">&mdash;</span>';
+    }
+    return `<button class="btn btn-sm btn-danger security-action-btn" data-click="blockIp" data-args="${uiArgs(ip)}"${stop}>Block</button>`;
+}
+
+function renderSecurityBlocklist(data) {
+    const warning = document.getElementById('security-blocklist-warning');
+    if (data.edge_configured) {
+        warning.style.display = 'none';
+    } else {
+        warning.textContent = 'The edge cannot fetch this list: PULSARCD_AUTH__EDGE_KEY is not set on the backend, '
+            + 'or the matching bearer token is missing from the edge\'s providers.http configuration. '
+            + 'Addresses listed here are recorded but nothing is refused.';
+        warning.style.display = '';
+    }
+
+    document.querySelector('.security-block-form').style.display = isAdmin() ? '' : 'none';
+
+    const body = document.getElementById('security-blocklist-body');
+    const entries = data.entries || [];
+    if (!entries.length) {
+        body.innerHTML = '<tr><td colspan="5" class="security-empty">No address is blocked</td></tr>';
+        return;
+    }
+    body.innerHTML = entries.map(e => `
+        <tr>
+            <td class="mono">${escapeHtml(e.ip)}</td>
+            <td class="security-ellipsis" title="${escapeHtml(e.reason || '')}">${escapeHtml(e.reason || '') || '&mdash;'}</td>
+            <td class="security-ellipsis" title="${escapeHtml(e.blocked_by || '')}">${escapeHtml(e.blocked_by || '') || '&mdash;'}</td>
+            <td>${formatRelativeTime(e.blocked_at)}</td>
+            <td class="security-action-cell">${securityBlockButton(e.ip, e, false, false)}</td>
+        </tr>`).join('');
+}
+
+/**
+ * Send one blocklist change. Returns the entry the backend stored, or null
+ * when it refused: the reason it gives is what the operator has to read, so it
+ * is shown rather than collapsed into a generic failure.
+ */
+async function _blocklistRequest(method, path, body) {
+    try {
+        const resp = await fetch(`${API_BASE}${path}`, {
+            method,
+            headers: body ? { ...authHeaders(), 'Content-Type': 'application/json' } : authHeaders(),
+            body: body ? JSON.stringify(body) : undefined,
+        });
+        if (resp.status === 401) { showLogin(); return null; }
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            showNotification('error', err.detail || `Request failed (HTTP ${resp.status})`);
+            return null;
+        }
+        return await resp.json();
+    } catch {
+        showNotification('error', 'Connection error');
+        return null;
+    }
+}
+
+/** Returns whether the address ended up blocked, for the form below. */
+async function blockIp(ip, reason) {
+    const what = ip.includes('/') ? 'range' : 'address';
+    if (!confirm(`Block ${ip} at the edge?\n\n`
+        + `Traefik will answer 403 to every request from this ${what}, on every host it serves, `
+        + 'until it is unblocked here.')) return false;
+    const entry = await _blocklistRequest('POST', '/security/blocklist', { ip, reason: reason || '' });
+    if (!entry) return false;
+    // entry.ip, not what was typed: the backend canonicalises a range, and
+    // "103.4.8.17/24 is now blocked" would misname what is actually refused.
+    showNotification('success', `${entry.ip} is now blocked at the edge`);
+    if (securityIpModalIp === entry.ip) setSecurityIpModalAction(entry.ip, entry, false);
+    await loadSecurity();
+    return true;
+}
+
+async function unblockIp(ip) {
+    if (!confirm(`Unblock ${ip}?\n\nThe edge will serve it again within a few seconds.`)) return;
+    if (!await _blocklistRequest('DELETE', `/security/blocklist?ip=${encodeURIComponent(ip)}`)) return;
+    showNotification('success', `${ip} is no longer blocked`);
+    if (securityIpModalIp === ip) setSecurityIpModalAction(ip, null, false);
+    await loadSecurity();
+}
+
+/** Block the address typed into the card's own form. */
+async function blockIpFromForm() {
+    const ipInput = document.getElementById('security-block-ip');
+    const reasonInput = document.getElementById('security-block-reason');
+    const ip = ipInput.value.trim();
+    if (!ip) {
+        showNotification('warning', 'Enter an address or a CIDR range to block');
+        ipInput.focus();
+        return;
+    }
+    // A refused address (internal, too broad, malformed) stays in the field to
+    // be corrected, next to the notification saying what was wrong with it.
+    if (await blockIp(ip, reasonInput.value.trim())) {
+        ipInput.value = '';
+        reasonInput.value = '';
+    }
+}
+
+function setSecurityIpModalAction(ip, blocked, internal) {
+    document.getElementById('security-ip-modal-action').innerHTML =
+        securityBlockButton(ip, blocked, internal, false);
+}
+
 function securityStatusClass(status) {
     if (status >= 500) return 'security-status-error';
     if (status >= 400) return 'security-status-warning';
@@ -2535,6 +2672,10 @@ async function openSecurityIp(ip) {
     document.getElementById('security-ip-modal-ip').textContent = ip;
     document.getElementById('security-ip-modal-summary').innerHTML = known ? securityIpSummary(known) : '';
     eventsBody.innerHTML = '<tr><td colspan="6" class="security-empty">Loading&hellip;</td></tr>';
+    securityIpModalIp = ip;
+    // Rendered from the list while the detail is on its way, so the footer is
+    // never briefly empty for a client that is already blocked.
+    setSecurityIpModalAction(ip, known ? known.blocked : null, known ? known.internal : false);
     modal.classList.add('open');
 
     // A slower answer for a previously opened IP must not overwrite this one.
@@ -2542,6 +2683,7 @@ async function openSecurityIp(ip) {
     const data = await apiGet(
         `/security/ips/${encodeURIComponent(ip)}?minutes=${encodeURIComponent(securityWindow())}`);
     if (requestId !== securityIpRequest) return;
+    if (data) setSecurityIpModalAction(ip, data.blocked, data.internal);
     if (!data) {
         eventsBody.innerHTML = '<tr><td colspan="6" class="security-empty">Could not load the requests of this client</td></tr>';
         return;
@@ -2572,6 +2714,7 @@ async function openSecurityIp(ip) {
 
 function closeSecurityIpModal() {
     securityIpRequest++;
+    securityIpModalIp = null;
     document.getElementById('security-ip-modal').classList.remove('open');
 }
 
@@ -7809,7 +7952,8 @@ function withStyleNonce(fn) {
 // against UI_HANDLERS only, never against window, so markup that got past
 // escaping still cannot call an arbitrary global.
 const UI_HANDLERS = Object.freeze({
-    addMCPServer, aiSearchLogs, analyzeActionLogs, applyLLMPreset, cancelAction,
+    addMCPServer, aiSearchLogs, analyzeActionLogs, applyLLMPreset, blockIp,
+    blockIpFromForm, unblockIp, cancelAction,
     cancelCurrentActionLogs, cleanupRepoTags, clearLLMChat, clearRecentQueries,
     closeActionLogsModal, closeActivityDiff, closeActivityModal, closeAgentModal,
     closeBuildModal, closeCreateTaskModal, closeDeployModal, closeModal, closePipelineModal,

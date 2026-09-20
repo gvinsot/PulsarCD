@@ -6383,6 +6383,71 @@ strong.md-h2 {
     max-height: 55vh;
 }
 
+/* Blocking a client at the edge */
+
+.security-blocklist-warning {
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    border-radius: var(--radius-sm);
+    color: var(--status-warning);
+    font-size: 0.8rem;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+}
+
+.security-block-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.security-block-input {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    padding: 6px 10px;
+}
+
+#security-block-ip {
+    flex: 0 1 340px;
+    font-family: var(--font-mono);
+}
+
+#security-block-reason {
+    flex: 1 1 200px;
+}
+
+.security-block-input:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+}
+
+.security-table td.security-action-cell {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.security-action-btn {
+    padding: 3px 10px;
+    font-size: 0.75rem;
+}
+
+#security-ip-modal-action:empty {
+    display: none;
+}
+
+/* The block control sits on the left, Close keeps the right. With no control
+   to show the span collapses and Close falls back to the left, as before. */
+#security-ip-modal .modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
 @media (max-width: 768px) {
     #security-view .header-actions {
         justify-content: flex-start;

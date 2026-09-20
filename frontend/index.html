@@ -621,6 +621,35 @@
                 </div>
 
                 <div class="chart-card security-table-card">
+                    <h3>Blocked at the edge <span class="security-hint">refused by Traefik in front of the WAF, for every host it serves</span></h3>
+                    <div class="security-blocklist-warning start-hidden" id="security-blocklist-warning"></div>
+                    <div class="security-block-form">
+                        <input type="text" id="security-block-ip" class="security-block-input"
+                               placeholder="Address or CIDR range, e.g. 45.9.12.7 or 103.4.8.0/24"
+                               autocomplete="off" spellcheck="false" maxlength="49">
+                        <input type="text" id="security-block-reason" class="security-block-input"
+                               placeholder="Reason (optional)" autocomplete="off" maxlength="200">
+                        <button class="btn btn-danger btn-sm" data-click="blockIpFromForm">Block</button>
+                    </div>
+                    <div class="security-table-scroll">
+                        <table class="security-table">
+                            <thead>
+                                <tr>
+                                    <th>Address</th>
+                                    <th>Reason</th>
+                                    <th>Blocked by</th>
+                                    <th>Blocked</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="security-blocklist-body">
+                                <tr><td colspan="5" class="security-empty">Loading&hellip;</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="chart-card security-table-card">
                     <h3>Client IPs <span class="security-hint">flagged first &middot; click a row for its requests</span></h3>
                     <div class="security-table-scroll">
                         <table class="security-table">
@@ -636,10 +665,11 @@
                                     <th>Top hosts</th>
                                     <th>User agent</th>
                                     <th>Last seen</th>
+                                    <th></th>
                                 </tr>
                             </thead>
                             <tbody id="security-ips-body">
-                                <tr><td colspan="10" class="security-empty">Loading&hellip;</td></tr>
+                                <tr><td colspan="11" class="security-empty">Loading&hellip;</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -1219,6 +1249,7 @@
                         </div>
                     </div>
                     <div class="modal-footer">
+                        <span id="security-ip-modal-action"></span>
                         <button class="btn btn-secondary" data-click="closeSecurityIpModal">Close</button>
                     </div>
                 </div>

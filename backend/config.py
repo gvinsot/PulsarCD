@@ -32,6 +32,11 @@ Environment variables:
 - PULSARCD_AUTH__JWT_SECRET: JWT signing secret. Auto-generated when unset (all
   sessions are invalidated on restart); when set it must be at least
   MIN_SECRET_LENGTH characters or startup fails.
+- PULSARCD_AUTH__EDGE_KEY: key the edge Traefik presents to poll the IP
+  blocklist it enforces (see backend/ip_blocklist.py). Must match the bearer
+  token in the edge's providers.http.headers. Unset means the endpoint answers
+  503 and blocking an address has no effect; when set it must be at least
+  MIN_SECRET_LENGTH characters or startup fails.
 - PULSARCD_SSH_KNOWN_HOSTS: known_hosts file used when a host does not set
   ssh_known_hosts_path (default ~/.ssh/known_hosts). Point it at a writable
   location: the container bind-mounts ~/.ssh read-only.
@@ -199,6 +204,14 @@ class AuthConfig(BaseModel):
     # it acts on and the shared agent_key alone is no longer sufficient.
     agent_keys: Dict[str, str] = {}
 
+    # Shared key the edge Traefik presents to fetch the IP blocklist it
+    # enforces (GET /api/security/waf/traefik-config, see ip_blocklist.py).
+    # The same value goes into the edge's providers.http.headers. Empty means
+    # the endpoint answers 503 and no address is ever blocked -- the rest of
+    # the Security view is unaffected. NOT auto-generated: a random key that
+    # changed on every restart would silently stop the edge from polling.
+    edge_key: str = ""
+
 
 class MCPConfig(BaseModel):
     """MCP (Model Context Protocol) server configuration."""
@@ -282,6 +295,7 @@ def _validate_configured_secrets(settings: "Settings") -> None:
     for name, value in (
         ("PULSARCD_AUTH__JWT_SECRET", settings.auth.jwt_secret),
         ("PULSARCD_AUTH__AGENT_KEY", settings.auth.agent_key),
+        ("PULSARCD_AUTH__EDGE_KEY", settings.auth.edge_key),
     ):
         if not value:
             continue

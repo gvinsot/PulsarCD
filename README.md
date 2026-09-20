@@ -75,6 +75,10 @@ For production? Not yet. But the gap is closing fast. And when it does, PulsarCD
 - **Real-Time Metrics**: CPU, Memory, GPU (AMD/NVIDIA), Disk usage
 - **Error Tracking**: 4xx/5xx HTTP error counts and trends
 
+### Security
+- **Attack Detection**: Client IPs and endpoints ranked from the Traefik access logs and Coraza WAF blocks - floods, scanners, credential probing
+- **Block at the Edge**: Refuse an address or CIDR range in Traefik, in front of the WAF, without redeploying anything
+
 ### Container Management
 - **Multi-Host View**: See all containers grouped by host and Compose project
 - **Container Actions**: Start, Stop, Restart, Pause/Unpause from the UI
@@ -395,6 +399,17 @@ pulsarcd/
 }
 ```
 
+### Security
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/security/overview` | GET | Suspicious client IPs and hot endpoints, from the Traefik access logs |
+| `/api/security/ips/{ip}` | GET | Latest requests and WAF blocks of one client |
+| `/api/security/blocklist` | GET | Addresses refused at the edge |
+| `/api/security/blocklist` | POST | Block an address or CIDR range (admin) |
+| `/api/security/blocklist?ip=...` | DELETE | Unblock one (admin) |
+| `/api/security/waf/traefik-config` | GET | The blocklist as a Traefik dynamic configuration, polled by the edge. Authenticates with `PULSARCD_AUTH__EDGE_KEY`, not a session token |
+
 ### Hosts
 
 | Endpoint | Method | Description |
@@ -567,6 +582,7 @@ which is expected.
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `PULSARCD_AUTH__AGENT_KEYS` | *(empty)* | JSON object `{"<agent id>": "<key>"}`. When set, a key is only accepted for the agent it was issued to, so one compromised agent cannot poll or answer for another. The Swarm agent service uses `AGENT_AGENT_ID={{.Node.Hostname}}`, so keys are indexed by node hostname - and it currently distributes a single shared `AGENT_AUTH_KEY` to every node, so enabling this **requires** giving each node its own key (a per-node Docker secret, or one agent service per node) or every agent stops reporting. |
+| `PULSARCD_AUTH__EDGE_KEY` | *(empty)* | Key the edge proxy presents to poll the IP blocklist it enforces (see "Blocking a client at the edge"). Must match the bearer token in the edge's `providers.http.headers`. Empty means the endpoint answers 503 and a block records the address without refusing anything - which the Security view reports. At least 32 characters when set, or startup fails. |
 | `PULSARCD_TRUST_PROXY_HEADERS` | `false` (`true` in the Swarm stack) | Read the client address from `X-Forwarded-For` / `X-Real-IP` for the login rate limit. Only enable it behind a proxy that **overwrites** those headers (Traefik `forwardedHeaders.trustedIPs`); reachable directly, the header is client-controlled and lets an attacker choose their own bucket. Without it, every request behind a proxy shares a single bucket. |
 | `PULSARCD_SSH_KNOWN_HOSTS` | `~/.ssh/known_hosts` | known_hosts file used for hosts that do not set `ssh_known_hosts_path`. The container bind-mounts `~/.ssh` read-only, so the stack points this at `/data/known_hosts` on the read/write volume. |
 | `PULSARCD_SSH_ACCEPT_NEW_HOSTKEYS` | `false` | Trust-on-first-use, for hosts that have **no** explicit `ssh_known_hosts_path` only (a host with one stays strictly verified whatever this says - give that host `ssh_known_hosts_path="accept-new"` instead). |
@@ -616,6 +632,50 @@ handler, so a route added later is protected by default:
 
 Adding a POST to the read-only allowlist means asserting it triggers no side effect
 at all - no background job, no LLM agent run, no remote command.
+
+### Blocking a client at the edge
+
+The Security view lists the client IPs seen in the Traefik access logs and flags
+the ones that look like attacks. **Blocked at the edge** is what you do about
+one: the address is refused by Traefik in front of Coraza, so it reaches no WAF
+rule and no application, on every host that proxy serves.
+
+Enforcement is a Traefik router matching `ClientIP(...)` at a priority above
+every application router, chained to a middleware that answers 403. PulsarCD
+serves it as a dynamic configuration and the edge polls it, so a block is live
+within one poll interval and nothing is redeployed. See `backend/ip_blocklist.py`.
+
+Blocking is **inert until the edge is wired to it** - the card says so when it
+is not. Two values, which must match:
+
+1. `PULSARCD_AUTH__EDGE_KEY` in PulsarCD's `devops/.env` (at least 32
+   characters; `openssl rand -base64 32`). It ends in `_KEY`, so the deploy
+   turns it into a Docker secret automatically;
+2. the same value as `PULSARCD_EDGE_KEY` in the edge's `devops/.env`, which
+   puts it in the `providers.http` block of `edge/traefik.yml`
+   (see `PrivateNetwork/README.md`). That block is a **static** provider, so
+   adding it needs one edge redeploy; changing the blocklist afterwards does
+   not. With no key the edge drops the provider entirely and blocks nobody.
+
+The endpoint the edge polls (`GET /api/security/waf/traefik-config`) is the one
+`/api/` route that authenticates with that key instead of a session token: its
+caller is a proxy, which holds no session and can carry no role.
+
+What a block refuses:
+
+- addresses and CIDR ranges alike, `/8` and narrower for IPv4, `/32` and
+  narrower for IPv6 - broader ranges are refused so a typo cannot take the edge
+  down;
+- **not** private, loopback or link-local addresses: blocking one would cut the
+  cluster's own traffic, and the edge would refuse it for every service at once;
+- **not** the address you are connecting from. PulsarCD is published through the
+  very proxy that would start refusing you, so that block would take the unblock
+  button with it. The check needs `PULSARCD_TRUST_PROXY_HEADERS=true` to see
+  past the proxy's own address.
+
+Blocks survive a restart (`blocked_ips.json` in the data directory) and a
+PulsarCD outage: a failed poll leaves Traefik with the configuration it last
+fetched. Blocking and unblocking are admin-only, like every other mutation.
 
 ### Deployment recommendations
 

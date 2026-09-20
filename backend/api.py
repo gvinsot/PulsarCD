@@ -27,6 +27,11 @@ from shared.access_log import is_internal_ip, normalize_ip
 
 from .auth import AUTH_SOURCE_GOOGLE, AUTH_SOURCE_LOCAL, create_token, decode_token
 from .allowlist import EmailAllowlist
+from .ip_blocklist import (
+    IpBlocklist,
+    covers as ip_blocklist_covers,
+    validate_target as ip_blocklist_validate,
+)
 from .google_auth import GoogleIdTokenVerifier, GoogleTokenError
 from .collector import Collector
 from .config import load_config, Settings
@@ -55,6 +60,7 @@ github_service: GitHubService = None
 error_detector = None
 user_manager = None
 email_allowlist: Optional[EmailAllowlist] = None
+ip_blocklist: Optional[IpBlocklist] = None
 google_verifier: Optional[GoogleIdTokenVerifier] = None
 llm_agent = None
 pipeline_state: Optional[PipelineStateManager] = None
@@ -119,7 +125,7 @@ _background_actions: Dict[str, BackgroundAction] = {}
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     global settings, opensearch, collector, github_service, error_detector, user_manager, llm_agent, pipeline_state
-    global email_allowlist, google_verifier
+    global email_allowlist, google_verifier, ip_blocklist
 
     # Startup
     logger.info("Starting PulsarCD API")
@@ -145,6 +151,18 @@ async def lifespan(app: FastAPI):
         admins=settings.auth.google_admins,
         viewers=settings.auth.google_viewers,
     )
+    # Addresses refused by the edge proxy (Security > Blocked at the edge).
+    ip_blocklist = IpBlocklist(path=f"{settings.data_dir}/blocked_ips.json")
+    if not settings.auth.edge_key:
+        logger.warning(
+            "PULSARCD_AUTH__EDGE_KEY is not set: the edge cannot poll the IP "
+            "blocklist, so blocking an address from the Security view has no "
+            "effect. Set the same value here and in the edge's "
+            "providers.http.headers."
+        )
+    elif ip_blocklist.targets():
+        logger.info("Edge blocklist enforced", count=len(ip_blocklist.targets()))
+
     if not google_verifier.enabled:
         logger.warning(
             "PULSARCD_AUTH__GOOGLE_CLIENT_ID is not set: Google sign-in is "
@@ -476,6 +494,17 @@ _AGENT_KEY_ROUTES = frozenset({
     ("POST", "/api/agent/system-error"),
 })
 
+# ---- Edge key policy -------------------------------------------------------
+# The one route the edge Traefik polls, to fetch the IP blocklist it enforces.
+# Its caller is a reverse proxy, not a person and not an agent: it holds no
+# session and cannot be given a role, so it authenticates with its own shared
+# key (PULSARCD_AUTH__EDGE_KEY).  The route is read-only and serves nothing but
+# the blocked addresses, but it is reachable from the internet like the rest of
+# /api, so it is never left open.
+_EDGE_KEY_ROUTES = frozenset({
+    ("GET", "/api/security/waf/traefik-config"),
+})
+
 # ---- Where a JWT may travel in the query string ----------------------------
 # A token in the URL leaks into reverse-proxy access logs, browser history and
 # Referer headers, so `?token=` is only honoured on the two endpoints whose
@@ -556,6 +585,24 @@ async def _authenticate_agent(request: Request, auth_header: str):
     if not _agent_key_matches(presented, settings.auth.agent_key):
         logger.warning("Agent key rejected", path=request.url.path, method=request.method)
         return JSONResponse(status_code=401, content={"detail": "Invalid agent key"})
+    return None
+
+
+def _authenticate_edge(auth_header: str):
+    """Authenticate the edge proxy; return an error response or None if valid."""
+    expected = getattr(getattr(settings, "auth", None), "edge_key", "") or ""
+    if not expected:
+        # Nothing to compare against: answering 401 would look like a wrong key
+        # on the edge side, when the deployment simply never set one.
+        logger.warning("Edge blocklist polled but PULSARCD_AUTH__EDGE_KEY is not set")
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "PULSARCD_AUTH__EDGE_KEY is not configured"},
+        )
+    presented = auth_header[7:] if auth_header.startswith("Bearer ") else ""
+    if not _agent_key_matches(presented, expected):
+        logger.warning("Edge key rejected")
+        return JSONResponse(status_code=401, content={"detail": "Invalid edge key"})
     return None
 
 
@@ -763,6 +810,13 @@ async def auth_middleware(request: Request, call_next):
     # (POST /api/agent/action) deliberately fall through to the JWT policy.
     if (request.method.upper(), path) in _AGENT_KEY_ROUTES:
         denied = await _authenticate_agent(request, auth_header)
+        if denied is not None:
+            return denied
+        return await call_next(request)
+
+    # The edge proxy polling the blocklist it enforces: its own shared key.
+    if (request.method.upper(), path) in _EDGE_KEY_ROUTES:
+        denied = _authenticate_edge(auth_header)
         if denied is not None:
             return denied
         return await call_next(request)
@@ -1469,7 +1523,16 @@ async def get_security_overview(
     include_internal: bool = Query(default=False),
 ):
     """Suspicious client IPs and hot endpoints, from the Traefik access logs."""
-    return await opensearch.get_security_overview(minutes=minutes, include_internal=include_internal)
+    overview = await opensearch.get_security_overview(
+        minutes=minutes, include_internal=include_internal)
+    # Which of those clients the edge is already refusing.  Resolved here
+    # rather than in the browser because an address can be blocked through a
+    # CIDR range that covers it, and the view has to say so instead of
+    # offering to block it again.
+    if ip_blocklist:
+        for entry in overview.get("ips", []):
+            entry["blocked"] = ip_blocklist.blocked_entry(entry.get("ip", ""))
+    return overview
 
 
 @app.get("/api/security/ips/{ip}")
@@ -1484,8 +1547,90 @@ async def get_security_ip_events(
     return {
         "ip": normalized,
         "internal": is_internal_ip(normalized),
+        "blocked": ip_blocklist.blocked_entry(normalized) if ip_blocklist else None,
         "events": await opensearch.get_security_ip_events(normalized, minutes=minutes),
     }
+
+
+# ---- Blocking a client at the edge -----------------------------------------
+# A blocked address is refused by Traefik in front of Coraza: it reaches no
+# WAF rule and no application.  The list lives here and the edge polls it (see
+# backend/ip_blocklist.py); the two endpoints below are what the Security view
+# calls, and the role policy in auth_middleware already reserves the mutating
+# ones for administrators.
+
+
+@app.get("/api/security/blocklist")
+async def get_security_blocklist():
+    """Addresses currently refused at the edge."""
+    return {
+        "entries": ip_blocklist.list_entries() if ip_blocklist else [],
+        # False means blocking is inert: the edge has no key to poll with, so
+        # an entry added here would never be enforced.  The view says so
+        # rather than letting an operator believe an attacker is gone.
+        "edge_configured": bool(settings and settings.auth.edge_key),
+    }
+
+
+@app.post("/api/security/blocklist")
+async def add_security_block(request: Request):
+    """Block a client address or CIDR range at the edge (admin only)."""
+    body = await request.json()
+    ip = body.get("ip", "")
+    reason = body.get("reason", "")
+    if not isinstance(ip, str) or not isinstance(reason, str):
+        raise HTTPException(status_code=400, detail="Invalid request body")
+
+    try:
+        target = ip_blocklist_validate(ip)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Blocking the address the request comes from takes the unblock button
+    # away with it: PulsarCD is published through the very proxy that would
+    # start refusing this client.  The check is only meaningful behind a proxy
+    # that sets X-Forwarded-For and is trusted to (PULSARCD_TRUST_PROXY_HEADERS);
+    # otherwise the caller's address reads as Traefik's own, which is private
+    # and can never be a block target anyway.
+    caller = normalize_ip(_client_address(request))
+    if caller is not None and ip_blocklist_covers(target, caller):
+        raise HTTPException(
+            status_code=400,
+            detail=(f"You are connecting from {caller}, which '{target}' covers. "
+                    "Blocking it would lock you out of PulsarCD itself, and the "
+                    "unblock button with it."),
+        )
+
+    try:
+        return await ip_blocklist.add(
+            target, reason=reason, blocked_by=getattr(request.state, "user", ""))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/security/blocklist")
+async def remove_security_block(
+    # A query parameter rather than a path one: a CIDR range carries a slash,
+    # which no path segment can hold even percent-encoded.
+    ip: str = Query(..., description="The blocked address or range to release"),
+):
+    """Stop refusing a client address at the edge (admin only)."""
+    try:
+        return await ip_blocklist.remove(ip)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/security/waf/traefik-config")
+async def get_security_traefik_config():
+    """Traefik dynamic configuration enforcing the blocklist.
+
+    Polled by the edge's HTTP provider, which authenticates with
+    PULSARCD_AUTH__EDGE_KEY (see _EDGE_KEY_ROUTES).  It always answers with a
+    complete configuration -- an empty blocklist yields an empty one, which is
+    how an unblock reaches the edge.
+    """
+    return ip_blocklist.traefik_config() if ip_blocklist else {"http": {}}
 
 
 @app.get("/api/admin/error-detector-status")

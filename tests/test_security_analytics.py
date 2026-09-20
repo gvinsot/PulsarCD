@@ -272,7 +272,8 @@ class TestSecurityApi:
         with patch.object(api_module.opensearch, "get_security_ip_events", mock):
             resp = client.get("/api/security/ips/2a01:0e0a::0001?minutes=60", headers=auth_headers)
         assert resp.status_code == 200
-        assert resp.json() == {"ip": "2a01:e0a::1", "internal": False, "events": events}
+        assert resp.json() == {"ip": "2a01:e0a::1", "internal": False,
+                               "blocked": None, "events": events}
         mock.assert_awaited_once_with("2a01:e0a::1", minutes=60)
 
     def test_invalid_ip(self, client, auth_headers):

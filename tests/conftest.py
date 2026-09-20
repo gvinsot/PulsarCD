@@ -115,9 +115,10 @@ def _mock_google_verifier(enabled=True):
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(scope="session")
-def client():
+def client(tmp_path_factory):
     """TestClient with all infrastructure mocked via a patched lifespan."""
     import backend.api as api_module
+    from backend.ip_blocklist import IpBlocklist
 
     mock_settings = _mock_settings()
     mock_os = _mock_opensearch()
@@ -126,6 +127,9 @@ def client():
     mock_um = _mock_user_manager()
     mock_allowlist = _mock_email_allowlist()
     mock_google = _mock_google_verifier()
+    # The real store, on a throwaway file: it is pure local state, and the
+    # endpoints are worth testing against what actually persists.
+    blocklist = IpBlocklist(path=str(tmp_path_factory.mktemp("data") / "blocked_ips.json"))
 
     @asynccontextmanager
     async def _test_lifespan(app):
@@ -138,6 +142,7 @@ def client():
         api_module.user_manager = mock_um
         api_module.email_allowlist = mock_allowlist
         api_module.google_verifier = mock_google
+        api_module.ip_blocklist = blocklist
         yield
         # No teardown needed for mocks
 
