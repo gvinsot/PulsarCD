@@ -10,7 +10,11 @@ l'interface, de l'API, du pipeline et du MCP.
 1. Publier cette version de PulsarCD et mettre à jour ses scripts sur l'hôte
    de déploiement. Depuis une copie relue de PulsarCD sur cet hôte Linux :
    `sudo bash scripts/install-swiftproof.sh`. L'installateur vérifie le SHA-256
-   de la version SwiftProof v0.1.0, pour amd64 ou arm64. Un autre emplacement
+   de la version SwiftProof [v0.2.0](https://github.com/gvinsot/SwiftProof/releases/tag/v0.2.0),
+   dernière version publiée vérifiée le 20 septembre 2026, pour amd64 ou arm64.
+   Relancer cet installateur sur les hôtes déjà équipés de v0.1.0 et vérifier
+   `swiftproof version` ; modifier PulsarCD seul ne remplace pas leur binaire.
+   Un autre emplacement
    est possible avec un argument de l'installateur, puis la variable
    `PULSARCD_SWIFTPROOF_BINARY` dans le service PulsarCD.
 2. Vérifier Python 3, PyYAML, Git, Docker et Buildx sur cet hôte. Utiliser le
@@ -33,6 +37,14 @@ l'interface, de l'API, du pipeline et du MCP.
 La fonctionnalité est désactivée par défaut sur les projets existants. Le pilote
 GitHub de SwiftProof est informatif ; le contrôle PulsarCD, une fois activé,
 bloque effectivement les déploiements qui ne satisfont pas la politique.
+
+Avec v0.2.0, les signaux `uncovered_change` apparaissent également parmi les
+risques cliquables. La mesure des lignes ajoutées exécutées concerne Go et
+nécessite une commande `coverage` dans la politique de référence, avec le jeton
+`{coverage_out}` exactement une fois ; une politique existante n'est pas modifiée
+automatiquement. Le rapport complet conserve les mesures et leurs limites.
+PulsarCD passe explicitement `--reviewer=true` ou `--reviewer=false`, donc le
+nouveau démarrage automatique du reviewer ne change pas le choix LLM du projet.
 
 ## Réutilisation du LLM
 
@@ -58,6 +70,30 @@ LLM est indisponible.
 
 ## Décisions et preuves
 
+Dans **Test Logs**, activer SwiftProof place le dernier résultat du projet en
+tête de la modale. Le statut est actualisé toutes les quatre secondes, même
+après la fin des tests. La release et le SHA distinguent cette revue du run de
+tests ouvert. Cliquer sur un constat ouvre ses preuves, les sorties des contrôles
+de référence/candidat et l'extrait des changements aux lignes concernées.
+Les titres du rapport servent de raccourcis ; l'archive reste téléchargeable.
+
+L'explorateur regroupe par défaut les résultats sous **ERROR** (échecs et erreurs)
+et **SUCCESS**, puis les tests ignorés ou indéterminés. Il propose aussi les
+groupements par type, framework, fichier ou thème automatique, une recherche
+et un filtre de résultat. Les formats pytest, Jest/Vitest, TAP, .NET et Go sont
+reconnus au mieux ; les suites et totaux du runner restent distincts des tests
+nommés. Chaque entrée pointe vers sa ligne de log. Les dernières 20 000 lignes
+sont conservées dans la modale, affichées par fenêtres de 500 lignes ; le suivi
+automatique s'arrête lorsqu'on remonte ou consulte une entrée.
+
+**Group with LLM** est une action administrateur facultative : elle classe
+jusqu'à 300 noms de tests et chemins avec le modèle configuré dans PulsarCD,
+sans transmettre les logs bruts ni modifier les résultats ou les décisions
+SwiftProof. Les nouveaux tests et ceux sans thème restent dans **Other / new
+tests**. Le classement automatique reste disponible si le LLM est indisponible.
+L'API correspondante est `POST /api/stacks/actions/{id}/logs/themes`, avec
+`{"entries":[{"id":"test-1","name":"test_login","file":"tests/auth.py"}]}`.
+
 | Résultat SwiftProof | Déploiement |
 | --- | --- |
 | 0 | Autorisé par SwiftProof ; les autres contrôles restent applicables |
@@ -71,6 +107,18 @@ connecté peut approuver avec un motif, puis relancer explicitement le
 déploiement. Il ne peut pas approuver un code 1, 3 ou 4. Le bouton de nouvelle
 revue invalide le résultat courant ; la prochaine tentative regénère les
 preuves. Les anciennes archives restent disponibles pour l'audit.
+
+L'API `GET /api/stacks/pipeline/{repo}/swiftproof/{id}/report?format=json`
+fournit le verdict (`result`, avec version de release et SHA), le rapport
+SwiftProof original (`report`), son texte (`markdown`) et un index `findings`
+pour naviguer vers les observations et les lignes concernées. Cet index
+conserve la gravité, le statut et les preuves enregistrés ; un signal de
+l'analyseur n'est pas présenté comme un défaut reproduit. Les coordonnées
+`side: old` désignent la référence, et `side: new` le candidat. Les appels
+sans `format=json` et avec `download=true` conservent leur format existant.
+Le contrôle d'appartenance au projet et d'intégrité de l'archive s'applique
+également au rapport structuré. Le statut en cours et l'activation restent
+disponibles dans `GET /api/stacks/pipeline/{repo}/transition/test_to_deploy`.
 
 L'identifiant du rapport lie le SHA de production, le SHA candidat, les digests
 des images, le binaire, la politique de référence et la configuration du modèle.
@@ -108,6 +156,8 @@ et [AsyncSSH](https://asyncssh.readthedocs.io/en/latest/api.html#asyncssh.SSHCli
 
 ```sh
 python -m pytest tests/test_swiftproof.py tests/test_api.py tests/test_security.py tests/test_build_push.py -q
+python -m pytest tests/test_test_log_themes.py tests/test_test_log_themes_api.py -q
+node --test tests/test_test_log_model.cjs tests/test_test_log_viewer.cjs
 SWIFTPROOF_TEST_BINARY=/chemin/swiftproof python -m pytest tests/test_swiftproof.py -q
 ```
 

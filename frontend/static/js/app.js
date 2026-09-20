@@ -7203,6 +7203,8 @@ let actionLogsPollTimer = null;
 let actionLogsPollOffset = 0;
 let actionLogsFirstRender = true;
 let actionLogsEventSource = null;
+let actionLogsGeneration = 0;
+let testLogsViewer = null;
 
 // Rendering is batched through requestAnimationFrame: a build can dump tens of
 // thousands of lines at once, and appending them one by one — each followed by
@@ -7212,6 +7214,8 @@ let actionLogsFlushHandle = null;
 const ACTION_LOGS_MAX_DOM_LINES = 5000;
 
 function openActionLogs(actionId, actionType, repoName) {
+    stopActionLogsPoll();
+    if (testLogsViewer) { testLogsViewer.dispose(); testLogsViewer = null; }
     currentActionLogsId = actionId;
     currentActionLogsType = actionType;
     currentActionLogsRepo = repoName;
@@ -7231,11 +7235,16 @@ function openActionLogs(actionId, actionType, repoName) {
 
     modal.classList.add('active');
 
+    if (/^test(?:s| logs)?$/i.test(actionType || '')) {
+        testLogsViewer = new TestLogsViewer(actionId, repoName, content);
+    }
+
     startActionLogsPoll(actionId);
 }
 
 function closeActionLogsModal() {
     stopActionLogsPoll();
+    if (testLogsViewer) { testLogsViewer.dispose(); testLogsViewer = null; }
     document.getElementById('action-logs-modal').classList.remove('active');
     currentActionLogsId = null;
     currentActionLogsType = null;
@@ -7244,7 +7253,7 @@ function closeActionLogsModal() {
 
 function analyzeActionLogs() {
     const content = document.getElementById('action-logs-content');
-    const logLines = Array.from(content.querySelectorAll('.log-line'))
+    const logLines = testLogsViewer ? testLogsViewer.lines.join('\n') : Array.from(content.querySelectorAll('.log-line'))
         .map(el => el.textContent)
         .join('\n');
 
@@ -7280,6 +7289,7 @@ async function cancelCurrentActionLogs() {
 }
 
 function stopActionLogsPoll() {
+    actionLogsGeneration++;
     if (actionLogsPollTimer) {
         clearTimeout(actionLogsPollTimer);
         actionLogsPollTimer = null;
@@ -7318,6 +7328,10 @@ function appendLogLine(content, line) {
  */
 function queueActionLogLines(lines, extraClass) {
     if (!lines || lines.length === 0) return;
+    if (testLogsViewer) {
+        testLogsViewer.ingest(lines, extraClass);
+        return;
+    }
     for (const line of lines) {
         actionLogsPendingLines.push(extraClass ? { line, cls: extraClass } : line);
     }
@@ -7339,6 +7353,8 @@ function flushActionLogLines() {
 
     const content = document.getElementById('action-logs-content');
     if (!content) return;
+
+    const followTail = actionLogsFirstRender || content.scrollHeight - content.clientHeight - content.scrollTop < 40;
 
     if (actionLogsFirstRender) {
         content.innerHTML = '';
@@ -7364,7 +7380,7 @@ function flushActionLogLines() {
         excess--;
     }
 
-    content.scrollTop = content.scrollHeight;
+    if (followTail) content.scrollTop = content.scrollHeight;
 }
 
 async function startActionLogsPoll(actionId) {
@@ -7379,7 +7395,7 @@ async function startActionLogsPoll(actionId) {
     actionLogsEventSource = es;
 
     es.onmessage = function(event) {
-        if (actionId !== currentActionLogsId) { es.close(); return; }
+        if (actionId !== currentActionLogsId || es !== actionLogsEventSource) { es.close(); return; }
         try {
             const data = JSON.parse(event.data);
             if (data.type === 'line') {
@@ -7400,6 +7416,7 @@ async function startActionLogsPoll(actionId) {
     };
 
     es.onerror = function() {
+        if (actionId !== currentActionLogsId || es !== actionLogsEventSource) { es.close(); return; }
         es.close();
         actionLogsEventSource = null;
         // Fallback to polling (action may no longer be in memory)
@@ -7408,18 +7425,20 @@ async function startActionLogsPoll(actionId) {
 }
 
 async function startActionLogsFallbackPoll(actionId) {
+    const generation = actionLogsGeneration;
     actionLogsPollOffset = 0;
     actionLogsFirstRender = true;
+    if (testLogsViewer) testLogsViewer.reset();
 
     async function poll() {
-        if (actionId !== currentActionLogsId) return;
+        if (actionId !== currentActionLogsId || generation !== actionLogsGeneration) return;
 
         const content = document.getElementById('action-logs-content');
 
         try {
             const response = await fetch(`${API_BASE}/stacks/actions/${actionId}/logs?offset=${actionLogsPollOffset}`, { headers: authHeaders() });
 
-            if (actionId !== currentActionLogsId) return;
+            if (actionId !== currentActionLogsId || generation !== actionLogsGeneration) return;
 
             if (response.status === 401) {
                 showLogin();
@@ -7428,6 +7447,7 @@ async function startActionLogsFallbackPoll(actionId) {
 
             if (response.status === 404) {
                 content.innerHTML = '<div class="log-line log-error">Action introuvable — le serveur a peut-être redémarré.</div>';
+                if (testLogsViewer) testLogsViewer.ingest(['Action not found — the server may have restarted.'], 'log-error');
                 actionLogsFirstRender = false;
                 return;
             }
@@ -7439,7 +7459,7 @@ async function startActionLogsFallbackPoll(actionId) {
             }
 
             const data = await response.json();
-            if (actionId !== currentActionLogsId) return;
+            if (actionId !== currentActionLogsId || generation !== actionLogsGeneration) return;
 
             if (data.lines && data.lines.length > 0) {
                 queueActionLogLines(data.lines);
@@ -7459,6 +7479,7 @@ async function startActionLogsFallbackPoll(actionId) {
             // Network error — retry
         }
 
+        if (actionId !== currentActionLogsId || generation !== actionLogsGeneration) return;
         actionLogsPollTimer = setTimeout(poll, 1000);
     }
 

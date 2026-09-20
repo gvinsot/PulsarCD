@@ -3475,6 +3475,36 @@ async def get_action_logs(
     raise HTTPException(status_code=404, detail="Action not found")
 
 
+@app.post("/api/stacks/actions/{action_id}/logs/themes")
+async def group_action_test_themes(action_id: str, request: Request) -> Dict[str, Any]:
+    """Suggest themes for parsed test metadata using the configured LLM."""
+    from .test_log_themes import MAX_THEME_PAYLOAD_BYTES, ThemeGroupingError, group_test_themes
+
+    action = await get_action_status(action_id)
+    if action["action_type"] != "test":
+        raise HTTPException(status_code=400, detail="Themes are only available for test actions")
+
+    # Allow JSON escaping overhead while bounding the request before parsing it.
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw) > MAX_THEME_PAYLOAD_BYTES * 6 + 4096:
+            raise HTTPException(status_code=400, detail="Test metadata is too large to group at once")
+    try:
+        body = json.loads(raw)
+    except (ValueError, RecursionError):
+        raise HTTPException(status_code=400, detail="A valid JSON object with entries is required")
+    if not isinstance(body, dict) or "entries" not in body:
+        raise HTTPException(status_code=400, detail="A JSON object with entries is required")
+
+    try:
+        return await group_test_themes(body["entries"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except ThemeGroupingError:
+        raise HTTPException(status_code=503, detail="Test theme grouping is unavailable. Try again later.")
+
+
 @app.get("/api/stacks/actions/{action_id}/logs/stream")
 async def stream_action_logs(
     action_id: str,
@@ -4360,7 +4390,7 @@ async def set_transition_config(repo_name: str, transition: str, request: Reques
 
 
 @app.get("/api/stacks/pipeline/{repo_name}/swiftproof/{review_id}/report")
-async def get_swiftproof_report(repo_name: str, review_id: str, download: bool = False):
+async def get_swiftproof_report(repo_name: str, review_id: str, download: bool = False, format: str = "text"):
     from . import swiftproof
     import zipfile
     from fastapi.responses import PlainTextResponse
@@ -4371,9 +4401,11 @@ async def get_swiftproof_report(repo_name: str, review_id: str, download: bool =
         path = swiftproof.report_file(review_id, "report.zip")
         if download:
             return FileResponse(path, media_type="application/zip", filename="swiftproof-" + review_id[:12] + ".zip")
+        if format == "json":
+            return swiftproof.structured_report(review_id, result)
         with zipfile.ZipFile(path) as bundle:
             return PlainTextResponse(bundle.read("CONFIDENCE_REPORT.md").decode("utf-8"))
-    except (ValueError, OSError, KeyError, zipfile.BadZipFile):
+    except (ValueError, OSError, KeyError, UnicodeError, zipfile.BadZipFile):
         return JSONResponse({"error": "Report not found or integrity check failed"}, status_code=404)
 
 

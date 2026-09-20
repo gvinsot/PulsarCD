@@ -38,21 +38,22 @@ def identity():
                 binary_sha256="d" * 64, policy_sha256="e" * 64, deployed_hash=None)
 
 
-def reply(identity, code):
+def reply(identity, code, report_extra=None):
     report = {"version": 1, "tool_version": "test", "exit_code": code,
               "change": {"base_commit": identity["base"], "head_commit": identity["head"]}}
+    report.update(report_extra or {})
     data = io.BytesIO()
     with zipfile.ZipFile(data, "w") as archive:
         archive.writestr("confidence-report.json", json.dumps(report))
         archive.writestr("CONFIDENCE_REPORT.md", "# Evidence\nHuman review required")
-    return dict(identity=identity, code=code, tool_version="test", archive=base64.b64encode(data.getvalue()).decode())
+    return dict(identity=identity, code=code, tool_version=report["tool_version"], archive=base64.b64encode(data.getvalue()).decode())
 
 
-def mock_review(monkeypatch, identity, code):
+def mock_review(monkeypatch, identity, code, report_extra=None):
     calls = []
     async def run(deployer, payload, llm=None, cancel_event=None):
         calls.append((payload, llm))
-        return identity if payload["action"] == "inspect" else reply(identity, code)
+        return identity if payload["action"] == "inspect" else reply(identity, code, report_extra)
     monkeypatch.setattr(gate, "worker", run)
     monkeypatch.setattr(gate, "request_for", lambda *args: {"repo": "demo", "release": "1.0.1"})
     llm = LLMConfig(url="http://pulsar-provider:8000", model="existing-model", api_key="never-in-worker")
@@ -265,6 +266,91 @@ def test_api_config_rejects_coercion_and_readable_report(client, auth_headers, m
     assert client.post(report_url + "/approve", headers=auth_headers, json={"reason": "Stale"}).status_code == 409
 
 
+def test_report_findings_preserve_recorded_risk_evidence_and_coordinates():
+    hypothesis = {"id": "hyp-1", "title": "Authorization bypass", "severity": "critical",
+                  "status": "REPRODUCED", "rationale": "Candidate fails the baseline check",
+                  "path": "auth.go", "line": 18, "evidence_ids": ["e-1", "missing"]}
+    evidence = {"id": "e-1", "kind": "differential_test", "description": "Named regression test",
+                "status": "REPRODUCED", "check_id": "candidate", "base_check_id": "base",
+                "test_names": ["TestDenied"]}
+    report = {
+        "hypotheses": [hypothesis], "reproduced_issues": [hypothesis], "evidence": [evidence],
+        "linter": [{"id": "signal-1", "kind": "auth", "path": "auth.go", "line": 8,
+                    "end_line": 11, "side": "old", "severity": "high",
+                    "summary": "Authorization body removed", "evidence": "A removed guard"}],
+        "review_targets": [
+            {"path": "auth.go", "start_line": 8, "end_line": 11, "side": "old",
+             "severity": "high", "reasons": ["Authorization body removed"], "signal_ids": ["signal-1"]},
+            {"path": "auth.go", "start_line": 18, "end_line": 18, "side": "new",
+             "severity": "critical", "reasons": ["Authorization bypass"], "signal_ids": []},
+            {"path": "legacy.go", "start_line": 2, "end_line": 4, "side": "new",
+             "severity": "medium", "reasons": ["Historical target"], "signal_ids": []},
+        ], "unverified": ["No coverage configured"],
+    }
+    findings = gate.report_findings(report)
+    assert [item["kind"] for item in findings] == ["hypothesis", "signal", "review_target", "unverified"]
+    assert len({item["id"] for item in findings}) == 4
+    issue, signal, target, area = findings
+    assert issue["status"] == "REPRODUCED" and issue["severity"] == "critical"
+    assert issue["source_id"] == "hyp-1" and issue["evidence"][1] == evidence
+    assert (issue["path"], issue["line"], issue["end_line"], issue["side"]) == ("auth.go", 18, 18, "new")
+    assert (signal["path"], signal["line"], signal["end_line"], signal["side"]) == ("auth.go", 8, 11, "old")
+    assert signal["status"] == target["status"] == ""
+    assert signal["evidence"] == [{"description": "A removed guard"}]
+    assert area["status"] == "UNVERIFIED" and area["severity"] == "" and area["line"] == 0
+
+
+def test_report_findings_accept_empty_legacy_sections():
+    assert gate.report_findings({}) == []
+    assert gate.report_findings({"linter": None, "hypotheses": None, "review_targets": None,
+                                "unverified": None, "evidence": None}) == []
+
+
+async def test_v02_coverage_signals_are_navigable_without_changing_the_verdict(manager, monkeypatch, identity):
+    coverage = {"status": "MEASURED", "added_lines": 2, "executed_lines": 1,
+                "not_executed_lines": 1, "not_measured_lines": 0,
+                "files": [{"path": "auth.go", "not_executed_lines": 1}]}
+    signal = {"id": "uncovered-1", "kind": "uncovered_change", "path": "auth.go",
+              "line": 42, "end_line": 42, "side": "new", "severity": "medium",
+              "summary": "Added line was not executed", "evidence": "Recorded coverage count is zero"}
+    mock_review(monkeypatch, identity, 0, {"tool_version": "v0.2.0", "coverage": coverage, "linter": [signal]})
+    result = await gate.review(None, "demo", "1.0.1")
+    report = gate.structured_report(result["id"], result)
+    assert result["status"] == "passed"
+    assert manager.get("demo").swiftproof["tool_version"] == "v0.2.0"
+    assert report["result"]["tool_version"] == "v0.2.0"
+    assert report["report"]["coverage"] == coverage
+    finding, = report["findings"]
+    assert (finding["path"], finding["line"], finding["side"]) == ("auth.go", 42, "new")
+    assert finding["severity"] == "medium" and finding["status"] == ""
+    assert finding["evidence"] == [{"description": "Recorded coverage count is zero"}]
+
+
+def test_structured_report_api_preserves_raw_report_and_integrity(client, auth_headers, manager, monkeypatch, identity):
+    import backend.api as api
+    monkeypatch.setattr(api, "pipeline_state", manager)
+    hypothesis = {"id": "hyp-1", "title": "Review <authorization>", "severity": "high",
+                  "status": "UNVERIFIED", "path": "auth.go", "line": 12, "evidence_ids": []}
+    mock_review(monkeypatch, identity, 2, {"hypotheses": [hypothesis], "checks": [
+        {"id": "check-1", "kind": "test", "status": "FAIL", "exit_code": 1,
+         "duration_ms": 123, "output": "failed\n  expected deny", "truncated": False}]})
+    result = asyncio.run(gate.review(None, "demo", "1.0.1"))
+    url = f'/api/stacks/pipeline/demo/swiftproof/{result["id"]}/report'
+    response = client.get(url + "?format=json", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["result"]["release"] == "1.0.1"
+    assert data["result"]["head"] == identity["head"]
+    assert data["report"]["hypotheses"] == [hypothesis]
+    assert data["report"]["checks"][0]["output"] == "failed\n  expected deny"
+    assert data["findings"][0]["title"] == "Review <authorization>"
+    assert data["markdown"] == client.get(url, headers=auth_headers).text
+    assert client.get(url + "?download=true&format=json", headers=auth_headers).headers["content-type"] == "application/zip"
+    assert client.get(url.replace("/demo/", "/other/") + "?format=json", headers=auth_headers).status_code == 404
+    gate.report_file(result["id"], "report.zip").write_bytes(b"corrupt")
+    assert client.get(url + "?format=json", headers=auth_headers).status_code == 404
+
+
 @pytest.mark.parametrize("transition", ["build_to_test", "test_to_deploy"])
 async def test_pipeline_agent_gate_without_llm_stops(client, manager, monkeypatch, transition):
     import backend.api as api
@@ -295,7 +381,8 @@ async def test_pipeline_agent_gate_without_llm_stops(client, manager, monkeypatc
 
 
 @pytest.mark.skipif(not os.environ.get("SWIFTPROOF_TEST_BINARY"), reason="Set SWIFTPROOF_TEST_BINARY for the real CLI integration")
-async def test_real_cli_uses_inherited_provider_and_returns_bounded_artifacts(tmp_path, monkeypatch, identity):
+@pytest.mark.parametrize("reviewer_enabled", [True, False])
+async def test_real_cli_uses_inherited_provider_and_returns_bounded_artifacts(tmp_path, monkeypatch, identity, reviewer_enabled):
     repo = tmp_path / "repo"
     repo.mkdir()
     def git(*args):
@@ -312,6 +399,7 @@ async def test_real_cli_uses_inherited_provider_and_returns_bounded_artifacts(tm
     git("commit", "-m", "candidate")
     identity["head"] = git("rev-parse", "HEAD")
     binary = Path(os.environ["SWIFTPROOF_TEST_BINARY"]).resolve()
+    binary_version = subprocess.check_output([str(binary), "version"]).decode().strip().removeprefix("swiftproof ")
     monkeypatch.setattr(worker, "inspect", lambda _: (tmp_path, repo, binary,
         json.dumps({"version": 1, "commands": {}, "reviewer": {"model": "wrong-model"}}), identity))
     observed = []
@@ -327,13 +415,18 @@ async def test_real_cli_uses_inherited_provider_and_returns_bounded_artifacts(tm
         llm = LLMConfig(url=f"http://127.0.0.1:{runner.addresses[0][1]}", model="pulsar-model", api_key="upstream-secret")
         async with gate.ProviderBridge(llm) as bridge:
             request = dict(action="review", identity=identity,
-                provider={"endpoint": f"http://127.0.0.1:{bridge.port}/v1", "model": llm.model, "token": bridge.token})
+                provider={"endpoint": f"http://127.0.0.1:{bridge.port}/v1", "model": llm.model, "token": bridge.token} if reviewer_enabled else None)
             result = await asyncio.to_thread(worker.execute, request)
             assert result["identity"] == identity and result["code"] in (0, 2)
-            assert len(observed) == 1 and observed[0][0] == "Bearer upstream-secret"
-            assert observed[0][1]["model"] == "pulsar-model"
+            assert result["tool_version"] == binary_version
+            if reviewer_enabled:
+                assert len(observed) == 1 and observed[0][0] == "Bearer upstream-secret"
+                assert observed[0][1]["model"] == "pulsar-model"
+            else:
+                assert observed == []
             with zipfile.ZipFile(io.BytesIO(base64.b64decode(result["archive"]))) as archive:
                 assert "CONFIDENCE_REPORT.md" in archive.namelist()
+                assert json.loads(archive.read("confidence-report.json"))["tool_version"] == binary_version
                 for name in archive.namelist():
                     assert b"upstream-secret" not in archive.read(name)
                     assert bridge.token.encode() not in archive.read(name)

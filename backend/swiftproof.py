@@ -1,6 +1,7 @@
 """Deterministic deployment gate and temporary bridge to PulsarCD's configured LLM."""
 import asyncio
 import base64
+from bisect import bisect_left
 from contextlib import AsyncExitStack
 import hashlib
 import hmac
@@ -50,7 +51,7 @@ def fingerprint(value):
 
 
 def public_result(result):
-    return {k: result[k] for k in ("id", "status", "code", "reason", "head", "base", "release", "approval") if k in result}
+    return {k: result[k] for k in ("id", "status", "code", "reason", "head", "base", "release", "approval", "tool_version") if k in result}
 
 
 def remember(repo, result):
@@ -197,6 +198,105 @@ def read_result(review_id):
     if hashlib.sha256(report_file(review_id, "report.zip").read_bytes()).hexdigest() != result["archive_sha256"]:
         raise ValueError("Stored report integrity check failed")
     return result
+
+
+def report_findings(report):
+    """Index recorded v1 observations for navigation without re-evaluating risk.
+
+    SwiftProof's report, including its evidence and verdict, stays authoritative.
+    Signals and review targets have no hypothesis status; keep that field empty
+    rather than presenting them as reproduced defects.
+    """
+    def objects(key):
+        value = report.get(key)
+        return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+    def strings(value):
+        return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+    def string(value):
+        return value if isinstance(value, str) else ""
+
+    def line(value):
+        return value if type(value) is int and value > 0 else 0
+
+    evidence = {item["id"]: item for item in objects("evidence") if isinstance(item.get("id"), str)}
+    findings = []
+
+    def add(kind, source, title, status="", details=None):
+        start = line(source.get("line", source.get("start_line")))
+        finding = {
+            "id": f"{kind}-{len(findings) + 1}", "source_id": string(source.get("id")),
+            "kind": kind, "title": title, "severity": string(source.get("severity")),
+            "status": status, "path": string(source.get("path")), "line": start,
+            "end_line": max(start, line(source.get("end_line"))),
+            "side": "old" if source.get("side") == "old" else "new",
+            "evidence": details or [],
+        }
+        findings.append(finding)
+
+    seen_hypotheses = set()
+    for hypothesis in objects("hypotheses") + objects("reproduced_issues"):
+        source_id = string(hypothesis.get("id"))
+        if source_id and source_id in seen_hypotheses:
+            continue
+        if source_id:
+            seen_hypotheses.add(source_id)
+        details = [evidence[key] for key in strings(hypothesis.get("evidence_ids")) if key in evidence]
+        rationale = string(hypothesis.get("rationale"))
+        if rationale:
+            details = [{"description": rationale}] + details
+        add("hypothesis", hypothesis, string(hypothesis.get("title")),
+            string(hypothesis.get("status")), details)
+
+    for signal in objects("linter"):
+        detail = string(signal.get("evidence"))
+        add("signal", signal, string(signal.get("summary")), details=[{"description": detail}] if detail else [])
+
+    locations = {}
+    for finding in findings:
+        key = (finding["path"], finding["side"], finding["title"])
+        locations.setdefault(key, []).append(finding["line"])
+    for coordinates in locations.values():
+        coordinates.sort()
+
+    for target in objects("review_targets"):
+        reasons = strings(target.get("reasons"))
+        start, end = line(target.get("start_line")), line(target.get("end_line"))
+        side = "old" if target.get("side") == "old" else "new"
+        def represented(reason):
+            coordinates = locations.get((string(target.get("path")), side, reason), [])
+            offset = bisect_left(coordinates, start)
+            return offset < len(coordinates) and (not start or coordinates[offset] <= max(start, end))
+        # Review targets aggregate signals/hypotheses already indexed above.
+        # Retain standalone targets, including historical reports with no signals.
+        if reasons and all(represented(reason) for reason in reasons):
+            continue
+        add("review_target", target, "; ".join(reasons) or string(target.get("path")))
+
+    for area in strings(report.get("unverified")):
+        if area:
+            add("unverified", {}, area, "UNVERIFIED")
+
+    rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    return sorted(findings, key=lambda finding: (
+        finding["status"] != "REPRODUCED",
+        finding["status"] in ("DISMISSED", "NOT_REPRODUCED"),
+        rank.get(finding["severity"].lower(), 4),
+    ))
+
+
+def structured_report(review_id, result):
+    """Read a verified archive without extracting or executing its artifacts."""
+    with zipfile.ZipFile(report_file(review_id, "report.zip")) as bundle:
+        if sum(info.file_size for info in bundle.infolist()) > 8 * 1024 * 1024:
+            raise ValueError("Expanded report exceeded its budget")
+        report = json.loads(bundle.read("confidence-report.json"))
+        if not isinstance(report, dict):
+            raise ValueError("Invalid report format")
+        markdown = bundle.read("CONFIDENCE_REPORT.md").decode("utf-8")
+    return {"result": public_result(result), "report": report, "markdown": markdown,
+            "findings": report_findings(report)}
 
 
 async def review(deployer, repo, release, cancel_event=None):
