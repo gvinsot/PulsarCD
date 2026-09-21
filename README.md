@@ -796,8 +796,8 @@ fetched. Blocking and unblocking are admin-only, like every other mutation.
 
 ## Contributing
 
-For an optional evidence-based deployment gate using the existing LLM
-configuration, see [SwiftProof integration](docs/SWIFTPROOF.md).
+For an optional evidence-based review that closes the Test stage, using the
+existing LLM configuration, see [SwiftProof integration](docs/SWIFTPROOF.md).
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 

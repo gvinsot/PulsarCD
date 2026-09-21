@@ -452,7 +452,7 @@ async def test_real_cli_uses_inherited_provider_and_returns_bounded_artifacts(tm
     identity["head"] = git("rev-parse", "HEAD")
     binary = Path(os.environ["SWIFTPROOF_TEST_BINARY"]).resolve()
     binary_version = subprocess.check_output([str(binary), "version"]).decode().strip().removeprefix("swiftproof ")
-    monkeypatch.setattr(worker, "inspect", lambda _: (tmp_path, repo, binary,
+    monkeypatch.setattr(worker, "inspect", lambda _: (repo, binary,
         json.dumps({"version": 1, "commands": {}, "reviewer": {"model": "wrong-model"}}), identity))
     observed = []
     async def upstream(request):
@@ -477,7 +477,9 @@ async def test_real_cli_uses_inherited_provider_and_returns_bounded_artifacts(tm
             else:
                 assert observed == []
             with zipfile.ZipFile(io.BytesIO(base64.b64decode(result["archive"]))) as archive:
-                assert "CONFIDENCE_REPORT.md" in archive.namelist()
+                # The binary's console output travels with the evidence so a
+                # configuration failure can be diagnosed without the host.
+                assert {"CONFIDENCE_REPORT.md", "pulsarcd-run.log"} <= set(archive.namelist())
                 assert json.loads(archive.read("confidence-report.json"))["tool_version"] == binary_version
                 for name in archive.namelist():
                     assert b"upstream-secret" not in archive.read(name)

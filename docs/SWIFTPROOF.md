@@ -1,9 +1,16 @@
 # SwiftProof dans le pipeline PulsarCD
 
-SwiftProof ajoute une revue vérifiable entre les tests et le déploiement. Son
-activation est indépendante du mode de transition (`auto`, `agent`, `manual`).
-Le même contrôle est appliqué dans `StackDeployer.deploy`, pour les appels de
-l'interface, de l'API, du pipeline et du MCP.
+SwiftProof est la dernière étape de l'étape **Test** : une fois la suite
+automatisée passée, la revue compare le candidat au code réellement en
+production. Son verdict fait partie du résultat de l'étape Test.
+
+Déployer en QA ou en production n'est qu'un déploiement : le chemin de
+déploiement n'appelle plus SwiftProof, ne pose plus de garde et n'épingle plus
+les digests. Une revue refusée met l'étape Test en échec, et c'est la transition
+**Test → QA/Deploy** qui décide alors de la suite, avec son propre mode :
+`auto_with_success` s'arrête, `manual` attend, `agent` juge. En mode `auto`,
+qui ne vérifie pas le succès de l'étape précédente, le pipeline poursuit malgré
+le refus — ce mode reste un choix explicite de l'administrateur.
 
 ## Activer un projet
 
@@ -22,14 +29,19 @@ l'interface, de l'API, du pipeline et du MCP.
    déploiements. Pour utiliser le LLM via SSH, autoriser le transfert de port
    distant vers `127.0.0.1` ; aucun port public supplémentaire n'est nécessaire.
 3. Faire relire et intégrer `.swiftproof.json` dans le projet. Préparer puis
-   précharger son image de tests avec toutes les dépendances, idéalement par
-   digest. Les tests SwiftProof ne téléchargent pas les dépendances. La politique
-   sera lue depuis le commit de production, pas depuis le candidat.
+   précharger sur l'hôte l'image de tests déclarée dans `sandbox.image`, avec
+   toutes les dépendances, idéalement par digest. Les tests SwiftProof ne
+   téléchargent pas les dépendances et le bac à sable n'a pas de réseau : une
+   image absente fait échouer tous les contrôles en `exit 125` et la revue sort
+   en code 4. Vérifier avec `docker image inspect <image>` avant d'activer.
+   La politique sera lue depuis le commit de production, pas depuis le candidat.
 4. Après ce premier déploiement de la politique, relever et vérifier le SHA Git
-   complet réellement en production. Dans **Stacks → Test → Deploy**, cocher
-   **Require SwiftProof before deployment**, renseigner ce SHA initial et
-   enregistrer. Cette initialisation est une déclaration de l'administrateur :
-   SwiftProof ne peut pas déduire le commit d'anciennes images sans provenance.
+   complet réellement en production. Dans **Stacks → Build → Test**, cocher
+   **Run SwiftProof after the automated tests**, renseigner ce SHA initial et
+   enregistrer. Ce SHA ne sert que tant qu'aucune provenance de build ne
+   correspond aux images en production ; ensuite la référence est déduite de la
+   release que Swarm exécute réellement. SwiftProof ne peut pas déduire le
+   commit d'anciennes images sans provenance.
 5. Laisser **Use the LLM configured in PulsarCD** coché. Aucune URL, clé ou
    sélection de modèle supplémentaire n'est nécessaire. Reconstruire la prochaine
    version avec les nouveaux scripts pour disposer de sa provenance.
@@ -102,19 +114,25 @@ tests**. Le classement automatique reste disponible si le LLM est indisponible.
 L'API correspondante est `POST /api/stacks/actions/{id}/logs/themes`, avec
 `{"entries":[{"id":"test-1","name":"test_login","file":"tests/auth.py"}]}`.
 
-| Résultat SwiftProof | Déploiement |
+| Résultat SwiftProof | Étape Test |
 | --- | --- |
-| 0 | Autorisé par SwiftProof ; les autres contrôles restent applicables |
-| 1 | Bloqué : problème élevé/critique reproduit |
-| 2 | Revue humaine requise |
-| 3 ou 4, rapport absent/invalide | Bloqué : configuration ou exécution à corriger |
+| 0 | Succès ; les autres contrôles de la transition restent applicables |
+| 1 | Échec : problème élevé/critique reproduit |
+| 2 | Échec jusqu'à approbation humaine |
+| 3 ou 4, rapport absent/invalide | Échec : configuration ou exécution à corriger |
+
+Pour un code 3 ou 4, le motif affiché nomme le premier contrôle en erreur, son
+code de sortie et sa sortie enregistrée — par exemple `test failed (exit 125) :
+No such image: …` — au lieu du seul « SwiftProof execution failed ». Ces champs
+viennent du rapport v1, jamais de la sortie d'erreur brute d'une commande.
+L'archive contient en plus `pulsarcd-run.log`, la console du binaire, tronquée
+aux 64 derniers Kio.
 
 Les rapports Markdown sont affichés comme du texte, et l'archive contient le
 JSON ainsi que les preuves conservées. Pour un code 2, un administrateur
-connecté peut approuver avec un motif, puis relancer explicitement le
-déploiement. Il ne peut pas approuver un code 1, 3 ou 4. Le bouton de nouvelle
-revue invalide le résultat courant ; la prochaine tentative regénère les
-preuves. Les anciennes archives restent disponibles pour l'audit.
+connecté peut approuver avec un motif, puis relancer explicitement le pipeline.
+Il ne peut pas approuver un code 1, 3 ou 4. Le bouton de nouvelle revue invalide
+le résultat courant ; la prochaine tentative regénère les preuves. Les anciennes archives restent disponibles pour l'audit.
 
 L'API `GET /api/stacks/pipeline/{repo}/swiftproof/{id}/report?format=json`
 fournit le verdict (`result`, avec version de release et SHA), le rapport
@@ -126,7 +144,9 @@ l'analyseur n'est pas présenté comme un défaut reproduit. Les coordonnées
 sans `format=json` et avec `download=true` conservent leur format existant.
 Le contrôle d'appartenance au projet et d'intégrité de l'archive s'applique
 également au rapport structuré. Le statut en cours et l'activation restent
-disponibles dans `GET /api/stacks/pipeline/{repo}/transition/test_to_deploy`.
+disponibles dans `GET /api/stacks/pipeline/{repo}/transition/build_to_test`.
+Les projets configurés avant ce déplacement voient leurs réglages migrés
+automatiquement depuis `test_to_deploy` à la lecture de `pipeline_state.json`.
 
 L'identifiant du rapport lie le SHA de production, le SHA candidat, les digests
 des images, le binaire, la politique de référence et la configuration du modèle.
@@ -138,23 +158,31 @@ les images avec `--no-cache`, plutôt que d'attribuer un ancien binaire à un
 nouveau commit. Les projets sans images construites ne sont pas couverts par
 ce premier adaptateur de provenance.
 
-Avant le déploiement, PulsarCD revérifie cette identité, sélectionne le SHA
-candidat exact et remplace les images du compose par leurs digests. Les images
-tierces doivent déjà être épinglées par digest. Les variantes de build restent
-distinctes. Après succès, les images présentes dans les spécifications Swarm
-sont comparées aux digests attendus puis la nouvelle référence est enregistrée
-dans `~/.local/share/pulsarcd/swiftproof/deployed/`. Cela vérifie les images
-demandées au Swarm, pas la santé de toutes les répliques. Un déploiement QA ne
-modifie jamais la référence de production et sa promotion reste manuelle.
+La référence de production n'est plus enregistrée par un déploiement : elle est
+déduite. Au début de chaque revue, les images que Swarm exécute réellement dans
+le stack de production sont rapprochées des provenances de build, et le commit
+de la release correspondante devient la base de comparaison. Un tag de release
+identifie un build sans ambiguïté et prime donc sur un digest, que deux builds
+peuvent partager lorsque des images ont été réutilisées ; à égalité, la release
+la plus basse gagne, car une revue trop large se corrige alors qu'une revue trop
+étroite ne se voit pas. La release candidate n'est jamais sa propre référence.
+Si aucune provenance n'explique les images en production, le SHA initial déclaré
+par l'administrateur est utilisé. Un déploiement QA utilise son propre stack et
+ne change donc rien à cette déduction ; la promotion en production reste
+manuelle.
 
 Les rapports PulsarCD sont dans `<data_dir>/swiftproof/`. Sauvegarder ce
 répertoire, `pipeline_state.json` et les données de provenance de l'hôte.
 La provenance est un enregistrement de confiance du build, pas une attestation
-cryptographique indépendante. L'administrateur de l'hôte, Docker, les scripts
-PulsarCD et les hooks de déploiement font partie du périmètre de confiance.
-Le contrôle ne protège pas contre un administrateur qui modifie directement
-ces fichiers ou déploie hors de PulsarCD. Prévoir une seule instance PulsarCD
-active pour sérialiser les déploiements d'un même projet.
+cryptographique indépendante. L'administrateur de l'hôte, Docker et les scripts
+PulsarCD font partie du périmètre de confiance.
+
+Le périmètre a changé avec ce déplacement, et il faut en tenir compte : la revue
+qualifie un candidat à l'étape Test, elle ne garantit plus que c'est bien
+l'artefact revu qui part en production. Un déploiement reste un déploiement, y
+compris hors de PulsarCD. La déduction de la référence rend ce cas visible à la
+revue suivante — la base devient ce qui tourne vraiment — mais elle ne
+l'empêche pas.
 
 Les détails des interfaces utilisées sont documentés par
 [Docker Buildx](https://docs.docker.com/reference/cli/docker/buildx/imagetools/inspect/)
