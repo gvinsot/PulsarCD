@@ -27,6 +27,7 @@ from shared.access_log import is_internal_ip, normalize_ip
 
 from .auth import AUTH_SOURCE_GOOGLE, AUTH_SOURCE_LOCAL, create_token, decode_token
 from .allowlist import EmailAllowlist
+from .auto_ban import AutoBanWorker
 from .ip_blocklist import (
     IpBlocklist,
     covers as ip_blocklist_covers,
@@ -61,6 +62,7 @@ error_detector = None
 user_manager = None
 email_allowlist: Optional[EmailAllowlist] = None
 ip_blocklist: Optional[IpBlocklist] = None
+auto_ban_worker: Optional[AutoBanWorker] = None
 google_verifier: Optional[GoogleIdTokenVerifier] = None
 llm_agent = None
 pipeline_state: Optional[PipelineStateManager] = None
@@ -125,7 +127,7 @@ _background_actions: Dict[str, BackgroundAction] = {}
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     global settings, opensearch, collector, github_service, error_detector, user_manager, llm_agent, pipeline_state
-    global email_allowlist, google_verifier, ip_blocklist
+    global email_allowlist, google_verifier, ip_blocklist, auto_ban_worker
 
     # Startup
     logger.info("Starting PulsarCD API")
@@ -206,6 +208,17 @@ async def lifespan(app: FastAPI):
     
     collector = Collector(settings, opensearch)
     await collector.start()
+
+    if settings.autoban.enabled and settings.auth.edge_key:
+        auto_ban_worker = AutoBanWorker(
+            opensearch, ip_blocklist, settings.autoban,
+            checkpoint_path=f"{settings.data_dir}/autoban_checkpoint.json")
+        if auto_ban_worker.start():
+            logger.info("Automatic edge bans enabled", duration_seconds=settings.autoban.duration_seconds)
+        else:
+            auto_ban_worker = None
+    elif settings.autoban.enabled:
+        logger.warning("Automatic edge bans disabled: PULSARCD_AUTH__EDGE_KEY is missing")
     
     # Initialize GitHub service
     github_service = GitHubService(settings.github)
@@ -274,6 +287,9 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down PulsarCD API")
+    if auto_ban_worker:
+        await auto_ban_worker.stop()
+        auto_ban_worker = None
     if _recovery_task:
         _recovery_task.cancel()
         try:
@@ -1630,7 +1646,7 @@ async def get_security_traefik_config():
     complete configuration -- an empty blocklist yields an empty one, which is
     how an unblock reaches the edge.
     """
-    return ip_blocklist.traefik_config() if ip_blocklist else {"http": {}}
+    return ip_blocklist.traefik_config() if ip_blocklist else {}
 
 
 @app.get("/api/admin/error-detector-status")

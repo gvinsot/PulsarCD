@@ -96,7 +96,7 @@ class TestTraefikConfig:
     def test_empty_blocklist_yields_an_empty_configuration(self):
         """Not a router with an empty rule: Traefik would refuse it and keep
         enforcing the previous one, so no unblock would ever take effect."""
-        assert bl.traefik_config([]) == {"http": {}}
+        assert bl.traefik_config([]) == {}
 
     def test_one_address(self):
         config = bl.traefik_config(["45.9.12.7"])
@@ -104,9 +104,14 @@ class TestTraefikConfig:
         assert router["rule"] == "ClientIP(`45.9.12.7`)"
         assert router["service"] == "noop@internal"
         assert router["middlewares"] == [bl.MIDDLEWARE_NAME]
-        assert router["entryPoints"] == ["web", "websecure"]
+        assert router["entryPoints"] == ["websecure"]
         # Present, so the router also matches TLS requests on websecure.
         assert router["tls"] == {}
+        plain = config["http"]["routers"][bl.HTTP_ROUTER_NAME]
+        assert plain["entryPoints"] == ["web"]
+        assert plain["rule"] == router["rule"]
+        assert plain["middlewares"] == router["middlewares"]
+        assert "tls" not in plain
 
     def test_priority_beats_application_routers_and_loses_to_acme(self):
         router = bl.traefik_config(["45.9.12.7"])["http"]["routers"][bl.ROUTER_NAME]
@@ -330,4 +335,11 @@ class TestTraefikConfigEndpoint:
         with patch.object(api_module.settings.auth, "edge_key", "k" * 32):
             resp = client.get(self.PATH, headers={"Authorization": f"Bearer {'k' * 32}"})
         assert resp.status_code == 200
-        assert resp.json() == {"http": {}}
+        assert resp.json() == {}
+
+    def test_uninitialized_store_returns_a_valid_empty_configuration(self, client):
+        with patch.object(api_module.settings.auth, "edge_key", "k" * 32), \
+                patch.object(api_module, "ip_blocklist", None):
+            resp = client.get(self.PATH, headers={"Authorization": f"Bearer {'k' * 32}"})
+        assert resp.status_code == 200
+        assert resp.json() == {}

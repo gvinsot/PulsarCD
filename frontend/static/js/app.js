@@ -2556,7 +2556,7 @@ function renderSecurityBlocklist(data) {
     const body = document.getElementById('security-blocklist-body');
     const entries = data.entries || [];
     if (!entries.length) {
-        body.innerHTML = '<tr><td colspan="5" class="security-empty">No address is blocked</td></tr>';
+        body.innerHTML = '<tr><td colspan="6" class="security-empty">No address is blocked</td></tr>';
         return;
     }
     body.innerHTML = entries.map(e => `
@@ -2565,6 +2565,7 @@ function renderSecurityBlocklist(data) {
             <td class="security-ellipsis" title="${escapeHtml(e.reason || '')}">${escapeHtml(e.reason || '') || '&mdash;'}</td>
             <td class="security-ellipsis" title="${escapeHtml(e.blocked_by || '')}">${escapeHtml(e.blocked_by || '') || '&mdash;'}</td>
             <td>${formatRelativeTime(e.blocked_at)}</td>
+            <td>${e.expires_at ? escapeHtml(parseUtc(e.expires_at).toLocaleString()) : 'Permanent'}</td>
             <td class="security-action-cell">${securityBlockButton(e.ip, e, false, false)}</td>
         </tr>`).join('');
 }

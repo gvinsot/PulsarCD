@@ -640,8 +640,8 @@ the ones that look like attacks. **Blocked at the edge** is what you do about
 one: the address is refused by Traefik in front of Coraza, so it reaches no WAF
 rule and no application, on every host that proxy serves.
 
-Enforcement is a Traefik router matching `ClientIP(...)` at a priority above
-every application router, chained to a middleware that answers 403. PulsarCD
+Enforcement uses separate HTTP and HTTPS routers matching `ClientIP(...)` at a
+priority above every application router, chained to a middleware that answers 403. PulsarCD
 serves it as a dynamic configuration and the edge polls it, so a block is live
 within one poll interval and nothing is redeployed. See `backend/ip_blocklist.py`.
 
@@ -676,6 +676,64 @@ What a block refuses:
 Blocks survive a restart (`blocked_ips.json` in the data directory) and a
 PulsarCD outage: a failed poll leaves Traefik with the configuration it last
 fetched. Blocking and unblocking are admin-only, like every other mutation.
+
+The Swarm deployment also enables automatic bans for requests probing `.env`
+(including backups and variants such as `.env.production`), `auth.json`
+(including `/.composer/auth.json` and backups such as `auth.json.bak`), and WordPress paths.
+This edge hosts no WordPress: `wp-admin`, `wp-content`, `wp-includes`, `wp-json`,
+the standard `wp-*.php` entrypoints and `xmlrpc.php` are treated as probes,
+including beneath a subdirectory. Classification ignores query strings and
+request bodies, decodes the path twice, and normalizes Windows separators and
+dot segments, matching the edge WAF rules. One matching request is sufficient.
+
+A background worker reads the trusted Traefik service's Docker-attributed access
+logs from OpenSearch independently of the Security view and the edge provider
+endpoint. It uses Traefik's socket peer `ClientHost`, never a client-supplied
+forwarded header. Only public individual IPv4/IPv6 addresses can be automatically
+banned; private/local addresses and configured exemptions are skipped. A future
+CDN or proxy in front of Traefik requires revisiting this source-IP assumption.
+
+Automatic bans last **24 hours** by default. Manual bans remain permanent.
+Expiry is persisted and applied whenever the blocklist is read, including each
+edge poll. Requests already refused by the blocklist do not prolong a ban.
+Processed probes and manual release timestamps persist with the list, so a
+restart or overlapping log scan cannot immediately re-ban an address for the
+same event. A new probe after a manual release can trigger a new ban.
+
+| Environment variable | Default in Swarm | Meaning |
+| --- | --- | --- |
+| `PULSARCD_AUTOBAN__ENABLED` | `true` | Enable the worker; also requires `PULSARCD_AUTH__EDGE_KEY`. The backend class defaults to disabled outside this deployment. |
+| `PULSARCD_AUTOBAN__DURATION_SECONDS` | `86400` | Duration of a newly created automatic ban. |
+| `PULSARCD_AUTOBAN__POLL_SECONDS` | `10` | Interval between completed log scans. |
+| `PULSARCD_AUTOBAN__OVERLAP_SECONDS` | `300` | Re-read five minutes of event time to pick up delayed log indexing. |
+| `PULSARCD_AUTOBAN__BATCH_SIZE` | `500` | Documents per scroll page, not a limit on the total scanned. |
+| `PULSARCD_AUTOBAN__EXEMPT_CIDRS` | `[]` | JSON array of exempt public IPs or CIDRs, e.g. `["8.8.8.8/32"]`. Applies to future automatic decisions. |
+| `PULSARCD_AUTOBAN__TRAEFIK_PROJECT` | `privatenetwork` | Trusted Docker stack/project metadata for the edge logs. |
+| `PULSARCD_AUTOBAN__TRAEFIK_SERVICE` | `traefik` | Trusted Docker service metadata for the edge logs. |
+
+On routes using the WAF middleware, the first probing request is denied
+immediately by the edge's path rules.
+The IP-wide ban follows log collection (normally 30 seconds), OpenSearch refresh,
+the worker's next scan and the edge provider poll. Logs arriving more than the
+configured overlap after their event time can be missed. Pagination processes
+every matching log without a top-IP cutoff; the existing blocklist capacity is
+still **500 active entries**, shared with manual bans. At capacity the worker
+logs an error, retains its checkpoint, and retries rather than silently
+discarding candidates. Expired entries release capacity automatically.
+
+`autoban_checkpoint.json` stores the completed scan checkpoint in the data
+directory. An unreadable checkpoint disables only the automatic worker and logs
+the error; the API and manual block/unblock controls remain available. Preserve
+the file for diagnosis and restore a valid checkpoint before restarting. The
+blocklist file now stores entries and replay guards together, while accepting
+the previous array-only format on load. It is atomically replaced when changed.
+During a PulsarCD outage Traefik keeps its last configuration, so ban expiration
+reaches the edge only after successful provider polling resumes.
+
+Run `python scripts/test-edge-blocklist.py` with the backend dependencies and
+Docker Desktop to verify real HTTP/HTTPS enforcement and release through
+Traefik's HTTP provider. The test uses an isolated internal network, exposes no
+ports and removes its temporary containers and configuration on completion.
 
 ### Deployment recommendations
 

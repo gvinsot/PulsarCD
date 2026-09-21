@@ -191,6 +191,16 @@ services:
       # without refusing anything, which the view reports. The same value goes
       # into the edge's providers.http.headers.
       - PULSARCD_AUTH__EDGE_KEY=${PULSARCD_AUTH__EDGE_KEY:-}
+      # This edge never hosts WordPress: one .env/auth.json/WordPress probe bans the
+      # public source IP for 24h. Requires the edge provider key above.
+      - PULSARCD_AUTOBAN__ENABLED=${PULSARCD_AUTOBAN__ENABLED:-true}
+      - PULSARCD_AUTOBAN__DURATION_SECONDS=${PULSARCD_AUTOBAN__DURATION_SECONDS:-86400}
+      - PULSARCD_AUTOBAN__POLL_SECONDS=${PULSARCD_AUTOBAN__POLL_SECONDS:-10}
+      - PULSARCD_AUTOBAN__OVERLAP_SECONDS=${PULSARCD_AUTOBAN__OVERLAP_SECONDS:-300}
+      - PULSARCD_AUTOBAN__BATCH_SIZE=${PULSARCD_AUTOBAN__BATCH_SIZE:-500}
+      - PULSARCD_AUTOBAN__EXEMPT_CIDRS=${PULSARCD_AUTOBAN__EXEMPT_CIDRS:-[]}
+      - PULSARCD_AUTOBAN__TRAEFIK_PROJECT=${PULSARCD_AUTOBAN__TRAEFIK_PROJECT:-privatenetwork}
+      - PULSARCD_AUTOBAN__TRAEFIK_SERVICE=${PULSARCD_AUTOBAN__TRAEFIK_SERVICE:-traefik}
 
       # Trust X-Forwarded-For: this stack is published behind Traefik, so the
       # per-address login rate limit only sees the proxy address without it.

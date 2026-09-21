@@ -56,7 +56,7 @@ import json
 import os
 import uuid
 from typing import Dict, List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings
 
 from shared.secrets import load_docker_secrets_into_env
@@ -219,6 +219,26 @@ class MCPConfig(BaseModel):
     api_key: str = ""  # Dedicated MCP API key (auto-generated if empty)
 
 
+class AutoBanConfig(BaseModel):
+    """Automatic bans for .env, auth.json and WordPress probes on this edge."""
+    enabled: bool = False
+    duration_seconds: int = Field(default=86400, ge=60, le=31536000)
+    poll_seconds: int = Field(default=10, ge=1, le=300)
+    # Revisit this much event time to pick up delayed agent/index writes.
+    overlap_seconds: int = Field(default=300, ge=30, le=86400)
+    batch_size: int = Field(default=500, ge=1, le=2000)
+    # Docker-derived metadata, never fields supplied by HTTP clients.
+    traefik_project: str = Field(default="privatenetwork", min_length=1)
+    traefik_service: str = Field(default="traefik", min_length=1)
+    exempt_cidrs: List[str] = []
+
+    @field_validator("exempt_cidrs")
+    @classmethod
+    def valid_networks(cls, values):
+        import ipaddress
+        return [str(ipaddress.ip_network(value, strict=False)) for value in values]
+
+
 class SwarmConfig(BaseModel):
     """Swarm agent API configuration."""
     secret_key: str = ""  # API key for swarm.methodinfo.fr (Bearer token)
@@ -253,6 +273,8 @@ class Settings(BaseSettings):
 
     # Auth
     auth: AuthConfig = AuthConfig()
+
+    autoban: AutoBanConfig = AutoBanConfig()
 
     # MCP
     mcp: MCPConfig = MCPConfig()
