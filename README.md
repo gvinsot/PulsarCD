@@ -690,8 +690,13 @@ A background worker reads the trusted Traefik service's Docker-attributed access
 logs from OpenSearch independently of the Security view and the edge provider
 endpoint. It uses Traefik's socket peer `ClientHost`, never a client-supplied
 forwarded header. Only public individual IPv4/IPv6 addresses can be automatically
-banned; private/local addresses and configured exemptions are skipped. A future
-CDN or proxy in front of Traefik requires revisiting this source-IP assumption.
+banned; private/local addresses and configured exemptions are skipped. Cloudflare
+proxy ranges are exempt by default because their socket addresses are shared by
+many users. The WAF still rejects forbidden paths with 403 through Cloudflare,
+but an original visitor's IP cannot be banned with the current `ClientIP`
+enforcement behind that proxy. Doing so requires configuring trusted real-client
+identity and matching enforcement together; arbitrary forwarded headers remain
+untrusted. Other shared proxies must be added to the exemptions explicitly.
 
 Automatic bans last **24 hours** by default. Manual bans remain permanent.
 Expiry is persisted and applied whenever the blocklist is read, including each
@@ -707,7 +712,8 @@ same event. A new probe after a manual release can trigger a new ban.
 | `PULSARCD_AUTOBAN__POLL_SECONDS` | `10` | Interval between completed log scans. |
 | `PULSARCD_AUTOBAN__OVERLAP_SECONDS` | `300` | Re-read five minutes of event time to pick up delayed log indexing. |
 | `PULSARCD_AUTOBAN__BATCH_SIZE` | `500` | Documents per scroll page, not a limit on the total scanned. |
-| `PULSARCD_AUTOBAN__EXEMPT_CIDRS` | `[]` | JSON array of exempt public IPs or CIDRs, e.g. `["8.8.8.8/32"]`. Applies to future automatic decisions. |
+| `PULSARCD_AUTOBAN__EXEMPT_CIDRS` | `[]` | JSON array of exempt public IPs or CIDRs, e.g. `["8.8.8.8/32"]`. Existing automatic bans in exempt ranges are released at the first scan after restart; manual bans are preserved. |
+| `PULSARCD_AUTOBAN__EXCLUDE_CLOUDFLARE` | `true` | Add the official Cloudflare IPv4/IPv6 proxy ranges to exemptions (snapshot verified 2026-09-21 in `backend/auto_ban.py`). |
 | `PULSARCD_AUTOBAN__TRAEFIK_PROJECT` | `privatenetwork` | Trusted Docker stack/project metadata for the edge logs. |
 | `PULSARCD_AUTOBAN__TRAEFIK_SERVICE` | `traefik` | Trusted Docker service metadata for the edge logs. |
 

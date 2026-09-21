@@ -230,6 +230,8 @@ class AutoBanConfig(BaseModel):
     # Docker-derived metadata, never fields supplied by HTTP clients.
     traefik_project: str = Field(default="privatenetwork", min_length=1)
     traefik_service: str = Field(default="traefik", min_length=1)
+    # ClientHost is the socket peer: never ban shared Cloudflare proxies.
+    exclude_cloudflare: bool = True
     exempt_cidrs: List[str] = []
 
     @field_validator("exempt_cidrs")

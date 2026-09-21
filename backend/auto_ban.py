@@ -22,6 +22,18 @@ from .ip_blocklist import HTTP_ROUTER_NAME, ROUTER_NAME, IpBlocklist, _timestamp
 
 logger = structlog.get_logger()
 
+# Official Cloudflare proxy ranges, verified 2026-09-21:
+# https://www.cloudflare.com/ips-v4/ and https://www.cloudflare.com/ips-v6/
+# ClientHost is the connection peer, so banning one would deny unrelated users.
+CLOUDFLARE_CIDRS = (
+    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
+    "141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
+    "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+    "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22", "2400:cb00::/32",
+    "2606:4700::/32", "2803:f800::/32", "2405:b500::/32", "2405:8100::/32",
+    "2a06:98c0::/29", "2c0f:f248::/32",
+)
+
 _ENV = re.compile(r"(?:^|/)\.env(?:[./;~]|$)", re.IGNORECASE)
 _AUTH_JSON = re.compile(r"(?:^|/)auth\.json(?:[./;~]|$)", re.IGNORECASE)
 _WORDPRESS = re.compile(
@@ -56,6 +68,8 @@ class AutoBanWorker:
         self._task = None
         self._scan_lock = asyncio.Lock()
         self._exemptions = [ipaddress.ip_network(value) for value in config.exempt_cidrs]
+        if config.exclude_cloudflare:
+            self._exemptions.extend(ipaddress.ip_network(value) for value in CLOUDFLARE_CIDRS)
         self._checkpoint = datetime.now(timezone.utc)
         self.initialization_error = None
         if self._path.exists():
@@ -104,6 +118,23 @@ class AutoBanWorker:
         temporary.replace(self._path)
         self._checkpoint = through
 
+    def _is_exempt(self, address):
+        return any(address.version == network.version and address in network
+                   for network in self._exemptions)
+
+    async def _release_exempt_automatic_bans(self):
+        """Apply exemptions to existing automatic bans as well as new probes."""
+        for entry in self.blocklist.list_entries():
+            if entry.get("blocked_by") != "automatic:probe":
+                continue
+            try:
+                address = ipaddress.ip_address(entry["ip"])
+            except ValueError:
+                continue  # Automatic enforcement only owns individual IPs.
+            if self._is_exempt(address):
+                await self.blocklist.remove(entry["ip"])
+                logger.info("Released exempt automatic edge ban", ip=entry["ip"])
+
     async def _consume(self, source, now):
         if (source.get("compose_project") != self.config.traefik_project
                 or source.get("compose_service") != self.config.traefik_service):
@@ -121,8 +152,7 @@ class AutoBanWorker:
             return
         if not address.is_global or address.is_multicast or address.is_reserved:
             return
-        if any(address.version == network.version and address in network
-               for network in self._exemptions):
+        if self._is_exempt(address):
             return
         stamp = _timestamp(source.get("timestamp"))
         if stamp is None or stamp > now or stamp < now - timedelta(seconds=self.config.duration_seconds):
@@ -142,6 +172,9 @@ class AutoBanWorker:
         if self.initialization_error is not None:
             return
         async with self._scan_lock:
+            # Runs on the first startup scan and every subsequent scan, before
+            # querying OpenSearch: release shared proxies even if indexing is down.
+            await self._release_exempt_automatic_bans()
             now = now or datetime.now(timezone.utc)
             start = min(self._checkpoint, now) - timedelta(seconds=self.config.overlap_seconds)
             # After a long outage, already obsolete probes do not merit bans.

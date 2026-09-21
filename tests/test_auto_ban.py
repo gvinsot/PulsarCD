@@ -1,5 +1,6 @@
 """Automatic sanctions: real store, bounded log traversal, replay and trust."""
 
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -178,6 +179,48 @@ async def test_exemptions_headers_provenance_and_blocked_responses(tmp_path, sto
     assert store.targets() == ["2a01:e0a::1"]
 
 
+@pytest.mark.parametrize("ip", ["162.158.222.234", "104.23.221.84", "2606:4700::1234"])
+async def test_cloudflare_proxy_peers_are_exempt_by_default(ip, tmp_path, store, clock_now):
+    w = worker(tmp_path, store, clock_now[0])
+    await w._consume(log(clock_now[0], ip, path="/auth.json"), clock_now[0])
+    assert store.targets() == []
+
+
+async def test_startup_releases_only_exempt_automatic_bans_and_persists_guards(
+        tmp_path, store, clock_now):
+    old = clock_now[0] - timedelta(seconds=1)
+    for ip in ("162.158.222.234", "104.23.221.84", "2606:4700::1234", "8.8.8.8", "45.138.12.22"):
+        await store.add_automatic(ip, "probe", old, 86400)
+    await store.add("162.158.222.235", "manual", "admin")
+    await store.add("104.24.0.0/14", "manual range", "admin")
+    reloaded = bl.IpBlocklist(str(tmp_path / "blocked_ips.json"))
+    w = worker(tmp_path, reloaded, clock_now[0], AutoBanConfig(exempt_cidrs=["8.8.8.8"]))
+    # Startup reconciliation must not depend on OpenSearch availability.
+    queried = asyncio.Event()
+    async def unavailable(*args, **kwargs):
+        queried.set()
+        raise RuntimeError("index unavailable")
+    w.opensearch._client.search.side_effect = unavailable
+    assert w.start()
+    await asyncio.wait_for(queried.wait(), timeout=2)
+    await w.stop()
+    persisted = bl.IpBlocklist(str(tmp_path / "blocked_ips.json"))
+    assert set(persisted.targets()) == {"45.138.12.22", "162.158.222.235", "104.24.0.0/14"}
+    assert persisted.blocked_entry("162.158.222.235")["blocked_by"] == "admin"
+    assert persisted.blocked_entry("45.138.12.22")["blocked_by"] == "automatic:probe"
+    assert "162.158.222.234" in persisted._auto_observed
+    assert await persisted.add_automatic("162.158.222.234", "old probe", old, 86400) is None
+    # Fresh Cloudflare requests remain exempt, not merely skipped as replays.
+    await w._consume(log(clock_now[0], "162.158.222.234"), clock_now[0])
+    assert reloaded.blocked_entry("162.158.222.234") is None
+
+
+async def test_cloudflare_exclusion_can_be_explicitly_disabled(tmp_path, store, clock_now):
+    w = worker(tmp_path, store, clock_now[0], AutoBanConfig(exclude_cloudflare=False))
+    await w._consume(log(clock_now[0], "162.158.222.234"), clock_now[0])
+    assert store.targets() == ["162.158.222.234"]
+
+
 async def test_full_blocklist_keeps_event_retryable_and_expired_capacity_is_reclaimed(store, clock_now):
     with patch.object(bl, "MAX_ENTRIES", 1):
         await store.add_automatic("8.8.8.8", "probe", clock_now[0], 60)
@@ -196,6 +239,9 @@ def test_autoban_environment_and_validation(monkeypatch):
     config = Settings().autoban
     assert config.enabled and config.duration_seconds == 3600
     assert config.exempt_cidrs == ["8.8.8.8/32"]
+    assert config.exclude_cloudflare is True
+    monkeypatch.setenv("PULSARCD_AUTOBAN__EXCLUDE_CLOUDFLARE", "false")
+    assert Settings().autoban.exclude_cloudflare is False
     with pytest.raises(ValueError):
         AutoBanConfig(exempt_cidrs=["bad-network"])
 
