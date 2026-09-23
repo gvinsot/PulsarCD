@@ -75,6 +75,20 @@ For production? Not yet. But the gap is closing fast. And when it does, PulsarCD
 - **Real-Time Metrics**: CPU, Memory, GPU (AMD/NVIDIA), Disk usage
 - **Error Tracking**: 4xx/5xx HTTP error counts and trends
 
+### Usage
+- **Endpoint Statistics**: Which URLs the platform actually serves - requests, share, distinct clients, latency and errors per endpoint, host and domain
+- **Per-Stack Breakdown**: The whole platform at once, or one stack, resolved from the Traefik router that served each request
+
+The Usage view reads the same access index as the Security view - the Traefik
+JSON access log, copied by the agent running on the edge node. An access log
+line names the *router* that served the request, never the stack behind it, so
+PulsarCD reads the `traefik.http.routers.*` labels off the Swarm services and
+maps each router to its `com.docker.stack.namespace`. Requests no deployed
+stack claims - a router served from Traefik's own file configuration, a stack
+removed since, or a scan of the bare IP address that matched no router at all -
+are reported as **unattributed** rather than dropped, so the per-stack rows
+always add up to the total above them.
+
 ### Security
 - **Attack Detection**: Client IPs and endpoints ranked from the Traefik access logs and Coraza WAF blocks - floods, scanners, credential probing
 - **Block at the Edge**: Refuse an address or CIDR range in Traefik, in front of the WAF, without redeploying anything
@@ -398,6 +412,12 @@ pulsarcd/
   "sort_order": "desc"
 }
 ```
+
+### Usage
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/usage/overview` | GET | Endpoint, host and per-stack traffic statistics. `minutes`, `include_internal` and `stack` (empty for every stack) |
 
 ### Security
 
@@ -840,6 +860,22 @@ ports and removes its temporary containers and configuration on completion.
    ```bash
    docker-compose logs pulsarcd | grep -i ollama
    ```
+
+### Registry `manifest unknown` during publication
+
+A Docker push can HEAD a new manifest, receive 404, then PUT it successfully
+with status 201. Distribution logs the initial probe as an error. The recurring
+error detector correlates HEAD 404s with PUT 201s within five seconds, requiring
+the same registry instance, container, client and manifest. It waits up to 60
+seconds for collection/indexing of the matching log; unmatched HEADs and GET
+failures remain errors. Query failures also preserve the original error.
+Raw logs and dashboard error totals are unchanged.
+
+`scripts/build-push.sh` first checks the paginated tag listing to avoid requesting
+manifests for versions known to be absent. Listed tags still undergo Docker's
+manifest validation. Unsupported authentication or incomplete responses fall
+back to that validation. Keep `scripts/registry_tag_exists.py` beside the build
+script when updating the build host's checkout.
 
 ### SSH Mode Issues (Legacy)
 

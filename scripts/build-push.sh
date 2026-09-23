@@ -693,7 +693,19 @@ for img in $IMAGES; do
     BASE_IMAGE="${RESOLVED_IMG%:*}"
     TARGET_TAG=$(image_version_tag "$RESOLVED_IMG" "$FULL_VERSION")
 
-    if [ "$NO_CACHE" != "--no-cache" ] && docker manifest inspect "$TARGET_TAG" >/dev/null 2>&1; then
+    # New releases are normally absent. Listing tags avoids asking the registry
+    # for a missing manifest, which Distribution logs as an error. Verify any
+    # listed tag with Docker as before; auth/network/pagination failures also
+    # fall back to Docker instead of trusting an incomplete list.
+    TAG_STATUS=2
+    if [ "$NO_CACHE" != "--no-cache" ]; then
+        if python3 "$SCRIPT_DIR/registry_tag_exists.py" "$TARGET_TAG"; then
+            TAG_STATUS=0
+        else
+            TAG_STATUS=$?
+        fi
+    fi
+    if [ "$NO_CACHE" != "--no-cache" ] && [ "$TAG_STATUS" -ne 3 ] && docker manifest inspect "$TARGET_TAG" >/dev/null 2>&1; then
         log_success "Image $TARGET_TAG already exists in registry — skipping build"
         IMAGES_SKIPPED="$IMAGES_SKIPPED $img"
     else

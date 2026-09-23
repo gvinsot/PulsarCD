@@ -18,7 +18,7 @@ BASH = str(GIT_BASH) if GIT_BASH.exists() else shutil.which("bash")
 
 @unittest.skipUnless(BASH, "Bash is required")
 class BuildPushTests(unittest.TestCase):
-    def run_build(self, *, existing="", failure="", platforms="", no_cache=False):
+    def run_build(self, *, existing="", failure="", platforms="", no_cache=False, tag_status=2):
         self.assertTrue(SCRIPT.is_file(), f"Build script missing from test environment: {SCRIPT}")
         with tempfile.TemporaryDirectory(prefix="build push ") as directory:
             root = Path(directory)
@@ -78,10 +78,24 @@ exit 0
 ''', newline="\n")
             git.chmod(0o755)
             docker.chmod(0o755)
+            # Keep registry-list probes local to this script integration test.
+            # HTTP/auth/pagination behavior is tested against a real local server
+            # in test_registry_tag_exists.py.
+            python = bin_dir / "python3"
+            python.write_text('''#!/bin/bash
+case "$1" in
+  */registry_tag_exists.py)
+    printf 'tag-check\t%s\t\n' "$2" >> "$DOCKER_LOG"
+    exit "$STUB_TAG_STATUS" ;;
+esac
+exit 0
+''', newline="\n")
+            python.chmod(0o755)
             log = root / "docker.log"
             env = os.environ.copy()
             env.update(DOCKER_LOG=log.as_posix(), EXISTING_IMAGE=existing,
-                       FAIL_COMMAND=failure, BUILD_PLATFORMS=platforms)
+                       FAIL_COMMAND=failure, BUILD_PLATFORMS=platforms,
+                       STUB_TAG_STATUS=str(tag_status))
             # Add stubs inside Bash so Git Bash receives a POSIX PATH.
             command = 'export PATH="$(cd "$1" && pwd):$PATH"; cd "$2"; bash "$3" "$PWD" 1.2.3 "" "" "$4"'
             result = subprocess.run(
@@ -121,6 +135,31 @@ exit 0
         compose, = [c for c in calls if c[0] == "compose"]
         self.assertNotIn("stt-server", compose)
 
+    def test_absent_tag_builds_without_missing_manifest_probe(self):
+        result, calls = self.run_build(tag_status=3)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(any(c[:2] == ["manifest", "inspect"] for c in calls))
+        self.assertTrue(any(c[:2] == ["buildx", "bake"] for c in calls))
+        compose, = [c for c in calls if c[0] == "compose"]
+        self.assertEqual(compose[-2:], ["stt-server", "web"])
+
+    def test_listed_tag_still_requires_valid_manifest(self):
+        result, calls = self.run_build(tag_status=0, existing="registry.methodinfo.fr/speech:rocm-1.2.3")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len([c for c in calls if c[:2] == ["manifest", "inspect"]]), 3)
+        compose, = [c for c in calls if c[0] == "compose"]
+        self.assertNotIn("stt-server", compose)
+        self.assertIn("web", compose)  # Listed but unavailable manifests must build.
+
+    def test_inconclusive_or_broken_tag_helper_falls_back_to_docker(self):
+        for status in (1, 2, 42, 127):
+            with self.subTest(status=status):
+                result, calls = self.run_build(tag_status=status, existing="registry.methodinfo.fr/speech:rocm-1.2.3")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(len([c for c in calls if c[:2] == ["manifest", "inspect"]]), 3)
+                compose, = [c for c in calls if c[0] == "compose"]
+                self.assertNotIn("stt-server", compose)
+
     def test_bake_can_read_parent_context_with_spaces(self):
         result, calls = self.run_build()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -142,6 +181,7 @@ exit 0
         self.assertEqual(result.returncode, 0, result.stderr)
         bake, = [c for c in calls if c[:2] == ["buildx", "bake"]]
         self.assertIn("--no-cache", bake)
+        self.assertFalse(any(c[0] == "tag-check" or c[:2] == ["manifest", "inspect"] for c in calls))
 
     def test_build_or_publication_failures_cannot_report_success(self):
         for failure in ("bake", "tag", "push"):

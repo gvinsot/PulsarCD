@@ -21,6 +21,32 @@ from . import utils
 
 logger = structlog.get_logger()
 
+# `traefik.http.routers.<router>.<setting>` on a Swarm service: the router
+# name is everything between the prefix and the first dot that follows.
+_TRAEFIK_ROUTER_LABEL_RE = re.compile(r"^traefik\.http\.routers\.([^.]+)\.")
+
+
+def traefik_routers_from_labels(labels: Dict[str, str]) -> Dict[str, str]:
+    """Router name -> stack, for the labels of one Swarm service.
+
+    Traefik's access log names the router that served a request, never the
+    stack behind it. A router is declared by a `traefik.http.routers.<name>`
+    label, and the service carrying it names its stack in
+    `com.docker.stack.namespace`, so the two meet here. A service outside any
+    stack declares no router this can attribute, and yields nothing.
+
+    Shared with the SSH client, which reads the same labels through the CLI.
+    """
+    stack = (labels or {}).get("com.docker.stack.namespace")
+    if not stack:
+        return {}
+    routers = {}
+    for key in labels:
+        match = _TRAEFIK_ROUTER_LABEL_RE.match(key)
+        if match:
+            routers[match.group(1)] = stack
+    return routers
+
 
 class DockerAPIClient:
     """Direct Docker API client (via socket or TCP)."""
@@ -1211,6 +1237,24 @@ class DockerAPIClient:
             services.append(service_info)
 
         return services
+
+    async def get_traefik_routers(self) -> Dict[str, str]:
+        """Map each Traefik router name to the stack that declares it.
+
+        Returns:
+            Dict mapping router name (bare, without Traefik's `@provider`
+            suffix) -> stack name. Empty when the daemon is unreachable.
+        """
+        data, status = await self._request("GET", "/services")
+
+        if status != 200 or not data:
+            return {}
+
+        routers: Dict[str, str] = {}
+        for svc in data:
+            routers.update(traefik_routers_from_labels(svc.get("Spec", {}).get("Labels", {})))
+
+        return routers
 
     async def get_service_env(self, service_id: str) -> Optional[Dict[str, str]]:
         """Get environment variables from a Swarm service spec.

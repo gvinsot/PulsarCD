@@ -8,9 +8,10 @@ it delegates to the LLM agent for investigation and remediation.
 
 import asyncio
 import hashlib
+import json
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -41,6 +42,11 @@ def _get_zvec():
 # Swarm container names: "{stack}_{service}.{slot}.{taskid}"
 # e.g. "pulsarcd_agent.1.4sz1iuqpv26b1befmacmsawtr"
 _SWARM_CONTAINER_RE = re.compile(r'^(.+?)_[^.]+\.\d+\.\w+$')
+
+# Registry logfmt values may contain spaces and escaped quotes (notably the
+# Docker user agent). Correlation must compare whole fields, not substrings.
+_REGISTRY_FIELDS_RE = re.compile(r'(?:^|\s)([\w.]+)=("(?:\\.|[^"\\])*"|[^\s]+)')
+_REGISTRY_MANIFEST_URI_RE = re.compile(r'^/v2/.+/manifests/[^/?]+$')
 
 # ---------------------------------------------------------------------------
 # Text normalization — strip variable parts (timestamps, IDs, hex, IPs, paths)
@@ -185,6 +191,14 @@ class RecurringErrorDetector:
         re.compile(r'err\.code="blob unknown".*http\.request\.method=HEAD\b'),
     ]
 
+    _REGISTRY_PUSH_WINDOW = timedelta(seconds=5)
+    # Collection runs every 30s and the index refreshes every 5s. A candidate
+    # may precede its successful PUT in the next collection/search window.
+    _REGISTRY_INGEST_GRACE = timedelta(seconds=60)
+    _REGISTRY_QUERY_PAGE_SIZE = 200
+    _REGISTRY_QUERY_MAX_PAGES = 10
+    _REGISTRY_PENDING_LIMIT = 2000
+
     def __init__(
         self,
         opensearch_client,
@@ -225,6 +239,8 @@ class RecurringErrorDetector:
         self._scan_cycle: int = 0
         self._total_errors_found: int = 0
         self._total_notifications: int = 0
+        self._pending_registry_probes: Dict[tuple, tuple] = {}
+        self._handled_registry_probes: Dict[tuple, datetime] = {}
 
         # zvec collection (lazy init)
         self._zvec_collection = None
@@ -314,6 +330,9 @@ class RecurringErrorDetector:
 
         # Query OpenSearch for new error logs
         errors = await self._fetch_recent_errors(since)
+        # Revisit pending probes even when no new ERROR lines were fetched.
+        # Raw logs remain intact; only confirmed push probes leave detection.
+        errors = await self._filter_registry_push_probes(errors, now)
 
         # Periodic INFO summary every 10 cycles (~10 minutes) for visibility
         if self._scan_cycle % 10 == 0:
@@ -515,6 +534,135 @@ class RecurringErrorDetector:
         return False
 
     @staticmethod
+    def _registry_event(entry: dict) -> Optional[dict]:
+        """Read enough registry context to correlate requests conservatively."""
+        fields = {}
+        try:
+            for name, value in _REGISTRY_FIELDS_RE.findall(entry.get("message", "")):
+                fields[name] = json.loads(value) if value.startswith('"') else value
+            if fields.get("service") != "registry":
+                return None
+            uri = fields.get("http.request.uri", "")
+            if not _REGISTRY_MANIFEST_URI_RE.fullmatch(uri):
+                return None
+            key = tuple(entry.get(name) for name in ("host", "container_id", "container_name")) + tuple(
+                fields.get(name) for name in (
+                    "instance.id", "http.request.host", "http.request.remoteaddr",
+                    "http.request.useragent", "http.request.uri",
+                )
+            )
+            if not all(isinstance(value, str) and value for value in key):
+                return None
+            raw_ts = entry.get("timestamp")
+            ts = raw_ts if isinstance(raw_ts, datetime) else datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+            if ts.tzinfo:
+                ts = ts.astimezone(timezone.utc).replace(tzinfo=None)
+            return {
+                "key": key, "timestamp": ts,
+                "method": fields.get("http.request.method"),
+                "status": fields.get("http.response.status"),
+                "error": fields.get("err.code"),
+                "request_id": fields.get("http.request.id"),
+            }
+        except (ValueError, TypeError, AttributeError):
+            return None
+
+    async def _registry_successful_puts(self, candidates: List[tuple]) -> Optional[List[dict]]:
+        """Fetch bounded, paginated PUT evidence; failures never hide errors."""
+        events = [event for _, event in candidates]
+        body = {
+            "query": {"bool": {"filter": [
+                {"terms": {"host": sorted({event["key"][0] for event in events})}},
+                {"terms": {"container_id": sorted({event["key"][1] for event in events})}},
+                {"range": {"timestamp": {
+                    "gte": min(event["timestamp"] for event in events).isoformat(),
+                    "lte": (max(event["timestamp"] for event in events) + self._REGISTRY_PUSH_WINDOW).isoformat(),
+                }}},
+                {"term": {"http_status": 201}},
+                {"match_phrase": {"message": "http.request.method=PUT"}},
+            ]}},
+            "size": self._REGISTRY_QUERY_PAGE_SIZE,
+            "sort": [{"timestamp": "asc"}],
+            "_source": ["message", "timestamp", "host", "container_id", "container_name"],
+            "timeout": "10s",
+        }
+        scroll_id = None
+        results = []
+        try:
+            response = await self._opensearch._client.search(
+                index=self._opensearch.logs_index, body=body, scroll="1m")
+            for page in range(self._REGISTRY_QUERY_MAX_PAGES):
+                scroll_id = response.get("_scroll_id", scroll_id)
+                if response.get("timed_out") or response.get("_shards", {}).get("failed", 0):
+                    raise RuntimeError("Incomplete registry PUT search")
+                hits = response.get("hits", {}).get("hits", [])
+                for hit in hits:
+                    event = self._registry_event(hit["_source"])
+                    if event and event["method"] == "PUT" and event["status"] == "201":
+                        results.append(event)
+                if len(hits) < self._REGISTRY_QUERY_PAGE_SIZE:
+                    return results
+                if not scroll_id or page + 1 == self._REGISTRY_QUERY_MAX_PAGES:
+                    raise RuntimeError("Registry PUT search exceeded its bounded page limit")
+                response = await self._opensearch._client.scroll(scroll_id=scroll_id, scroll="1m")
+        except Exception as exc:
+            logger.warning("Registry push correlation unavailable; keeping missing manifest errors",
+                           error=str(exc))
+            return None
+        finally:
+            if scroll_id:
+                try:
+                    await self._opensearch._client.clear_scroll(scroll_id=scroll_id)
+                except Exception:
+                    logger.debug("Could not clear registry correlation search scroll")
+
+    async def _filter_registry_push_probes(self, errors: List[dict], now: datetime) -> List[dict]:
+        """Exclude a HEAD 404 only after a matching PUT 201 within five seconds.
+
+        GET failures and uncorrelated missing tags remain errors. Recent HEADs
+        wait at most one collection grace period, including across empty scan
+        windows. The original error is retained if evidence cannot be queried.
+        """
+        cutoff = now - max(self._REGISTRY_INGEST_GRACE, timedelta(seconds=self._scan_interval * 2))
+        self._handled_registry_probes = {
+            identity: seen for identity, seen in self._handled_registry_probes.items() if seen >= cutoff
+        }
+        candidates = dict(self._pending_registry_probes)
+        self._pending_registry_probes = {}
+        kept = []
+        for entry in errors:
+            event = self._registry_event(entry)
+            if not (event and event["method"] == "HEAD" and event["status"] == "404"
+                    and event["error"] == "manifest unknown" and event["request_id"]):
+                kept.append(entry)
+                continue
+            identity = (event["key"], event["timestamp"], event["request_id"])
+            if identity in self._handled_registry_probes:
+                continue
+            if identity not in candidates and len(candidates) >= self._REGISTRY_PENDING_LIMIT:
+                kept.append(entry)
+                continue
+            candidates[identity] = (entry, event)
+
+        if candidates:
+            puts = await self._registry_successful_puts(list(candidates.values()))
+            by_key: Dict[tuple, List[datetime]] = {}
+            for event in puts or []:
+                by_key.setdefault(event["key"], []).append(event["timestamp"])
+            for identity, (entry, event) in candidates.items():
+                matched = any(timedelta(0) <= ts - event["timestamp"] <= self._REGISTRY_PUSH_WINDOW
+                              for ts in by_key.get(event["key"], []))
+                if matched:
+                    self._handled_registry_probes[identity] = now
+                elif puts is not None and timedelta(0) <= now - event["timestamp"] < self._REGISTRY_INGEST_GRACE:
+                    self._pending_registry_probes[identity] = (entry, event)
+                else:
+                    kept.append(entry)
+                    self._handled_registry_probes[identity] = now
+        # Pending entries can predate the current incremental scan window.
+        return sorted(kept, key=lambda entry: ErrorPattern._parse_ts(entry.get("timestamp")), reverse=True)
+
+    @staticmethod
     def _fixup_compose_project(entry: dict) -> None:
         """Fix compose_project from container_name for Swarm containers.
 
@@ -553,7 +701,7 @@ class RecurringErrorDetector:
                 "size": 2000,
                 "sort": [{"timestamp": "desc"}],
                 "_source": ["message", "container_name", "compose_project",
-                            "compose_service", "host", "timestamp", "level"],
+                            "compose_service", "host", "timestamp", "level", "container_id"],
             }
             response = await self._opensearch._client.search(
                 index=self._opensearch.logs_index, body=body

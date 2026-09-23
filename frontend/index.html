@@ -120,6 +120,14 @@
                             </svg>
                             <span>Logs</span>
                         </a>
+                        <a href="#" class="nav-item" data-view="usage">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="20" x2="18" y2="10"/>
+                                <line x1="12" y1="20" x2="12" y2="4"/>
+                                <line x1="6" y1="20" x2="6" y2="14"/>
+                            </svg>
+                            <span>Usage</span>
+                        </a>
                         <a href="#" class="nav-item" data-view="security">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
@@ -199,6 +207,7 @@
                 <a href="#" class="nav-item" data-view="stacks"><span>Stacks</span></a>
                 <a href="#" class="nav-item" data-view="containers"><span>Computers</span></a>
                 <a href="#" class="nav-item" data-view="logs"><span>Logs</span></a>
+                <a href="#" class="nav-item" data-view="usage"><span>Usage</span></a>
                 <a href="#" class="nav-item" data-view="security"><span>Security</span></a>
                 <a href="#" class="nav-item" data-view="terminal"><span>Terminal</span></a>
             </div>
@@ -491,6 +500,214 @@
                         <button class="btn btn-sm" id="prev-page" data-click="prevPage" disabled>Previous</button>
                         <span id="page-info">Page 1</span>
                         <button class="btn btn-sm" id="next-page" data-click="nextPage">Next</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Usage View -->
+            <section id="usage-view" class="view">
+                <header class="view-header">
+                    <h1>Usage</h1>
+                    <div class="header-actions">
+                        <div class="filter-group">
+                            <label for="usage-stack">Stack:</label>
+                            <select id="usage-stack" data-change="loadUsage">
+                                <option value="">All stacks</option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label for="usage-window">Window:</label>
+                            <select id="usage-window" data-change="loadUsage">
+                                <option value="15">15 min</option>
+                                <option value="60" selected>1 hour</option>
+                                <option value="360">6 hours</option>
+                                <option value="1440">24 hours</option>
+                                <option value="10080">7 days</option>
+                            </select>
+                        </div>
+                        <label class="checkbox-label" title="Private addresses: CI pushing to the registry, nodes pulling images, clients coming back through the router's NAT loopback">
+                            <input type="checkbox" id="usage-internal" data-change="loadUsage">
+                            Include internal traffic
+                        </label>
+                        <button class="btn btn-secondary" data-click="loadUsage">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                <polyline points="23 4 23 10 17 10"/>
+                                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                            </svg>
+                            Refresh
+                        </button>
+                    </div>
+                </header>
+
+                <div class="view-error start-hidden" id="usage-error"></div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-icon hosts">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="usage-requests">-</span>
+                            <span class="stat-label">Requests <span id="usage-rate" class="stat-sub"></span></span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon cpu">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                                <circle cx="9" cy="7" r="4"/>
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="usage-clients">-</span>
+                            <span class="stat-label">Client IPs</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon memory">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="usage-endpoints">-</span>
+                            <span class="stat-label">Distinct endpoints</span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon gpu">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"/>
+                                <polyline points="12 6 12 12 16 14"/>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="usage-latency">-</span>
+                            <span class="stat-label">Median latency <span id="usage-latency-sub" class="stat-sub"></span></span>
+                        </div>
+                    </div>
+                    <div class="stat-card warning">
+                        <div class="stat-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                                <line x1="12" y1="9" x2="12" y2="13"/>
+                                <line x1="12" y1="17" x2="12.01" y2="17"/>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="usage-error-rate">-</span>
+                            <span class="stat-label">Error rate <span id="usage-errors-sub" class="stat-sub"></span></span>
+                        </div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-icon running">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="7 10 12 15 17 10"/>
+                                <line x1="12" y1="15" x2="12" y2="3"/>
+                            </svg>
+                        </div>
+                        <div class="stat-content">
+                            <span class="stat-value" id="usage-bytes">-</span>
+                            <span class="stat-label">Served to clients</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chart-card view-chart-card">
+                    <h3>Requests per <span id="usage-interval">minute</span></h3>
+                    <div class="chart-wrapper"><canvas id="usage-chart"></canvas></div>
+                </div>
+
+                <div class="chart-card table-card" id="usage-stacks-card">
+                    <h3>Traffic by stack <span class="card-hint">click a row to filter the view &middot; client IPs are a ceiling, a client reaching two routers counts twice</span></h3>
+                    <div class="table-scroll">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Stack</th>
+                                    <th>Routers</th>
+                                    <th class="num">Requests</th>
+                                    <th class="num">Share</th>
+                                    <th class="num">Client IPs</th>
+                                    <th class="num">4xx</th>
+                                    <th class="num">5xx</th>
+                                    <th class="num">Avg</th>
+                                    <th class="num">Served</th>
+                                </tr>
+                            </thead>
+                            <tbody id="usage-stacks-body">
+                                <tr><td colspan="9" class="table-empty">Loading&hellip;</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="chart-card table-card">
+                    <h3>Top endpoints <span class="card-hint">host + path, query string ignored</span></h3>
+                    <div class="table-scroll">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Endpoint</th>
+                                    <th>Stack</th>
+                                    <th>Methods</th>
+                                    <th class="num">Requests</th>
+                                    <th class="num">Share</th>
+                                    <th class="num">Client IPs</th>
+                                    <th class="num">4xx</th>
+                                    <th class="num">5xx</th>
+                                    <th class="num">Avg</th>
+                                    <th class="num" title="Slowest request of the window">Max</th>
+                                    <th>Last call</th>
+                                </tr>
+                            </thead>
+                            <tbody id="usage-endpoints-body">
+                                <tr><td colspan="11" class="table-empty">Loading&hellip;</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="chart-card table-card">
+                    <h3>Hosts <span class="card-hint">the domains Traefik answered for</span></h3>
+                    <div class="table-scroll">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Host</th>
+                                    <th class="num">Requests</th>
+                                    <th class="num">Share</th>
+                                    <th class="num" title="Distinct paths requested">Endpoints</th>
+                                    <th class="num">Client IPs</th>
+                                    <th class="num">4xx</th>
+                                    <th class="num">5xx</th>
+                                    <th class="num">Avg</th>
+                                    <th class="num">Served</th>
+                                </tr>
+                            </thead>
+                            <tbody id="usage-hosts-body">
+                                <tr><td colspan="9" class="table-empty">Loading&hellip;</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="chart-card table-card">
+                    <h3>Answers and methods</h3>
+                    <div class="usage-breakdowns">
+                        <div>
+                            <h4 class="usage-breakdown-title">Status codes</h4>
+                            <div id="usage-status-codes" class="usage-chips"></div>
+                        </div>
+                        <div>
+                            <h4 class="usage-breakdown-title">Methods</h4>
+                            <div id="usage-methods" class="usage-chips"></div>
+                        </div>
                     </div>
                 </div>
             </section>

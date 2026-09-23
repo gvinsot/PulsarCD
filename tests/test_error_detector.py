@@ -1,6 +1,7 @@
 """Unit tests for backend/error_detector.py — no infrastructure needed."""
 
 from datetime import datetime, timedelta
+import json
 from unittest import mock
 
 import pytest
@@ -301,3 +302,170 @@ class TestIsBenign:
 
     def test_unrelated_error_is_kept(self):
         assert not _make_detector()._is_benign("Connection refused by database")
+
+
+def _registry_log(ts, method="HEAD", status=404, **overrides):
+    """Distribution log fixture with independent request IDs and escaped UA."""
+    fields = {
+        "service": "registry", "instance.id": "registry-instance",
+        "http.request.id": f"request-{method}-{ts.isoformat()}",
+        "http.request.host": "registry.methodinfo.fr",
+        "http.request.remoteaddr": "192.168.1.254",
+        "http.request.useragent": 'docker/29.2.0 UpstreamClient(Docker-Client \\(linux\\)) "quoted"',
+        "http.request.uri": "/v2/intra-muros-chat/manifests/6e25625",
+        "http.request.method": method, "http.response.status": str(status),
+    }
+    if status == 404:
+        fields["err.code"] = "manifest unknown"
+    fields.update(overrides)
+    return {
+        "host": "server-d", "container_id": "registry-container",
+        "container_name": "privatenetwork_registry.1.abc123",
+        "compose_project": "privatenetwork", "compose_service": "registry",
+        "timestamp": ts.isoformat(), "level": "ERROR" if status == 404 else "INFO",
+        "http_status": status,
+        "message": " ".join(f"{key}={json.dumps(value)}" for key, value in fields.items()),
+    }
+
+
+def _registry_detector(*put_entries):
+    opensearch = mock.Mock()
+    opensearch.logs_index = "pulsarcd-logs"
+    opensearch._client.search = mock.AsyncMock(return_value={
+        "hits": {"hits": [{"_source": entry} for entry in put_entries]},
+    })
+    opensearch._client.scroll = mock.AsyncMock()
+    opensearch._client.clear_scroll = mock.AsyncMock()
+    return _make_detector(opensearch_client=opensearch)
+
+
+class TestRegistryPushCorrelation:
+    async def test_confirmed_push_suppresses_head_only_and_preserves_raw_log(self):
+        ts = datetime(2026, 9, 22, 19, 40, 49, 314255)
+        head = _registry_log(ts)
+        get = _registry_log(ts, method="GET")
+        put = _registry_log(ts + timedelta(milliseconds=15), method="PUT", status=201)
+        original = head.copy()
+        detector = _registry_detector(put)
+        assert await detector._filter_registry_push_probes([head, get], ts + timedelta(minutes=2)) == [get]
+        assert head == original
+
+    @pytest.mark.parametrize("field", [
+        "service", "instance.id", "http.request.host", "http.request.remoteaddr",
+        "http.request.useragent", "http.request.uri",
+    ])
+    async def test_other_request_context_does_not_hide_missing_tag(self, field):
+        ts = datetime(2026, 9, 22, 19, 40, 49)
+        head = _registry_log(ts)
+        put = _registry_log(ts + timedelta(milliseconds=15), method="PUT", status=201,
+                            **{field: "different"})
+        detector = _registry_detector(put)
+        assert await detector._filter_registry_push_probes([head], ts + timedelta(minutes=2)) == [head]
+
+    @pytest.mark.parametrize("field", ["host", "container_id", "container_name"])
+    async def test_other_container_does_not_hide_missing_tag(self, field):
+        ts = datetime(2026, 9, 22, 19, 40, 49)
+        head = _registry_log(ts)
+        put = _registry_log(ts + timedelta(milliseconds=15), method="PUT", status=201)
+        put[field] = "different"
+        detector = _registry_detector(put)
+        assert await detector._filter_registry_push_probes([head], ts + timedelta(minutes=2)) == [head]
+
+    @pytest.mark.parametrize("offset,status", [(-0.01, 201), (5.01, 201), (0.015, 500), (0.015, 200)])
+    async def test_only_later_successful_creation_in_short_window_matches(self, offset, status):
+        ts = datetime(2026, 9, 22, 19, 40, 49)
+        head = _registry_log(ts)
+        put = _registry_log(ts + timedelta(seconds=offset), method="PUT", status=status)
+        detector = _registry_detector(put)
+        assert await detector._filter_registry_push_probes([head], ts + timedelta(minutes=2)) == [head]
+
+    async def test_split_collection_resolves_on_empty_next_scan(self):
+        ts = datetime.utcnow() - timedelta(seconds=1)
+        head = _registry_log(ts)
+        detector = _registry_detector()
+        detector._fetch_recent_errors = mock.AsyncMock(side_effect=[[head], []])
+        detector._registry_successful_puts = mock.AsyncMock(side_effect=[[], [
+            detector._registry_event(_registry_log(ts + timedelta(milliseconds=15), method="PUT", status=201))
+        ]])
+        await detector._scan()
+        assert detector._pending_registry_probes
+        await detector._scan()
+        assert not detector._pending_registry_probes
+        assert detector._patterns == {}
+        assert detector._total_errors_found == 0
+
+    async def test_unmatched_head_is_released_once_after_grace(self):
+        ts = datetime(2026, 9, 22, 19, 40, 49)
+        head = _registry_log(ts)
+        detector = _registry_detector()
+        assert await detector._filter_registry_push_probes([head], ts) == []
+        assert await detector._filter_registry_push_probes([head], ts + timedelta(seconds=30)) == []
+        assert len(detector._pending_registry_probes) == 1
+        assert await detector._filter_registry_push_probes([], ts + timedelta(seconds=60)) == [head]
+        assert await detector._filter_registry_push_probes([head], ts + timedelta(seconds=61)) == []
+        assert not detector._pending_registry_probes
+
+    @pytest.mark.parametrize("field", ["timestamp", "container_id"])
+    async def test_incomplete_context_is_kept_without_query(self, field):
+        ts = datetime(2026, 9, 22, 19, 40, 49)
+        head = _registry_log(ts)
+        head.pop(field)
+        detector = _registry_detector()
+        assert await detector._filter_registry_push_probes([head], ts) == [head]
+        detector._opensearch._client.search.assert_not_awaited()
+
+    async def test_unrelated_errors_are_never_delayed(self):
+        now = datetime.utcnow()
+        error = _err("app", "Database unavailable", now)
+        detector = _registry_detector()
+        assert await detector._filter_registry_push_probes([error], now) == [error]
+        detector._opensearch._client.search.assert_not_awaited()
+
+    async def test_query_failure_releases_recent_and_pending_errors(self):
+        ts = datetime(2026, 9, 22, 19, 40, 49)
+        head = _registry_log(ts)
+        detector = _registry_detector()
+        assert await detector._filter_registry_push_probes([head], ts) == []
+        detector._opensearch._client.search.side_effect = RuntimeError("search unavailable")
+        assert await detector._filter_registry_push_probes([], ts + timedelta(seconds=1)) == [head]
+        assert not detector._pending_registry_probes
+
+    async def test_success_on_second_query_page_and_scroll_cleanup(self):
+        ts = datetime(2026, 9, 22, 19, 40, 49)
+        head = _registry_log(ts)
+        unrelated = _registry_log(ts + timedelta(milliseconds=1), method="PUT", status=201,
+                                  **{"http.request.uri": "/v2/other/manifests/6e25625"})
+        put = _registry_log(ts + timedelta(milliseconds=15), method="PUT", status=201)
+        detector = _registry_detector(unrelated)
+        detector._REGISTRY_QUERY_PAGE_SIZE = 1
+        detector._opensearch._client.search.return_value["_scroll_id"] = "scroll-one"
+        detector._opensearch._client.scroll.side_effect = [
+            {"_scroll_id": "scroll-two", "hits": {"hits": [{"_source": put}]}},
+            {"_scroll_id": "scroll-two", "hits": {"hits": []}},
+        ]
+        assert await detector._filter_registry_push_probes([head], ts) == []
+        assert not detector._pending_registry_probes
+        assert detector._opensearch._client.scroll.await_count == 2
+        detector._opensearch._client.clear_scroll.assert_awaited_once_with(scroll_id="scroll-two")
+
+    @pytest.mark.parametrize("response", [
+        {"timed_out": True, "hits": {"hits": []}},
+        {"_shards": {"failed": 1}, "hits": {"hits": []}},
+    ])
+    async def test_partial_search_does_not_hide_errors(self, response):
+        ts = datetime(2026, 9, 22, 19, 40, 49)
+        head = _registry_log(ts)
+        detector = _registry_detector()
+        detector._opensearch._client.search.return_value = response
+        assert await detector._filter_registry_push_probes([head], ts) == [head]
+
+    async def test_query_page_limit_fails_open(self):
+        ts = datetime(2026, 9, 22, 19, 40, 49)
+        head = _registry_log(ts)
+        put = _registry_log(ts + timedelta(milliseconds=15), method="PUT", status=201)
+        detector = _registry_detector(put)
+        detector._REGISTRY_QUERY_PAGE_SIZE = 1
+        detector._REGISTRY_QUERY_MAX_PAGES = 1
+        detector._opensearch._client.search.return_value["_scroll_id"] = "scroll-one"
+        assert await detector._filter_registry_push_probes([head], ts) == [head]
+        detector._opensearch._client.clear_scroll.assert_awaited_once()

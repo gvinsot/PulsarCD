@@ -710,6 +710,46 @@ class SSHClient:
 
         return stacks
 
+    async def get_traefik_routers(self) -> Dict[str, str]:
+        """Map each Traefik router name to the stack that declares it.
+
+        The Docker CLI counterpart of DockerAPIClient.get_traefik_routers: one
+        `docker service inspect` over every service, printing the same labels
+        the API would return.
+
+        Returns:
+            Dict mapping router name (bare, without Traefik's `@provider`
+            suffix) -> stack name. Empty when the host is unreachable or runs
+            no Swarm service.
+        """
+        from .docker_client import traefik_routers_from_labels
+
+        # `service inspect` with no argument is an error, so an empty swarm
+        # must not reach it.
+        ids_out, _, ids_code = await self.run_command("docker service ls -q")
+        if ids_code != 0 or not ids_out.strip():
+            return {}
+
+        ids = " ".join(shlex.quote(i.strip()) for i in ids_out.split() if i.strip())
+        stdout, _, code = await self.run_command(
+            f"docker service inspect {ids} --format '{{{{json .Spec.Labels}}}}'")
+        if code != 0:
+            return {}
+
+        routers: Dict[str, str] = {}
+        for line in stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                labels = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(labels, dict):
+                routers.update(traefik_routers_from_labels(labels))
+
+        return routers
+
     async def exec_command(self, container_id: str, command: List[str]) -> Tuple[bool, str]:
         """Execute a command inside a container using docker exec.
 

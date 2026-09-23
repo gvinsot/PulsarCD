@@ -6176,16 +6176,19 @@ strong.md-h2 {
 
 /* ============== Security View ============== */
 
-#security-view .header-actions {
+#security-view .header-actions,
+#usage-view .header-actions {
     flex-wrap: wrap;
     justify-content: flex-end;
 }
 
-#security-view .stats-grid {
+#security-view .stats-grid,
+#usage-view .stats-grid {
     flex-shrink: 0;
 }
 
-.security-error {
+.security-error,
+.view-error {
     background: rgba(245, 158, 11, 0.1);
     border: 1px solid rgba(245, 158, 11, 0.4);
     border-radius: var(--radius-sm);
@@ -6196,46 +6199,54 @@ strong.md-h2 {
     flex-shrink: 0;
 }
 
-.security-chart-card {
+.security-chart-card,
+.view-chart-card {
     height: 260px;
     flex-shrink: 0;
     margin-bottom: 12px;
 }
 
-.security-table-card {
+.security-table-card,
+.table-card {
     height: auto;
     flex-shrink: 0;
     margin-bottom: 12px;
 }
 
-.security-hint {
+.security-hint,
+.card-hint {
     font-size: 0.75rem;
     color: var(--text-muted);
     margin-left: 8px;
 }
 
-.security-table-scroll {
+.security-table-scroll,
+.table-scroll {
     max-height: 480px;
     overflow: auto;
 }
 
 /* Not .logs-table: on mobile that one turns rows into cards, which breaks a
    numeric table; this one keeps its columns and scrolls sideways instead. */
-.security-table {
+.security-table,
+.data-table {
     width: 100%;
     border-collapse: collapse;
     font-size: 0.85rem;
 }
 
 .security-table th,
-.security-table td {
+.security-table td,
+.data-table th,
+.data-table td {
     padding: 6px 10px;
     text-align: left;
     border-bottom: 1px solid var(--border-color);
     vertical-align: middle;
 }
 
-.security-table th {
+.security-table th,
+.data-table th {
     background: var(--bg-elevated);
     font-weight: 500;
     padding: 8px 10px;
@@ -6246,18 +6257,22 @@ strong.md-h2 {
     white-space: nowrap;
 }
 
-.security-table tbody tr:hover {
+.security-table tbody tr:hover,
+.data-table tbody tr:hover {
     background: var(--bg-tertiary);
 }
 
 .security-table th.num,
-.security-table td.num {
+.security-table td.num,
+.data-table th.num,
+.data-table td.num {
     text-align: right;
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
 }
 
-.security-table .mono {
+.security-table .mono,
+.data-table .mono {
     font-family: var(--font-mono);
     font-size: 0.8rem;
 }
@@ -6307,7 +6322,8 @@ strong.md-h2 {
     margin-left: 4px;
 }
 
-.security-ellipsis {
+.security-ellipsis,
+.cell-ellipsis {
     max-width: 260px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -6325,16 +6341,19 @@ strong.md-h2 {
     white-space: nowrap;
 }
 
-.security-link {
+.security-link,
+.cell-link {
     color: var(--accent-secondary);
     cursor: pointer;
 }
 
-.security-link:hover {
+.security-link:hover,
+.cell-link:hover {
     text-decoration: underline;
 }
 
-.security-empty {
+.security-empty,
+.table-empty {
     text-align: center;
     color: var(--text-muted);
     padding: 16px;
@@ -6449,25 +6468,135 @@ strong.md-h2 {
 }
 
 @media (max-width: 768px) {
-    #security-view .header-actions {
+    #security-view .header-actions,
+    #usage-view .header-actions {
         justify-content: flex-start;
     }
 
-    .security-chart-card {
+    .security-chart-card,
+    .view-chart-card {
         height: 220px;
     }
 
-    .security-table {
+    .security-table,
+    .data-table {
         min-width: 720px;
     }
 
-    .security-ellipsis {
+    .security-ellipsis,
+    .cell-ellipsis {
         max-width: 140px;
     }
 
     .security-uri {
         max-width: 200px;
     }
+}
+
+/* ============== Usage View ============== */
+/* Tables, cards and the error banner are shared with the Security view: the
+   two read the same access index and look alike on purpose. Only what is
+   particular to usage lives here. */
+
+.stat-sub {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    margin-left: 4px;
+}
+
+.usage-stack-row {
+    cursor: pointer;
+}
+
+.usage-stack-name {
+    font-weight: 500;
+}
+
+/* A stack name in an endpoint row: it filters the view, like the row above. */
+.usage-stack-tag {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.usage-stack-tag:hover {
+    color: var(--accent-secondary);
+}
+
+.usage-unattributed {
+    color: var(--text-muted);
+    cursor: help;
+}
+
+.usage-method {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-right: 5px;
+}
+
+.usage-breakdowns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 28px;
+}
+
+.usage-breakdown-title {
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin: 0 0 8px;
+}
+
+.usage-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.usage-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    font-size: 0.78rem;
+    white-space: nowrap;
+}
+
+.usage-chip .usage-chip-count {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.usage-chip-2xx { box-shadow: inset 3px 0 0 var(--status-success); }
+.usage-chip-4xx { box-shadow: inset 3px 0 0 var(--status-warning); }
+.usage-chip-5xx { box-shadow: inset 3px 0 0 var(--status-error); }
+
+/* The busiest rows read as a bar chart without one: a tinted background whose
+   width is the row's share of the window. */
+.usage-bar-cell {
+    position: relative;
+}
+
+.usage-bar {
+    position: absolute;
+    left: 0;
+    top: 2px;
+    bottom: 2px;
+    background: rgba(88, 166, 255, 0.14);
+    border-radius: 2px;
+    pointer-events: none;
+}
+
+.usage-bar-cell > span {
+    position: relative;
 }
 
 #transition-swiftproof-section { display: block; }

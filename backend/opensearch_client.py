@@ -11,6 +11,7 @@ from opensearchpy import AsyncOpenSearch, ConflictError, helpers
 from shared.access_log import ACCESS_INDEX_MAPPING
 
 from . import security_analytics as security
+from . import usage_analytics as usage
 from .config import OpenSearchConfig
 from .models import (
     ContainerStats, DashboardStats, HostMetrics, LogEntry,
@@ -1421,6 +1422,38 @@ class OpenSearchClient:
         except Exception as e:
             logger.error("Failed to get security IP events", ip=ip, error=str(e))
             return []
+
+    async def get_usage_overview(self, minutes: int = usage.DEFAULT_WINDOW_MINUTES,
+                                 include_internal: bool = False,
+                                 stack: Optional[str] = None,
+                                 router_stacks: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Endpoint, host and per-stack traffic statistics (usage view).
+
+        router_stacks maps a Traefik router to the stack declaring it; it names
+        the stacks that can be selected and attributes each request to one.
+        Without it the view still works, with every row unattributed.
+        """
+        minutes = usage.clamp_window(minutes)
+        now = datetime.utcnow()
+        start = now - timedelta(minutes=minutes)
+        router_stacks = router_stacks or {}
+        stacks = sorted(set(router_stacks.values()))
+        # A stack the map does not know has no router, so it gets an empty
+        # filter: no request rather than every request.
+        router_names = None
+        if stack:
+            router_names = [name for name, owner in router_stacks.items() if owner == stack]
+        try:
+            body = usage.build_usage_query(start, now, minutes, include_internal, router_names)
+            body["timeout"] = SEARCH_TIMEOUT
+            response = await self._client.search(index=self.access_index, body=body)
+            return usage.summarize(response, minutes=minutes, include_internal=include_internal,
+                                   stack=stack, stacks=stacks, router_stacks=router_stacks,
+                                   generated_at=now)
+        except Exception as e:
+            logger.error("Failed to get usage overview", error=str(e))
+            return usage.empty_overview(minutes, include_internal, stack, stacks, now,
+                                        error="Access data unavailable")
 
     async def cleanup_old_data(self, retention_days: int):
         """Delete data older than retention period."""
