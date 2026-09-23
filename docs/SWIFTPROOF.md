@@ -2,15 +2,17 @@
 
 SwiftProof est la dernière étape de l'étape **Test** : une fois la suite
 automatisée passée, la revue compare le candidat au code réellement en
-production. Son verdict fait partie du résultat de l'étape Test.
+production. Son verdict et son rapport restent visibles dans les résultats,
+que la revue soit bloquante ou non.
 
 Déployer en QA ou en production n'est qu'un déploiement : le chemin de
 déploiement n'appelle plus SwiftProof, ne pose plus de garde et n'épingle plus
-les digests. Une revue refusée met l'étape Test en échec, et c'est la transition
-**Test → QA/Deploy** qui décide alors de la suite, avec son propre mode :
-`auto_with_success` s'arrête, `manual` attend, `agent` juge. En mode `auto`,
-qui ne vérifie pas le succès de l'étape précédente, le pipeline poursuit malgré
-le refus — ce mode reste un choix explicite de l'administrateur.
+les digests. Avec **Blocking review** coché, une revue refusée met l'étape
+Test en échec et arrête le pipeline. En décochant cette option, SwiftProof
+s'exécute toujours et conserve son verdict, mais un refus, une demande de revue
+humaine ou une erreur SwiftProof ne fait pas échouer les tests automatisés
+réussis. La transition **Test → QA/Deploy** applique ensuite son mode habituel.
+Un échec des tests automatisés ou une annulation arrête toujours le pipeline.
 
 ## Activer un projet
 
@@ -37,8 +39,9 @@ le refus — ce mode reste un choix explicite de l'administrateur.
    La politique sera lue depuis le commit de production, pas depuis le candidat.
 4. Après ce premier déploiement de la politique, relever et vérifier le SHA Git
    complet réellement en production. Dans **Stacks → Build → Test**, cocher
-   **Run SwiftProof after the automated tests**, renseigner ce SHA initial et
-   enregistrer. Ce SHA ne sert que tant qu'aucune provenance de build ne
+   **Run SwiftProof after the automated tests**, choisir si **Blocking review**
+   doit être coché, renseigner ce SHA initial et enregistrer. Ce SHA ne sert
+   que tant qu'aucune provenance de build ne
    correspond aux images en production ; ensuite la référence est déduite de la
    release que Swarm exécute réellement. SwiftProof ne peut pas déduire le
    commit d'anciennes images sans provenance.
@@ -51,9 +54,10 @@ plutôt qu'un nom d'exception : provenance de build absente, tag de release abse
 du dépôt de l'hôte, `.swiftproof.json` absent du commit de référence, binaire
 absent de l'hôte. Ces messages n'exposent jamais la sortie d'erreur des commandes.
 
-La fonctionnalité est désactivée par défaut sur les projets existants. Le pilote
-GitHub de SwiftProof est informatif ; le contrôle PulsarCD, une fois activé,
-bloque effectivement les déploiements qui ne satisfont pas la politique.
+La fonctionnalité est désactivée par défaut sur les projets existants.
+Le mode bloquant est sélectionné par défaut pour conserver le comportement
+des projets qui ont déjà activé SwiftProof. L'option est indépendante du mode
+de transition et du choix d'utiliser le LLM.
 
 Avec v0.2.0, les signaux `uncovered_change` apparaissent également parmi les
 risques cliquables. La mesure des lignes ajoutées exécutées concerne Go et
@@ -88,7 +92,10 @@ LLM est indisponible.
 ## Décisions et preuves
 
 Dans **Test Logs**, activer SwiftProof place le dernier résultat du projet en
-tête de la modale. Le statut est actualisé toutes les quatre secondes, même
+tête de la modale, avec l'indication **Blocking** ou **Non-blocking**. Le rapport,
+les constats et le téléchargement des preuves restent accessibles dans les deux
+modes, y compris pour un résultat `needs_review`, `blocked` ou `error`.
+Le statut est actualisé toutes les quatre secondes, même
 après la fin des tests. La release et le SHA distinguent cette revue du run de
 tests ouvert. Cliquer sur un constat ouvre ses preuves, les sorties des contrôles
 de référence/candidat et l'extrait des changements aux lignes concernées.
@@ -114,12 +121,16 @@ tests**. Le classement automatique reste disponible si le LLM est indisponible.
 L'API correspondante est `POST /api/stacks/actions/{id}/logs/themes`, avec
 `{"entries":[{"id":"test-1","name":"test_login","file":"tests/auth.py"}]}`.
 
-| Résultat SwiftProof | Étape Test |
-| --- | --- |
-| 0 | Succès ; les autres contrôles de la transition restent applicables |
-| 1 | Échec : problème élevé/critique reproduit |
-| 2 | Échec jusqu'à approbation humaine |
-| 3 ou 4, rapport absent/invalide | Échec : configuration ou exécution à corriger |
+| Résultat SwiftProof | Mode bloquant | Mode non bloquant |
+| --- | --- | --- |
+| 0 | Succès | Succès |
+| 1 | Échec : problème élevé/critique reproduit | Succès des tests conservé, problème visible |
+| 2 | Échec jusqu'à approbation humaine | Succès des tests conservé, demande de revue visible |
+| 3 ou 4, rapport absent/invalide | Échec : configuration ou exécution à corriger | Succès des tests conservé, erreur visible |
+
+Le verdict SwiftProof n'est jamais transformé en approbation par le mode
+non bloquant. Si l'exécution échoue avant de produire un rapport, son motif
+reste visible ; aucune archive de preuves n'est alors disponible.
 
 Pour un code 3 ou 4, le motif affiché nomme le premier contrôle en erreur, son
 code de sortie et sa sortie enregistrée — par exemple `test failed (exit 125) :
@@ -145,6 +156,8 @@ sans `format=json` et avec `download=true` conservent leur format existant.
 Le contrôle d'appartenance au projet et d'intégrité de l'archive s'applique
 également au rapport structuré. Le statut en cours et l'activation restent
 disponibles dans `GET /api/stacks/pipeline/{repo}/transition/build_to_test`.
+Le `PUT` sur cette même route accepte `swiftproof_blocking` (booléen strict,
+`true` par défaut). Modifier seulement le mode de transition conserve ce choix.
 Les projets configurés avant ce déplacement voient leurs réglages migrés
 automatiquement depuis `test_to_deploy` à la lecture de `pipeline_state.json`.
 

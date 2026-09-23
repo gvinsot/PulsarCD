@@ -475,7 +475,8 @@ class PipelineStateManager:
         # that changing only the mode cannot silently disable the review.
         if transition == "build_to_test":
             previous = entry.transition_configs.get(transition, {})
-            for key, default in (("swiftproof_enabled", False), ("swiftproof_reviewer", True), ("swiftproof_initial_baseline", "")):
+            for key, default in (("swiftproof_enabled", False), ("swiftproof_blocking", True),
+                                 ("swiftproof_reviewer", True), ("swiftproof_initial_baseline", "")):
                 new_config[key] = config.get(key, previous.get(key, default))
         # version_to_build supports an optional multi-arch build (uses the
         # heavier docker-container buildx driver, with QEMU emulation when

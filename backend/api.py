@@ -4122,6 +4122,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
             # ── Step 2: Test ──
             test_id = str(uuid.uuid4())[:8]
             test_action = BackgroundAction(test_id, "test", repo_name)
+            test_action.task = asyncio.current_task()
             _background_actions[test_id] = test_action
             _set_pipeline(repo_name, "test", "running", built_version, build_id=build_id, test_id=test_id, deploy_id=None)
 
@@ -4135,33 +4136,51 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
             test_result["host"] = host_name
             test_result["auto_triggered"] = True
             test_action.result = test_result
-            test_action.status = "completed" if test_result.get("success") else "failed"
 
-            if not test_result.get("success"):
+            if not test_result.get("success") or test_action.cancel_event.is_set():
+                test_result["success"] = False
+                test_action.status = "cancelled" if test_action.cancel_event.is_set() else "failed"
                 _set_pipeline(repo_name, "test", "failed", built_version, build_id=build_id, test_id=test_id, deploy_id=None, log_lines=test_action.output_lines)
                 logger.warning("Pipeline: test failed", repo=repo_name)
-                await _notify_agent_failure("test", repo_name, built_version or "", test_result.get("output", ""))
+                if not test_action.cancel_event.is_set():
+                    await _notify_agent_failure("test", repo_name, built_version or "", test_result.get("output", ""))
                 return
 
             # ── SwiftProof review: the closing step of the Test stage ──
-            # A rejection fails the Test stage, so the Test → QA/Deploy
-            # transition applies its own mode to the result like any other
-            # failure: auto_with_success stops, manual waits, agent judges.
+            # Always retain the verdict and evidence. Only a blocking review
+            # changes the test outcome; the default preserves existing projects.
             from . import swiftproof
             if swiftproof.enabled(repo_name):
+                blocking = swiftproof.config(repo_name).get("swiftproof_blocking", True) is not False
                 test_action.append_output("SwiftProof: reviewing the change against production...")
-                proof = await deployer.review(repo_name, ssh_url, built_version or tag or "", test_action.cancel_event)
+                try:
+                    proof = await deployer.review(repo_name, ssh_url, built_version or tag or "", test_action.cancel_event)
+                except Exception as error:
+                    # Repository/transport failures can happen before the review
+                    # worker handles errors. Keep credentials out of the result.
+                    proof = {"status": "error", "code": 4,
+                             "reason": "SwiftProof unavailable: " + type(error).__name__}
+                swiftproof.remember(repo_name, proof)
+                test_result["swiftproof"] = swiftproof.public_result(proof)
+                test_result["swiftproof_blocking"] = blocking
                 passed = proof["status"] in ("passed", "approved")
                 pipeline_state.record_gate(repo_name, "swiftproof", passed, proof["reason"], version=built_version)
-                test_action.append_output("SwiftProof: " + proof["status"] + " — " + proof["reason"])
-                if not passed:
-                    test_action.status = "failed"
+                summary = "SwiftProof: " + proof["status"] + " — " + proof["reason"]
+                if not blocking:
+                    summary += " (non-blocking)"
+                test_action.append_output(summary)
+                test_result["output"] = (test_result.get("output", "") + "\n" + summary).lstrip("\n")
+                if test_action.cancel_event.is_set() or (blocking and not passed):
+                    test_result["success"] = False
+                    test_action.status = "cancelled" if test_action.cancel_event.is_set() else "failed"
                     _set_pipeline(repo_name, "test", "failed", built_version, build_id=build_id, test_id=test_id,
                                   deploy_id=None, log_lines=test_action.output_lines)
-                    logger.warning("Pipeline: SwiftProof rejected the candidate", repo=repo_name, reason=proof["reason"][:200])
-                    await _notify_agent_failure("test", repo_name, built_version or "", proof["reason"])
+                    if not test_action.cancel_event.is_set():
+                        logger.warning("Pipeline: SwiftProof rejected the candidate", repo=repo_name, reason=proof["reason"][:200])
+                        await _notify_agent_failure("test", repo_name, built_version or "", proof["reason"])
                     return
 
+            test_action.status = "completed"
             _set_pipeline(repo_name, "test", "success", built_version, build_id=build_id, test_id=test_id, deploy_id=None, log_lines=test_action.output_lines)
             logger.info("Pipeline: test succeeded", repo=repo_name)
 
@@ -4438,8 +4457,8 @@ async def set_transition_config(repo_name: str, transition: str, request: Reques
     prefixed ``qa.``) before the production deploy.
 
     For build_to_test, accepts the SwiftProof settings: the review runs at the
-    end of the Test stage, so a rejection fails that stage rather than gating
-    the deployment separately.
+    end of the Test stage. ``swiftproof_blocking`` defaults to true; when false,
+    the verdict remains available without failing that stage.
     """
     valid = {"version_to_build", "build_to_test", "test_to_deploy"}
     if transition not in valid:
@@ -4453,7 +4472,7 @@ async def set_transition_config(repo_name: str, transition: str, request: Reques
     if transition == "test_to_deploy":
         cfg["qa_enabled"] = bool(body.get("qa_enabled", False))
     if transition == "build_to_test":
-        for key in ("swiftproof_enabled", "swiftproof_reviewer"):
+        for key in ("swiftproof_enabled", "swiftproof_blocking", "swiftproof_reviewer"):
             if key in body:
                 if type(body[key]) is not bool:
                     return JSONResponse({"error": key + " must be a boolean"}, status_code=400)

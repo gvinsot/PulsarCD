@@ -265,10 +265,11 @@ class TestLogsViewer {
 
     async pollProof() {
         try {
-            const response = await this.request(`/stacks/pipeline/${encodeURIComponent(this.repo)}/transition/test_to_deploy`);
+            const response = await this.request(`/stacks/pipeline/${encodeURIComponent(this.repo)}/transition/build_to_test`);
             const data = await response.json();
             if (this.closed) return;
             this.proofEnabled = !!data.config?.swiftproof_enabled;
+            this.proofBlocking = data.config?.swiftproof_blocking !== false;
             this.proof = data.swiftproof || {};
             this.root.querySelector('.test-proof').hidden = !this.proofEnabled;
             if (this.proofEnabled && this.proof.id && this.proof.status !== 'running' && this.reportId !== this.proof.id) {
@@ -300,11 +301,12 @@ class TestLogsViewer {
         const proof = this.proof || {};
         const toolVersion = this.report?.report?.tool_version || proof.tool_version;
         const findings = this.report?.findings || [];
-        const signature = JSON.stringify([this.proofEnabled, proof, this.reportId, this.proofError]);
+        const signature = JSON.stringify([this.proofEnabled, this.proofBlocking, proof, this.reportId, this.proofError]);
         this.root.querySelector('[data-view="report"]').disabled = !this.report;
         if (signature === this.proofSignature) return;
         this.proofSignature = signature;
-        this.slot('proof').innerHTML = `<div class="test-proof-heading"><div><strong>SwiftProof${toolVersion ? ' ' + this.escape(toolVersion) : ''}</strong> ${this.badge(proof.status || 'pending')}<p class="test-note">Latest project review${proof.release ? ` · ${this.escape(proof.release)}` : ''}${proof.head ? ` · ${this.escape(proof.head.slice(0, 12))}` : ''}. Independent of the selected test run.</p></div>${this.report ? '<button class="btn btn-sm btn-secondary" data-action="download">Download evidence</button>' : ''}</div>
+        this.slot('proof').innerHTML = `<div class="test-proof-heading"><div><strong>SwiftProof${toolVersion ? ' ' + this.escape(toolVersion) : ''}</strong> ${this.badge(proof.status || 'pending')} <span class="test-badge test-badge-neutral">${this.proofBlocking !== false ? 'Blocking' : 'Non-blocking'}</span><p class="test-note">Latest project review${proof.release ? ` · ${this.escape(proof.release)}` : ''}${proof.head ? ` · ${this.escape(proof.head.slice(0, 12))}` : ''}. Independent of the selected test run.</p></div>${this.report ? '<button class="btn btn-sm btn-secondary" data-action="download">Download evidence</button>' : ''}</div>
+            <p class="test-note">${this.proofBlocking !== false ? 'A rejected or unavailable review fails the Test stage and stops the pipeline.' : 'This review is non-blocking: its verdict does not change the automated test result.'}</p>
             <p>${this.escape(proof.reason || 'The deployment review will appear here when SwiftProof runs.')}</p>
             ${this.proofError ? `<p class="test-warning" role="status">${this.escape(this.proofError)}</p>` : ''}
             ${findings.length ? `<p class="test-note">${findings.length} findings / review areas · Select a finding to inspect its evidence and source changes.</p><div class="test-risk-list">${findings.map((finding, index) => `<button class="test-risk" data-finding="${index}"><span>${this.badge(finding.severity)}${finding.status ? ' ' + this.badge(finding.status) : ''}</span><strong>${this.escape(finding.title)}</strong><small>${this.escape(finding.path || finding.kind)}${finding.line ? ':' + finding.line : ''} ↗</small></button>`).join('')}</div>` : this.report ? '<p class="test-note">No structured findings in this report. Consult the full report for coverage and limitations.</p>' : ''}

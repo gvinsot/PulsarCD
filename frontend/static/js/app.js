@@ -5635,11 +5635,13 @@ async function openTransitionConfig(repoName, transition) {
                         </div>
                         <div id="transition-swiftproof-section" class="transition-qa-section start-hidden">
                             <label><input type="checkbox" id="transition-swiftproof-enabled"> Run SwiftProof after the automated tests</label>
+                            <p><label><input type="checkbox" id="transition-swiftproof-blocking"> Blocking review: fail the Test stage if SwiftProof does not approve</label></p>
+                            <p>When unchecked, SwiftProof is non-blocking and does not change the automated test result. Its report remains available in the test results in both modes.</p>
                             <p><label><input type="checkbox" id="transition-swiftproof-reviewer"> Use the LLM configured in PulsarCD</label></p>
                             <label>Initial production commit (full SHA)
                                 <input id="transition-swiftproof-baseline" type="text" maxlength="40" placeholder="40-character SHA" autocomplete="off">
                             </label>
-                            <p>Used only while no build provenance matches the images running in production; afterwards the baseline is the release Swarm actually runs. A rejected review fails the Test stage, so the Test → QA/Deploy transition decides what happens next. The host needs SwiftProof, Docker, a preloaded sandbox test image and a trusted .swiftproof.json policy.</p>
+                            <p>Used only while no build provenance matches the images running in production; afterwards the baseline is the release Swarm actually runs. In blocking mode, a rejected or unavailable review fails the Test stage and stops the pipeline. The host needs SwiftProof, Docker, a preloaded sandbox test image and a trusted .swiftproof.json policy.</p>
                             <p id="transition-swiftproof-status"></p>
                             <div id="transition-swiftproof-actions" hidden>
                                 <button class="btn btn-secondary" data-click="viewSwiftproofReport">Read report</button>
@@ -5691,6 +5693,7 @@ async function openTransitionConfig(repoName, transition) {
         modal.dataset.reviewId = proof.id || '';
         document.getElementById('transition-swiftproof-section').style.display = transition === 'build_to_test' ? '' : 'none';
         document.getElementById('transition-swiftproof-enabled').checked = !!config.swiftproof_enabled;
+        document.getElementById('transition-swiftproof-blocking').checked = config.swiftproof_blocking !== false;
         document.getElementById('transition-swiftproof-reviewer').checked = config.swiftproof_reviewer !== false;
         document.getElementById('transition-swiftproof-baseline').value = config.swiftproof_initial_baseline || '';
         document.getElementById('transition-swiftproof-status').textContent = proof.status ? `${proof.status}: ${proof.reason || ''}` : 'No report yet';
@@ -5768,6 +5771,7 @@ async function saveTransitionConfig() {
         }
         if (transition === 'build_to_test') {
             body.swiftproof_enabled = document.getElementById('transition-swiftproof-enabled').checked;
+            body.swiftproof_blocking = document.getElementById('transition-swiftproof-blocking').checked;
             body.swiftproof_reviewer = document.getElementById('transition-swiftproof-reviewer').checked;
             body.swiftproof_initial_baseline = document.getElementById('transition-swiftproof-baseline').value.trim();
         }

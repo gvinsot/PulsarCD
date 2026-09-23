@@ -36,8 +36,8 @@ def state():
 
 def config(repo):
     # SwiftProof belongs to the Test stage: it runs once the automated suite
-    # passes, and its verdict is part of that stage's outcome. Deploying to QA
-    # or production is only a deployment.
+    # passes. Its verdict affects the outcome only in blocking mode. Deploying
+    # to QA or production is only a deployment.
     return state().get_transition_config(repo, "build_to_test")
 
 

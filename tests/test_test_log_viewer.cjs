@@ -67,6 +67,48 @@ test('SwiftProof shows the recorded tool version, never an assumed installation 
     assert.ok(!legacy.slot('proof').innerHTML.includes('v0.2.0'));
 });
 
+for (const blocking of [undefined, true, false]) {
+    for (const status of ['passed', 'blocked', 'needs_review', 'error']) {
+        test(`SwiftProof report remains visible for ${status} with blocking=${blocking}`, async () => {
+            const { viewer, control } = fixture({ view: 'report' });
+            const report = { markdown: '# Current review\nReview evidence', findings: [{ title: 'Current finding', severity: 'high' }], report: {} };
+            const requestedPaths = [];
+            viewer.request = async path => {
+                requestedPaths.push(path);
+                if (path === '/stacks/pipeline/example/transition/build_to_test') {
+                    return response({ config: { swiftproof_enabled: true, swiftproof_blocking: blocking }, swiftproof: { id: 'current-review', status } });
+                }
+                if (path === '/stacks/pipeline/example/swiftproof/current-review/report?format=json') return response(report);
+                throw new Error(`Unexpected request: ${path}`);
+            };
+            await viewer.pollProof();
+            assert.equal(requestedPaths.length, 2);
+            assert.equal(viewer.proofBlocking, blocking !== false);
+            assert.equal(control('.test-proof').hidden, false);
+            assert.equal(control('[data-view="report"]').disabled, false);
+            assert.equal(viewer.report, report);
+            assert.ok(viewer.slot('proof').innerHTML.includes(blocking === false ? '>Non-blocking<' : '>Blocking<'));
+            assert.ok(viewer.slot('proof').innerHTML.includes('Current finding'));
+            assert.ok(viewer.slot('proof').innerHTML.includes('Open full report'));
+            assert.ok(viewer.slot('proof').innerHTML.includes('Download evidence'));
+            assert.ok(viewer.slot('report').innerHTML.includes('Review evidence'));
+        });
+    }
+}
+
+test('changing SwiftProof blocking mode updates the label without discarding the report', async () => {
+    const { viewer, control } = fixture({ proofEnabled: true, proofBlocking: true,
+        proof: { id: 'current-review', status: 'needs_review' }, reportId: 'current-review', report: priorReport() });
+    viewer.renderProof();
+    assert.ok(viewer.slot('proof').innerHTML.includes('>Blocking<'));
+    viewer.request = async () => response({ config: { swiftproof_enabled: true, swiftproof_blocking: false }, swiftproof: viewer.proof });
+    await viewer.pollProof();
+    assert.ok(viewer.slot('proof').innerHTML.includes('>Non-blocking<'));
+    assert.ok(viewer.slot('proof').innerHTML.includes('does not change the automated test result'));
+    assert.ok(viewer.slot('proof').innerHTML.includes('Previous risk'));
+    assert.equal(control('[data-view="report"]').disabled, false);
+});
+
 test('finding source uses its old/new side when another renamed file shares the path', () => {
     const { viewer } = fixture({ selectedFinding: 0 });
     viewer.report = {

@@ -318,6 +318,35 @@ def test_api_config_rejects_coercion_and_readable_report(client, auth_headers, m
     assert client.post(report_url + "/approve", headers=auth_headers, json={"reason": "Stale"}).status_code == 409
 
 
+@pytest.mark.parametrize("blocking", [True, False])
+def test_api_swiftproof_blocking_roundtrip_and_partial_update(client, auth_headers, manager, monkeypatch, blocking):
+    import backend.api as api
+    monkeypatch.setattr(api, "pipeline_state", manager)
+    url = "/api/stacks/pipeline/demo/transition/build_to_test"
+    assert client.put(url, headers=auth_headers, json={
+        "mode": "auto", "swiftproof_enabled": True, "swiftproof_blocking": blocking,
+    }).status_code == 200
+    assert client.get(url, headers=auth_headers).json()["config"]["swiftproof_blocking"] is blocking
+
+    # Older clients changing only the transition mode must preserve this choice.
+    assert client.put(url, headers=auth_headers, json={"mode": "manual"}).status_code == 200
+    restored = PipelineStateManager(str(manager._path.parent)).get("demo")
+    assert restored.transition_configs["build_to_test"]["swiftproof_blocking"] is blocking
+    assert restored.transition_configs["build_to_test"]["swiftproof_enabled"] is True
+
+
+@pytest.mark.parametrize("invalid", ["false", "true", 0, 1, None, {}, []])
+def test_api_swiftproof_blocking_requires_boolean(client, auth_headers, manager, monkeypatch, invalid):
+    import backend.api as api
+    monkeypatch.setattr(api, "pipeline_state", manager)
+    before = dict(manager.get_transition_config("demo", "build_to_test"))
+    response = client.put("/api/stacks/pipeline/demo/transition/build_to_test", headers=auth_headers,
+                          json={"swiftproof_blocking": invalid})
+    assert response.status_code == 400
+    assert "swiftproof_blocking" in response.json()["error"]
+    assert manager.get_transition_config("demo", "build_to_test") == before
+
+
 def test_report_findings_preserve_recorded_risk_evidence_and_coordinates():
     hypothesis = {"id": "hyp-1", "title": "Authorization bypass", "severity": "critical",
                   "status": "REPRODUCED", "rationale": "Candidate fails the baseline check",
@@ -430,6 +459,159 @@ async def test_pipeline_agent_gate_without_llm_stops(client, manager, monkeypatc
         assert deployer.test.call_args.kwargs["tag"] == "v1.0.1"
     else:
         deployer.test.assert_not_called()
+
+
+@pytest.fixture
+def pipeline_run(client, manager, monkeypatch):
+    """Run the real pipeline with only infrastructure and subprocesses replaced."""
+    import backend.api as api
+    monkeypatch.setattr(api, "pipeline_state", manager)
+    monkeypatch.setattr(api, "_background_actions", {})
+    monkeypatch.setattr(api, "_auto_build_state", {})
+    monkeypatch.setattr(api, "llm_agent", None)
+    notify = AsyncMock()
+    monkeypatch.setattr(api, "_notify_agent_failure", notify)
+    deployer = SimpleNamespace(
+        _ensure_repo_cloned=AsyncMock(return_value=(True, "")),
+        has_build_config=AsyncMock(return_value=True),
+        build=AsyncMock(return_value={"success": True}),
+        test=AsyncMock(), review=AsyncMock(),
+        deploy=AsyncMock(return_value={"success": True}),
+    )
+    monkeypatch.setattr(api, "_get_deployer_and_host", lambda: (deployer, "test-host"))
+    tasks = []
+    create_task = asyncio.create_task
+
+    def capture(coro):
+        task = create_task(coro)
+        tasks.append(task)
+        return task
+
+    monkeypatch.setattr(api.asyncio, "create_task", capture)
+
+    async def run(success=True):
+        async def test(*args, output_callback, **kwargs):
+            output_callback("Automated tests finished")
+            return {"success": success, "output": "Automated tests finished"}
+        deployer.test.side_effect = test
+        assert await api._trigger_pipeline("demo", "git@github.com:owner/demo.git", version="1.0.1")
+        await asyncio.gather(*tasks)
+        return api._background_actions[manager.get("demo").stages["test"].action_id]
+
+    return SimpleNamespace(run=run, deployer=deployer, notify=notify, api=api)
+
+
+@pytest.mark.parametrize("blocking", [True, False, None], ids=["blocking", "advisory", "legacy-default"])
+@pytest.mark.parametrize("code,status", [(0, "passed"), (1, "blocked"), (2, "needs_review"), (3, "error"), (4, "error")])
+async def test_pipeline_swiftproof_mode_preserves_verdict_and_report(
+    client, auth_headers, manager, monkeypatch, identity, pipeline_run, blocking, code, status,
+):
+    config = manager.get_transition_config("demo", "build_to_test")
+    if blocking is None:
+        # Simulate state created before swiftproof_blocking existed.
+        config.pop("swiftproof_blocking", None)
+    else:
+        manager.set_transition_config("demo", "build_to_test", {"mode": "auto", "swiftproof_blocking": blocking})
+    mock_review(monkeypatch, identity, code)
+    observed = []
+
+    async def review(repo, ssh_url, release, cancel_event):
+        action = pipeline_run.api._background_actions[manager.get(repo).stages["test"].action_id]
+        observed.append(action.status)
+        proof = await gate.review(None, repo, release, cancel_event)
+        observed.append(action.status)
+        return proof
+
+    pipeline_run.deployer.review.side_effect = review
+    action = await pipeline_run.run()
+    expected_success = status == "passed" or blocking is False
+    assert observed == ["running", "running"]
+    assert action.status == ("completed" if expected_success else "failed")
+    assert action.result["success"] is expected_success
+    assert action.result["swiftproof_blocking"] is (blocking is not False)
+    proof = action.result["swiftproof"]
+    assert proof["status"] == status
+    assert proof == gate.public_result(gate.read_result(proof["id"]))
+    assert f"SwiftProof: {status}" in action.result["output"]
+    assert "Automated tests finished" in action.result["output"]
+    assert any(f"SwiftProof: {status}" in line for line in action.output_lines)
+    decision, = [decision for decision in manager.get("demo").gates if decision.transition == "swiftproof"]
+    assert decision.approved is (status == "passed")
+    assert decision.reason == proof["reason"]
+    if expected_success:
+        pipeline_run.deployer.deploy.assert_awaited_once()
+        pipeline_run.notify.assert_not_awaited()
+    else:
+        pipeline_run.deployer.deploy.assert_not_awaited()
+        pipeline_run.notify.assert_awaited_once()
+
+    # Both modes keep the actual verdict and review evidence after a restart.
+    restored = PipelineStateManager(str(manager._path.parent)).get("demo")
+    assert restored.swiftproof == proof
+    assert restored.stages["test"].status == ("success" if expected_success else "failed")
+    assert any(f"SwiftProof: {status}" in line for line in restored.stages["test"].last_log)
+    response = client.get(f'/api/stacks/pipeline/demo/swiftproof/{proof["id"]}/report?format=json', headers=auth_headers)
+    assert response.status_code == 200
+    assert response.json()["result"]["status"] == status
+    assert response.json()["report"]["exit_code"] == code
+    assert response.json()["markdown"].startswith("# Evidence")
+
+
+@pytest.mark.parametrize("blocking", [True, False])
+async def test_pipeline_automated_test_failure_still_blocks(manager, pipeline_run, blocking):
+    manager.set_transition_config("demo", "build_to_test", {"mode": "auto", "swiftproof_blocking": blocking})
+    action = await pipeline_run.run(success=False)
+    assert action.status == "failed" and action.result["success"] is False
+    assert manager.get("demo").overall_status == "failed"
+    assert "swiftproof" not in action.result
+    pipeline_run.deployer.review.assert_not_awaited()
+    pipeline_run.deployer.deploy.assert_not_awaited()
+    pipeline_run.notify.assert_awaited_once()
+
+
+async def test_pipeline_disabled_swiftproof_skips_review(manager, pipeline_run):
+    manager.set_transition_config("demo", "build_to_test", {"mode": "auto", "swiftproof_enabled": False})
+    action = await pipeline_run.run()
+    assert action.status == "completed" and action.result["success"] is True
+    assert "swiftproof" not in action.result
+    pipeline_run.deployer.review.assert_not_awaited()
+    pipeline_run.deployer.deploy.assert_awaited_once()
+
+
+@pytest.mark.parametrize("blocking", [True, False])
+async def test_pipeline_swiftproof_transport_failure_keeps_result(manager, pipeline_run, blocking):
+    manager.set_transition_config("demo", "build_to_test", {"mode": "auto", "swiftproof_blocking": blocking})
+    pipeline_run.deployer.review.side_effect = RuntimeError("transport failed with secret-token")
+    action = await pipeline_run.run()
+    assert action.result["success"] is (not blocking)
+    assert action.status == ("failed" if blocking else "completed")
+    assert action.result["swiftproof"]["status"] == "error"
+    assert "RuntimeError" in action.result["swiftproof"]["reason"]
+    assert "secret-token" not in json.dumps(action.result)
+    assert manager.get("demo").swiftproof == action.result["swiftproof"]
+    assert "SwiftProof: error" in action.result["output"]
+    if blocking:
+        pipeline_run.deployer.deploy.assert_not_awaited()
+    else:
+        pipeline_run.deployer.deploy.assert_awaited_once()
+
+
+async def test_pipeline_nonblocking_swiftproof_cancellation_still_stops(manager, pipeline_run):
+    manager.set_transition_config("demo", "build_to_test", {"mode": "auto", "swiftproof_blocking": False})
+
+    async def cancel_review(repo, ssh_url, release, cancel_event):
+        cancel_event.set()
+        return {"status": "error", "reason": "Review cancelled"}
+
+    pipeline_run.deployer.review.side_effect = cancel_review
+    action = await pipeline_run.run()
+    assert action.status == "cancelled"
+    assert action.result["success"] is False
+    assert action.result["swiftproof_blocking"] is False
+    assert action.result["swiftproof"]["reason"] == "Review cancelled"
+    assert manager.get("demo").stages["test"].status == "failed"
+    pipeline_run.deployer.deploy.assert_not_awaited()
+    pipeline_run.notify.assert_not_awaited()
 
 
 @pytest.mark.skipif(not os.environ.get("SWIFTPROOF_TEST_BINARY"), reason="Set SWIFTPROOF_TEST_BINARY for the real CLI integration")
