@@ -1,6 +1,6 @@
 # PulsarCD MCP Servers
 
-PulsarCD exposes two [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) servers that let AI agents interact with the platform.
+PulsarCD exposes three [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) servers that let AI agents interact with the platform.
 
 ## Endpoints
 
@@ -8,6 +8,7 @@ PulsarCD exposes two [MCP (Model Context Protocol)](https://modelcontextprotocol
 |--------|-----|-------------|
 | **Read** | `/ai/mcp` | Read-only tools: inventory, logs, tags, pipeline state, action status, Swarm task states |
 | **Actions** | `/ai/actions/mcp` | Tools that change the deployment: pipeline, build/test/deploy, runtime operations, stack `.env`. **Admin JWT (or the MCP API key) only** |
+| **SwiftProof** | `/ai/swiftproof/mcp` | SwiftProof plans and proofs on demand, **without triggering the CI/CD pipeline**. **Admin JWT (or the MCP API key) only** |
 
 ## Authentication
 
@@ -26,7 +27,7 @@ Both servers accept two token types:
   and rotate it if it ever reaches a log.
 - **JWT token** — the same token the web UI gets after signing in with Google,
   with two conditions:
-  - `/ai/actions/mcp` requires `role == "admin"`. A `viewer` JWT gets
+  - `/ai/actions/mcp` and `/ai/swiftproof/mcp` require `role == "admin"`. A `viewer` JWT gets
     `403 {"error": "Admin role required for this MCP server"}` — its tools change
     what runs on the Swarm. `/ai/mcp` accepts any authenticated role.
   - Revocation is enforced on both mounts: after a role change, a removal from
@@ -38,7 +39,7 @@ Both servers accept two token types:
 
 | Environment variable | Default | Description |
 |---------------------|---------|-------------|
-| `PULSARCD_MCP__ENABLED` | `true` | Enable or disable both MCP servers |
+| `PULSARCD_MCP__ENABLED` | `true` | Enable or disable the MCP servers |
 | `PULSARCD_MCP__API_KEY` | *(auto-generated)* | Set a fixed MCP API key. If empty, a random key is generated at startup and logged |
 
 ## Available Tools
@@ -105,6 +106,26 @@ Both servers accept two token types:
 | `get_stack_env` | List the variables of a stack's `.env` — **keys and value lengths only**. Values are never returned |
 | `set_stack_env` | Patch a stack's `.env` key by key (`updates` / `unset`). Comments, ordering and untouched variables survive |
 
+### SwiftProof server (`/ai/swiftproof/mcp`)
+
+Plans and proofs from [SwiftProof](SWIFTPROOF.md), obtained **without running
+the pipeline**: nothing is built, tagged or deployed, and the pipeline's
+SwiftProof gate (the Test-stage verdict) is left untouched. Jobs run on the
+deployment host with the same worker, sandbox and LLM bridge as the Test-stage
+review, and return a `job_id` at once: poll `swiftproof_get_job`.
+
+| Tool | Description |
+|------|-------------|
+| `swiftproof_status` | Project setup (pipeline review enabled/blocking, LLM choice, initial baseline), last pipeline verdict and recent on-demand jobs |
+| `swiftproof_plan` | `intent` (≤ 64 KiB), optional `base`. The PulsarCD LLM proposes a plan read-only; SwiftProof assesses it with fixed rules. Status `ok` or `flagged` |
+| `swiftproof_prove` | Optional `head` (branch, tag, release or SHA; default: the default branch tip), `base` (default: the commit production runs), `plan_id` (scope drift against a plan) and `reviewer`. Status `passed`, `blocked`, `needs_review` or `error` |
+| `swiftproof_get_job` | Status; once finished, the plan (proposal, assessment, contract, `PLAN.md`) or the proof (findings index with evidence and lines, `plan_drift`, `CONFIDENCE_REPORT.md`) |
+| `swiftproof_list_jobs` | Recent jobs, newest first, optionally for one project |
+| `swiftproof_cancel_job` | Cancel a queued or running job |
+
+`swiftproof_plan`, `swiftproof_prove` and `swiftproof_cancel_job` are on the
+agent denylist: they spend the LLM budget and run repository checks on the host.
+
 ### Two deliberate absences
 
 **There is no shell tool.** `run_command` used to execute arbitrary commands on
@@ -145,6 +166,10 @@ claude mcp add --transport http pulsarcd-read \
 claude mcp add --transport http pulsarcd-actions \
   https://your-host/ai/actions/mcp \
   --header "Authorization: Bearer <your-mcp-api-key>"
+
+claude mcp add --transport http pulsarcd-swiftproof \
+  https://your-host/ai/swiftproof/mcp \
+  --header "Authorization: Bearer <your-mcp-api-key>"
 ```
 
 Use the ASCII-only form of the key: non-ASCII bytes in an HTTP header value are
@@ -182,6 +207,13 @@ rejected by some clients.
 3. `get_pipeline_status(repo_name)` — current stage and its `action_id`; `get_action_logs(action_id)` to read a failure.
 4. After a QA deploy the pipeline stops on a manual gate: promote with `deploy_stack(repo_name, tag=…)`.
 5. `get_service_tasks(service)` — check the rollout converged, then `get_health_summary()` and `search_logs(...)`.
+
+### Plan, implement, prove (no pipeline)
+
+1. `swiftproof_plan(repo_name, intent="<task>")` → poll `swiftproof_get_job(job_id)`; raise flagged categories with a human.
+2. Implement, commit and push a branch.
+3. `swiftproof_prove(repo_name, head="<branch>", plan_id=<plan job_id>)` → poll `swiftproof_get_job`; report reproduced issues, drift and unverified areas.
+4. Ship through the pipeline only once the proof is satisfactory.
 
 ### Roll back
 

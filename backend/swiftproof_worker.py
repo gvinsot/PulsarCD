@@ -140,6 +140,8 @@ def inspect(request):
 
 
 def execute(request):
+    if request.get("action") in ("plan", "prove"):
+        return on_demand(request)
     checkout, binary, policy, identity = inspect(request)
     action = request["action"]
     if action == "inspect":
@@ -150,63 +152,176 @@ def execute(request):
         raise ValueError("Unknown action")
     with tempfile.TemporaryDirectory(prefix="pulsarcd-swiftproof-") as temporary:
         work = Path(temporary)
-        cfg = json.loads(policy)
-        reviewer = cfg.setdefault("reviewer", {})
-        # The provider is inherited from PulsarCD; candidate text cannot select
-        # an endpoint, model, key or bigger investigation budget.
         provider = request.get("provider")
-        reviewer.update(endpoint=provider["endpoint"] if provider else "https://unused.invalid/v1",
-                        model=provider["model"] if provider else "", api_key_env="SWIFTPROOF_JOB_TOKEN")
-        reviewer["max_iterations"] = min(reviewer.get("max_iterations", 20), 20)
-        reviewer["max_generated_tests"] = min(reviewer.get("max_generated_tests", 10), 10)
-        reviewer["timeout_seconds"] = min(reviewer.get("timeout_seconds", 600), 600)
-        reviewer["max_input_bytes"] = min(reviewer.get("max_input_bytes", 131072), 131072)
-        config_file = work / "policy.json"
-        config_file.write_text(json.dumps(cfg), encoding="utf-8")
         output = work / "report"
-        env = {k: v for k, v in os.environ.items() if k.upper() in ("PATH", "HOME", "TMPDIR", "LANG", "DOCKER_HOST", "DOCKER_CONTEXT", "SYSTEMROOT", "WINDIR", "TEMP", "TMP")}
-        if provider:
-            env["SWIFTPROOF_JOB_TOKEN"] = provider["token"]
         args = [str(binary), "review", "--repo", str(checkout), "--base", identity["base"],
-                "--head", identity["head"], "--exact", "--ci", "--config", str(config_file),
+                "--head", identity["head"], "--exact", "--ci", "--config", policy_file(work, policy, provider),
                 "--reviewer=" + ("true" if provider else "false"), "--out", str(output)]
-        with open(work / "run.log", "wb") as log:
-            try:
-                process = subprocess.run(args, stdout=log, stderr=log, env=env, timeout=1800)
-            except subprocess.TimeoutExpired:
-                raise ValueError("SwiftProof did not finish within 30 minutes") from None
-        report_file = output / "confidence-report.json"
-        if not report_file.is_file() or report_file.stat().st_size > LIMIT:
-            raise ValueError("SwiftProof did not produce a bounded report; check binary, policy and sandbox image")
-        report = json.loads(report_file.read_text(encoding="utf-8"))
-        if (report.get("version") != 1 or report.get("exit_code") != process.returncode
-                or report.get("change", {}).get("head_commit") != identity["head"]
-                or report.get("change", {}).get("base_commit") != identity["base"]):
-            raise ValueError("Report does not match the executed comparison")
-        buffer = io.BytesIO()
-        total = 0
-        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-            for path in output.rglob("*"):
-                if path.is_symlink():
-                    raise ValueError("Report artifacts must not contain symlinks")
-                if path.is_file():
-                    total += path.stat().st_size
-                    if total > LIMIT:
-                        raise ValueError("Report artifacts exceed the 8 MiB transfer budget")
-                    archive.write(path, path.relative_to(output).as_posix())
-            # The binary's own console output is what explains a configuration
-            # or execution failure that the report can only point at. Keep a
-            # bounded tail so a noisy run cannot crowd out the evidence.
-            tail = (work / "run.log").read_bytes()[-65536:]
-            if total + len(tail) <= LIMIT:
-                archive.writestr("pulsarcd-run.log", tail)
-        return {"identity": identity, "code": process.returncode, "tool_version": report["tool_version"],
-                "archive": base64.b64encode(buffer.getvalue()).decode()}
+        code = run(args, work, provider)
+        report = confidence_report(output, code, identity)
+        return {"identity": identity, "code": code, "tool_version": report["tool_version"],
+                "archive": archive(output, work)}
 
+
+def policy_file(work, policy, provider):
+    """Write the trusted policy with the provider and budgets PulsarCD imposes."""
+    cfg = json.loads(policy)
+    reviewer = cfg.setdefault("reviewer", {})
+    # The provider is inherited from PulsarCD; candidate text cannot select
+    # an endpoint, model, key or bigger investigation budget.
+    reviewer.update(endpoint=provider["endpoint"] if provider else "https://unused.invalid/v1",
+                    model=provider["model"] if provider else "", api_key_env="SWIFTPROOF_JOB_TOKEN")
+    reviewer["max_iterations"] = min(reviewer.get("max_iterations", 20), 20)
+    reviewer["max_generated_tests"] = min(reviewer.get("max_generated_tests", 10), 10)
+    reviewer["timeout_seconds"] = min(reviewer.get("timeout_seconds", 600), 600)
+    reviewer["max_input_bytes"] = min(reviewer.get("max_input_bytes", 131072), 131072)
+    path = work / "policy.json"
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    return str(path)
+
+
+def run(args, work, provider):
+    env = {k: v for k, v in os.environ.items() if k.upper() in ("PATH", "HOME", "TMPDIR", "LANG", "DOCKER_HOST", "DOCKER_CONTEXT", "SYSTEMROOT", "WINDIR", "TEMP", "TMP")}
+    if provider:
+        env["SWIFTPROOF_JOB_TOKEN"] = provider["token"]
+    with open(work / "run.log", "wb") as log:
+        try:
+            return subprocess.run(args, stdout=log, stderr=log, env=env, timeout=1800).returncode
+        except subprocess.TimeoutExpired:
+            raise ValueError("SwiftProof did not finish within 30 minutes") from None
+
+
+def confidence_report(output, code, identity):
+    report_file = output / "confidence-report.json"
+    if not report_file.is_file() or report_file.stat().st_size > LIMIT:
+        raise ValueError("SwiftProof did not produce a bounded report; check binary, policy and sandbox image")
+    report = json.loads(report_file.read_text(encoding="utf-8"))
+    if (report.get("version") != 1 or report.get("exit_code") != code
+            or report.get("change", {}).get("head_commit") != identity["head"]
+            or report.get("change", {}).get("base_commit") != identity["base"]):
+        raise ValueError("Report does not match the executed comparison")
+    return report
+
+
+def archive(output, work):
+    buffer = io.BytesIO()
+    total = 0
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as bundle:
+        for path in output.rglob("*"):
+            if path.is_symlink():
+                raise ValueError("Report artifacts must not contain symlinks")
+            if path.is_file():
+                total += path.stat().st_size
+                if total > LIMIT:
+                    raise ValueError("Report artifacts exceed the 8 MiB transfer budget")
+                bundle.write(path, path.relative_to(output).as_posix())
+        # The binary's own console output is what explains a configuration
+        # or execution failure that the report can only point at. Keep a
+        # bounded tail so a noisy run cannot crowd out the evidence.
+        tail = (work / "run.log").read_bytes()[-65536:]
+        if total + len(tail) <= LIMIT:
+            bundle.writestr("pulsarcd-run.log", tail)
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
+# ---------------------------------------------------------------------------
+# On-demand plans and proofs (the SwiftProof MCP server)
+# ---------------------------------------------------------------------------
+# These never build, tag or deploy anything and never touch the pipeline gate.
+# They compare whatever commits the host checkout knows about, but the policy
+# always comes from the commit production runs: a candidate cannot weaken the
+# rules it is judged by.
+REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}")
+
+
+def resolve(checkout, ref):
+    """Resolve a branch, tag, release or commit of the host checkout to a full SHA."""
+    if not REF.fullmatch(ref) or ".." in ref or ref.endswith((".lock", "/", ".")):
+        raise ValueError("Invalid Git reference " + repr(ref[:80]))
+    candidates = ["refs/remotes/origin/" + ref, "refs/tags/" + ref]
+    if re.fullmatch(r"\d+\.\d+\.\d+", ref):
+        candidates.append("refs/tags/v" + ref)
+    candidates.append("refs/heads/" + ref)
+    if re.fullmatch(r"[0-9a-fA-F]{7,40}", ref):
+        candidates.append(ref.lower())
+    for candidate in candidates:
+        try:
+            return command("git", "-C", str(checkout), "rev-parse", "--verify", "--quiet", candidate + "^{commit}")
+        except ValueError:
+            continue
+    raise ValueError("Unknown Git reference " + ref + " in the host checkout: push it first")
+
+
+def on_demand(request):
+    action, repo = request["action"], request["repo"]
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", repo) or repo in (".", ".."):
+        raise ValueError("Invalid repository")
+    root = Path.home() / ".local/share/pulsarcd/swiftproof"
+    checkout = Path(request["repos_path"]).expanduser() / repo
+    if not (checkout / ".git").exists():
+        raise ValueError("No checkout of " + repo + " on the deployment host: build the project once first")
+    warnings = []
+    try:
+        command("git", "-C", str(checkout), "fetch", "--quiet", "origin", timeout=300,
+                failure="fetch")
+    except ValueError:
+        warnings.append("git fetch failed on the deployment host: the commits already known to its checkout were used")
+    trusted = released_commit(root, repo, request["stack"], "") or request.get("initial_baseline", "")
+    if not re.fullmatch(r"[0-9a-f]{40}", trusted):
+        raise ValueError("No build provenance matches the images running in production: set the verified"
+                         " production commit as the initial baseline for " + repo)
+    policy = command("git", "-C", str(checkout), "show", trusted + ":.swiftproof.json",
+                     failure="No .swiftproof.json in the production commit " + trusted[:12] + " of " + repo)
+    try:
+        binary = Path(request["binary"]).expanduser().resolve(strict=True)
+    except OSError:
+        raise ValueError("No SwiftProof binary at " + str(request["binary"])
+                         + " on the deployment host: run scripts/install-swiftproof.sh there") from None
+    tip = request.get("head") or ""
+    head = resolve(checkout, tip) if tip else resolve(checkout, "HEAD")
+    identity = {"repo": repo, "action": action, "policy_commit": trusted,
+                "binary_sha256": digest(binary.read_bytes()), "policy_sha256": digest(policy.encode())}
+    provider = request.get("provider")
+    with tempfile.TemporaryDirectory(prefix="pulsarcd-swiftproof-") as temporary:
+        work = Path(temporary)
+        output = work / "report"
+        config_file = policy_file(work, policy, provider)
+        if action == "plan":
+            if not provider:
+                raise ValueError("A plan needs the LLM configured in PulsarCD")
+            usage = command(str(binary), "help", failure="The SwiftProof binary on the deployment host does not run")
+            if "swiftproof plan" not in usage:
+                raise ValueError("The SwiftProof binary on the deployment host has no plan command:"
+                                 " install a release that provides it")
+            intent = request.get("intent", "")
+            if not isinstance(intent, str) or not intent.strip() or len(intent.encode()) > 65536:
+                raise ValueError("A plan needs an intent of at most 64 KiB")
+            (work / "intent.md").write_text(intent, encoding="utf-8")
+            identity.update(base=head, head=head)
+            args = [str(binary), "plan", "--repo", str(checkout), "--base", head, "--ci",
+                    "--config", config_file, "--intent-file", str(work / "intent.md"), "--out", str(output)]
+            code = run(args, work, provider)
+            plan_file = output / "PLAN.json"
+            if code in (0, 2) and (not plan_file.is_file() or plan_file.stat().st_size > LIMIT):
+                raise ValueError("SwiftProof did not produce a bounded plan")
+            output.mkdir(exist_ok=True)
+            return {"identity": identity, "code": code, "warnings": warnings, "archive": archive(output, work)}
+        base = resolve(checkout, request["base"]) if request.get("base") else trusted
+        identity.update(base=base, head=head)
+        args = [str(binary), "review", "--repo", str(checkout), "--base", base, "--head", head,
+                "--exact", "--ci", "--config", config_file,
+                "--reviewer=" + ("true" if provider else "false"), "--out", str(output)]
+        if request.get("plan"):
+            (work / "PLAN.json").write_text(request["plan"], encoding="utf-8")
+            args += ["--plan", str(work / "PLAN.json")]
+        code = run(args, work, provider)
+        report = confidence_report(output, code, identity)
+        return {"identity": identity, "code": code, "tool_version": report["tool_version"],
+                "warnings": warnings, "archive": archive(output, work)}
 
 if __name__ == "__main__":
     try:
-        request = json.loads(sys.stdin.read(1024 * 1024))
+        request = json.loads(sys.stdin.read(2 * 1024 * 1024))
         print(json.dumps({"ok": True, "result": execute(request)}))
     except Exception as error:
         # Never return command stdout/stderr or credentials from a provider.

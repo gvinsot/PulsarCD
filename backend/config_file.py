@@ -84,6 +84,11 @@ DANGEROUS_TOOL_NAMES: List[str] = [
     # deploy runs with.
     "get_stack_env",
     "set_stack_env",
+    # SwiftProof MCP: plans and proofs spend the LLM budget and run the
+    # repository's checks on the deployment host; cancelling aborts one.
+    "swiftproof_plan",
+    "swiftproof_prove",
+    "swiftproof_cancel_job",
 ]
 
 # Any tool whose name contains one of these fragments is treated as dangerous.

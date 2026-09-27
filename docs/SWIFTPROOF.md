@@ -201,10 +201,41 @@ Les détails des interfaces utilisées sont documentés par
 [Docker Buildx](https://docs.docker.com/reference/cli/docker/buildx/imagetools/inspect/)
 et [AsyncSSH](https://asyncssh.readthedocs.io/en/latest/api.html#asyncssh.SSHClientConnection.forward_remote_port).
 
+## Plans et preuves à la demande (MCP SwiftProof)
+
+Le serveur MCP `/ai/swiftproof/mcp` (administrateur ou clé MCP) obtient des
+plans et des preuves **sans déclencher le CI/CD** : aucun build, tag ou
+déploiement, et le verdict SwiftProof du pipeline n'est pas modifié. Les
+outils sont décrits dans [MCP.md](MCP.md#swiftproof-server-aiswiftproofmcp).
+
+- `swiftproof_plan` exécute `swiftproof plan` : le LLM configuré dans PulsarCD
+  simule l'implémentation d'une intention en lecture seule, SwiftProof évalue le
+  plan avec ses règles fixes et écrit `PLAN.json` / `PLAN.md`. Nécessite un
+  binaire qui fournit la commande `plan` (postérieur à v0.4.0) ; sinon l'erreur
+  le dit.
+- `swiftproof_prove` exécute `swiftproof review --exact --ci` entre `base`
+  (par défaut le commit que la production exécute, déduit comme pour le
+  pipeline) et `head` (branche, tag, release ou SHA ; par défaut la branche par
+  défaut). Avec `plan_id`, `--plan` ajoute la dérive de périmètre.
+
+Le dépôt de l'hôte est mis à jour avec `git fetch` (sans modifier sa copie de
+travail) : pousser avant de demander une preuve. La politique `.swiftproof.json`
+est **toujours** lue dans le commit de production, jamais dans le candidat ni la
+`base` demandée. Les mêmes prérequis que la revue du pipeline s'appliquent
+(binaire, image de tests, SHA initial si aucune provenance ne correspond à la
+production), mais l'activation de la revue dans le pipeline n'est pas requise.
+Le choix **Use the LLM configured in PulsarCD** du projet est la valeur par
+défaut de `reviewer`.
+
+Les tâches sont asynchrones (jusqu'à 30 minutes), exécutées une à la fois par
+projet et conservées dans `<data_dir>/swiftproof/jobs/<id>/` avec leur archive
+et son SHA-256. Une tâche en cours lors d'un redémarrage de PulsarCD est
+indiquée `interrupted`.
+
 ## Vérification locale
 
 ```sh
-python -m pytest tests/test_swiftproof.py tests/test_api.py tests/test_security.py tests/test_build_push.py -q
+python -m pytest tests/test_swiftproof.py tests/test_swiftproof_mcp.py tests/test_api.py tests/test_security.py tests/test_build_push.py -q
 python -m pytest tests/test_test_log_themes.py tests/test_test_log_themes_api.py -q
 node --test tests/test_test_log_model.cjs tests/test_test_log_viewer.cjs
 SWIFTPROOF_TEST_BINARY=/chemin/swiftproof python -m pytest tests/test_swiftproof.py -q

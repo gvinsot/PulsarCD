@@ -45,7 +45,8 @@ from .github_service import GitHubService, StackDeployer, close_shared_ssh_clien
 from .actions_queue import actions_queue, ActionType, ActionStatus
 from .pipeline_state import PipelineStateManager, _UNSET
 try:
-    from .mcp_server import mcp_read, mcp_actions, get_mcp_read_app, get_mcp_actions_app
+    from .mcp_server import (mcp_read, mcp_actions, mcp_swiftproof, get_mcp_read_app,
+                             get_mcp_actions_app, get_mcp_swiftproof_app)
     from .mcp_auth import MCPAuthMiddleware
     _mcp_available = True
 except Exception as _mcp_err:
@@ -278,7 +279,8 @@ async def lifespan(app: FastAPI):
     # Log MCP API key for configuration
     if _mcp_available and settings.mcp.enabled:
         logger.info("MCP server enabled")
-        async with mcp_read.session_manager.run(), mcp_actions.session_manager.run():
+        async with (mcp_read.session_manager.run(), mcp_actions.session_manager.run(),
+                    mcp_swiftproof.session_manager.run()):
             yield
     else:
         if not _mcp_available:
@@ -419,7 +421,11 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 #                    container_action, update_service_image, remove_service,
 #                    remove_stack). Every tool added here must also be listed in
 #                    config_file.DANGEROUS_TOOL_NAMES.
+# SwiftProof MCP: /ai/swiftproof/mcp (on-demand plans and proofs; admin only
+#                    because they spend the LLM budget and run repository
+#                    checks on the deployment host).
 if _mcp_available:
+    app.mount("/ai/swiftproof", MCPAuthMiddleware(get_mcp_swiftproof_app(), require_admin=True))
     app.mount("/ai/actions", MCPAuthMiddleware(get_mcp_actions_app(), require_admin=True))
     app.mount("/ai", MCPAuthMiddleware(get_mcp_read_app(), require_admin=False))
 
