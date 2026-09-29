@@ -1269,32 +1269,9 @@ class StackDeployer:
 
     async def _run_ssh_streaming(self, ssh_client, command: str, output_callback=None, cancel_event=None) -> tuple[bool, str]:
         """Run a command via SSH with streaming output support."""
-        # SSH client doesn't support streaming easily, so run and capture
-        # but still check for cancellation periodically
         if cancel_event and cancel_event.is_set():
             return False, "[Cancelled by user]"
-        
-        # Run the SSH command in a task so we can cancel it
-        async def _do_run():
-            return await ssh_client.run_shell_command(command)
-        
-        task = asyncio.create_task(_do_run())
-        
-        while not task.done():
-            if cancel_event and cancel_event.is_set():
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-                return False, "[Cancelled by user]"
-            await asyncio.sleep(0.5)
-        
-        success, output = task.result()
-        if output_callback:
-            for line in output.split('\n'):
-                output_callback(line)
-        return success, output
+        return await ssh_client.run_shell_command_streaming(command, output_callback, cancel_event)
 
     async def has_build_config(self, repo_name: str) -> bool:
         """Check if the repo's docker-compose.swarm.yml contains build: directives."""

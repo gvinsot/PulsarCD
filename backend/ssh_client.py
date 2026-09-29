@@ -338,6 +338,68 @@ class SSHClient:
         output = stdout + stderr if stderr else stdout
         return exit_code == 0, output.strip()
     
+    async def run_shell_command_streaming(self, command: str, output_callback=None,
+                                          cancel_event=None) -> Tuple[bool, str]:
+        """Execute a shell command, calling output_callback for each line as it arrives.
+
+        stderr is merged into stdout. If cancel_event is set the process is
+        terminated. Returns (success, output).
+        """
+        lines: List[str] = []
+
+        def emit(line: str):
+            lines.append(line)
+            if output_callback:
+                output_callback(line)
+
+        if self._is_local:
+            from .config import wrap_command_for_user
+            proc = await asyncio.create_subprocess_shell(
+                wrap_command_for_user(command),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            reader = proc.stdout
+
+            def terminate():
+                proc.terminate()
+
+            async def finish():
+                await proc.wait()
+                return proc.returncode or 0
+        else:
+            conn = await self.connect()
+            proc = await conn.create_process(command, stderr=asyncssh.STDOUT)
+            reader = proc.stdout
+
+            def terminate():
+                proc.terminate()
+
+            async def finish():
+                await proc.wait(check=False)
+                return proc.exit_status or 0
+
+        try:
+            while True:
+                if cancel_event and cancel_event.is_set():
+                    terminate()
+                    emit("[Cancelled by user]")
+                    return False, "\n".join(lines)
+                try:
+                    raw = await asyncio.wait_for(reader.readline(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+                if not raw:
+                    break
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8", errors="replace")
+                emit(raw.rstrip("\r\n"))
+            exit_code = await finish()
+            return exit_code == 0, "\n".join(lines).strip()
+        except asyncio.CancelledError:
+            terminate()
+            raise
+
     async def _run_local_command(self, command: str) -> Tuple[str, str, int]:
         """Execute command locally using asyncio subprocess."""
         from .config import wrap_command_for_user
