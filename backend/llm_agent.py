@@ -1381,12 +1381,13 @@ class LLMAgent:
         # Check if this gate is enabled
         if transition == "build_to_test" and not gates.build_to_test:
             return True, "Gate disabled, auto-approved"
-        if transition == "test_to_deploy" and not gates.test_to_deploy:
+        if transition in ("test_to_deploy", "qa_to_deploy") and not gates.test_to_deploy:
             return True, "Gate disabled, auto-approved"
 
         instruction_map = {
             "build_to_test": gates.on_build_to_test,
             "test_to_deploy": gates.on_test_to_deploy,
+            "qa_to_deploy": gates.on_test_to_deploy,
         }
         specific = instruction_map.get(transition, "")
 

@@ -113,7 +113,7 @@ _VERSION_RE = re.compile(r"^v?\d+(\.\d+){1,2}$")
 _TAG_RE = re.compile(r"^v?\d+(\.\d+){1,2}$")
 _SHA_RE = re.compile(r"^[a-fA-F0-9]{7,40}$")
 
-_VALID_TRANSITIONS = ("version_to_build", "build_to_test", "test_to_deploy")
+_VALID_TRANSITIONS = ("version_to_build", "build_to_test", "test_to_deploy", "qa_to_deploy")
 _VALID_GATE_MODES = ("auto", "auto_with_success", "agent", "manual")
 
 
@@ -1119,17 +1119,17 @@ async def get_pipeline_status(repo_name: Optional[str] = None) -> str:
     description=(
         "Read the gate configuration of a stack: which pipeline transitions are "
         "automatic and which need approval.\n"
-        "Transitions: version_to_build, build_to_test, test_to_deploy.\n"
+        "Transitions: version_to_build, build_to_test, test_to_deploy, qa_to_deploy.\n"
         "Modes: auto (always proceed), auto_with_success (proceed only if the "
         "previous stage succeeded), agent (the LLM agent decides), manual (a "
         "human must approve).\n"
         "test_to_deploy also carries qa_enabled: when true the pipeline deploys "
-        "to the isolated QA environment first and then always waits for a manual "
-        "approval before production.\n"
+        "to the isolated QA environment first (test_to_deploy then governs Test → QA), "
+        "and qa_to_deploy governs QA → production (default manual).\n"
         "build_to_test carries the SwiftProof settings: the review runs at the end "
         "of the Test stage and a rejection fails that stage, so the test_to_deploy "
         "mode then applies to the failure. Deploying is only deploying.\n"
-        "Omit `transition` to get all three, each with its last recorded gate "
+        "Omit `transition` to get all of them, each with its last recorded gate "
         "decision. Check this before assuming a pipeline will run to completion "
         "on its own."
     )
@@ -1277,7 +1277,7 @@ async def trigger_pipeline(
 @mcp_actions.tool(
     description=(
         "Set the gate mode of one pipeline transition.\n"
-        "transition: version_to_build | build_to_test | test_to_deploy\n"
+        "transition: version_to_build | build_to_test | test_to_deploy | qa_to_deploy\n"
         "mode: auto | auto_with_success | agent | manual\n"
         "qa_enabled (test_to_deploy only): run an isolated QA deploy before "
         "production. Omit it to keep the current value — passing false disables "

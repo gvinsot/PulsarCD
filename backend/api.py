@@ -4255,17 +4255,33 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                               log_lines=qa_action.output_lines)
                 logger.info("Pipeline: QA deploy succeeded", repo=repo_name, version=built_version)
 
-                # ── Gate: QA → Deploy (always manual) ──
-                # After a successful QA deploy, production deploy must be triggered
-                # explicitly by the user. Stop here unconditionally.
-                logger.info("Pipeline: qa→deploy manual gate, stopping for user approval", repo=repo_name)
-                pipeline_state.record_gate(repo_name, "qa_to_deploy", False,
-                                           "Manual transition — waiting for user approval after QA",
-                                           version=built_version)
-                _set_pipeline(repo_name, "qa", "gate_rejected", built_version,
-                              build_id=build_id, test_id=test_id, qa_id=qa_id, deploy_id=None,
-                              log_lines=qa_action.output_lines)
-                return
+                # ── Gate: QA → Deploy (configurable, defaults to manual) ──
+                _qd_cfg = pipeline_state.get_transition_config(repo_name, "qa_to_deploy")
+                _qd_mode = _qd_cfg.get("mode", "manual") if _qd_cfg else "manual"
+                _qd_stop_reason = None
+                if _qd_mode == "manual":
+                    _qd_stop_reason = "Manual transition — waiting for user approval after QA"
+                elif _qd_mode == "agent":
+                    if llm_agent:
+                        approved, reason = await llm_agent.evaluate_gate(
+                            "qa_to_deploy", repo_name, built_version or "",
+                            qa_result.get("output", "")
+                        )
+                        pipeline_state.record_gate(repo_name, "qa_to_deploy", approved, reason, version=built_version)
+                        if not approved:
+                            _qd_stop_reason = ""  # already recorded
+                    else:
+                        _qd_stop_reason = "Agent gate unavailable: no LLM configured"
+                # else: "auto" / "auto_with_success" — QA succeeded, proceed to production
+                if _qd_stop_reason is not None:
+                    logger.info("Pipeline: qa→deploy gate stopping", repo=repo_name, mode=_qd_mode)
+                    if _qd_stop_reason:
+                        pipeline_state.record_gate(repo_name, "qa_to_deploy", False, _qd_stop_reason,
+                                                   version=built_version)
+                    _set_pipeline(repo_name, "qa", "gate_rejected", built_version,
+                                  build_id=build_id, test_id=test_id, qa_id=qa_id, deploy_id=None,
+                                  log_lines=qa_action.output_lines)
+                    return
 
             # ── Step 3: Deploy ──
             deploy_id = str(uuid.uuid4())[:8]
@@ -4438,7 +4454,7 @@ async def get_pipeline_status():
 @app.get("/api/stacks/pipeline/{repo_name}/transition/{transition}")
 async def get_transition_config(repo_name: str, transition: str):
     """Get per-project transition config for a specific transition."""
-    valid = {"version_to_build", "build_to_test", "test_to_deploy"}
+    valid = {"version_to_build", "build_to_test", "test_to_deploy", "qa_to_deploy"}
     if transition not in valid:
         return JSONResponse({"error": "Invalid transition"}, status_code=400)
     config = pipeline_state.get_transition_config(repo_name, transition)
@@ -4466,7 +4482,7 @@ async def set_transition_config(repo_name: str, transition: str, request: Reques
     end of the Test stage. ``swiftproof_blocking`` defaults to true; when false,
     the verdict remains available without failing that stage.
     """
-    valid = {"version_to_build", "build_to_test", "test_to_deploy"}
+    valid = {"version_to_build", "build_to_test", "test_to_deploy", "qa_to_deploy"}
     if transition not in valid:
         return JSONResponse({"error": "Invalid transition"}, status_code=400)
     body = await request.json()

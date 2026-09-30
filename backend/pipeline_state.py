@@ -450,7 +450,8 @@ class PipelineStateManager:
 
         Args:
             repo_name: Repository name
-            transition: "version_to_build", "build_to_test" or "test_to_deploy"
+            transition: "version_to_build", "build_to_test", "test_to_deploy" or
+                        "qa_to_deploy" (only used when QA is enabled; default manual)
             config: {"mode": "auto"|"auto_with_success"|"agent"|"manual",
                      "swiftproof_enabled", "swiftproof_reviewer",
                      "swiftproof_initial_baseline" (build_to_test only),
@@ -458,7 +459,7 @@ class PipelineStateManager:
                      "multi_arch": bool (version_to_build only),
                      "platforms": str (version_to_build only, e.g. "linux/amd64,linux/arm64")}
         """
-        valid_transitions = {"version_to_build", "build_to_test", "test_to_deploy"}
+        valid_transitions = {"version_to_build", "build_to_test", "test_to_deploy", "qa_to_deploy"}
         valid_modes = {"auto", "auto_with_success", "agent", "manual"}
         if transition not in valid_transitions:
             return

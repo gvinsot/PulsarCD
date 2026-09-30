@@ -5425,8 +5425,9 @@ function renderStacksList() {
                             ${qaActionId ? `<span class="pipeline-log-btn" data-click="openActionLogs" data-args="${uiArgs(qaActionId, 'QA Deploy Logs', repo.name)}" data-click-stop title="View QA deploy logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>` : ''}
                             ${qaStep === 'running' && qaActionId ? `<span class="pipeline-stop-btn" data-click="cancelAction" data-args="${uiArgs(qaActionId)}" data-click-stop title="Stop QA deploy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="10" height="10"><rect x="6" y="6" width="12" height="12" rx="1"/></svg></span>` : ''}
                         </div>
-                        <span class="pipeline-transition-btn ${_gateArrowClass(pipeline, 'qa', qaStep, deployStep)}" title="QA → Deploy">
+                        <span class="pipeline-transition-btn ${_gateArrowClass(pipeline, 'qa', qaStep, deployStep)}${_transitionModeClass(pipeline, 'qa_to_deploy')}" data-click="openTransitionConfig" data-args="${uiArgs(repo.name, 'qa_to_deploy')}" data-click-stop title="QA → Deploy transition (click to configure)">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                            ${_transitionModeIcon(pipeline, 'qa_to_deploy')}
                         </span>` : ''}
                         <div class="pipeline-step step-${deployStep}" data-click="pipelineStepClick" data-args="${uiArgs(repo.name, repo.ssh_url, 'deploy')}" data-click-stop title="Deploy (prod)${deployStageVersion ? ' — current: ' + escapeHtml(deployStageVersion) : ''}">
                             ${stepIcon(deployStep)}
@@ -5495,7 +5496,7 @@ function showGateDecision(repoName, transition) {
     }
     if (!decision) return;
 
-    const label = transition === 'build_to_test' ? 'Build → Test' : 'Test → Deploy';
+    const label = transition === 'build_to_test' ? 'Build → Test' : transition === 'qa_to_deploy' ? 'QA → Deploy' : 'Test → Deploy';
     const ts = decision.timestamp ? new Date(decision.timestamp).toLocaleString() : '';
 
     const modal = document.getElementById('gate-decision-modal');
@@ -5540,7 +5541,7 @@ function showGateDecision(repoName, transition) {
 // ============== Transition Config Modal ==============
 
 async function openTransitionConfig(repoName, transition) {
-    let label = transition === 'version_to_build' ? 'Version → Build' : transition === 'build_to_test' ? 'Build → Test' : 'Test → Deploy';
+    let label = transition === 'version_to_build' ? 'Version → Build' : transition === 'build_to_test' ? 'Build → Test' : transition === 'qa_to_deploy' ? 'QA → Deploy' : 'Test → Deploy';
     // When QA is enabled on the test_to_deploy transition, the configured mode applies
     // to Test → QA (not Test → Prod) — QA → Prod is always manual.
     if (transition === 'test_to_deploy') {
@@ -5626,9 +5627,8 @@ async function openTransitionConfig(repoName, transition) {
                                         <br><br>
                                         When enabled, the mode selected above applies to the
                                         <strong>Test → QA</strong> transition. The
-                                        <strong>QA → Production</strong> transition is
-                                        <em>always manual</em>: after a successful QA deploy,
-                                        you must explicitly trigger the production deploy.
+                                        <strong>QA → Deploy</strong> transition has its own
+                                        mode (click the arrow between QA and Deploy; manual by default).
                                     </div>
                                 </span>
                             </label>
@@ -5687,7 +5687,7 @@ async function openTransitionConfig(repoName, transition) {
     try {
         const data = await apiGet(`/stacks/pipeline/${encodeURIComponent(repoName)}/transition/${encodeURIComponent(transition)}`);
         const config = (data && data.config) || {};
-        const currentMode = config.mode || 'auto_with_success';
+        const currentMode = config.mode || (transition === 'qa_to_deploy' ? 'manual' : 'auto_with_success');
         const lastDecision = data && data.last_decision;
         const proof = data.swiftproof || {};
         modal.dataset.reviewId = proof.id || '';
