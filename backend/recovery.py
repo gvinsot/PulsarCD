@@ -62,14 +62,25 @@ async def file_operation(deployer, operation, **kwargs):
         raise BackupError("Unable to access recovery files on the build host") from None
 
 
+# Stack env files: devops/.env, and devops/.env.qa whose variables override it
+# for the QA deployment only (see scripts/deploy-service.sh).
+ENV_FILES = {"prod": ".env", "qa": ".env.qa"}
+
+
+def env_resource(repo_name, env="prod"):
+    if env not in ENV_FILES:
+        raise ValueError("Unknown environment: expected 'prod' or 'qa'")
+    return f"{repo_name}/devops/{ENV_FILES[env]}"
+
+
 async def read_env(deployer, resource):
     response = await file_operation(deployer, "read", resource=resource)
     value = response["content"]
     return None if value is None else base64.b64decode(value, validate=True)
 
 
-async def save_env(deployer, repo_name, content, actor="operator"):
-    resource = f"{repo_name}/devops/.env"
+async def save_env(deployer, repo_name, content, actor="operator", env="prod"):
+    resource = env_resource(repo_name, env)
     async with file_lock:
         vault = await asyncio.to_thread(get_vault)
         previous = await read_env(deployer, resource)

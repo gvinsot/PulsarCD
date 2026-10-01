@@ -2091,7 +2091,8 @@ a.btn {
     border-bottom: 1px solid var(--border-color);
 }
 
-.tab-btn {
+.tab-btn,
+.env-tab-btn {
     padding: 8px 16px;
     background: transparent;
     border: none;
@@ -2103,11 +2104,13 @@ a.btn {
     transition: var(--transition);
 }
 
-.tab-btn:hover {
+.tab-btn:hover,
+.env-tab-btn:hover {
     color: var(--text-primary);
 }
 
-.tab-btn.active {
+.tab-btn.active,
+.env-tab-btn.active {
     background: var(--bg-card);
     color: var(--accent-primary);
 }

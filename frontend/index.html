@@ -989,8 +989,14 @@
                             <h2 id="stack-env-title">Edit .env</h2>
                             <button class="modal-close" data-click="closeStackEnvModal">&times;</button>
                         </div>
+                        <!-- Shown when the stack's QA stage is enabled. Not .tab-btn: the
+                             container modal's tab handler drives every .tab-btn. -->
+                        <div id="stack-env-tabs" class="modal-tabs start-hidden">
+                            <button class="env-tab-btn active" data-env="prod" data-click="switchStackEnvTab" data-args='["prod"]'>.env</button>
+                            <button class="env-tab-btn" data-env="qa" data-click="switchStackEnvTab" data-args='["qa"]'>.env.qa (QA overrides)</button>
+                        </div>
                         <div class="modal-body">
-                            <p class="env-help-text">Edit the environment variables for this stack. Each line should be in KEY=VALUE format.</p>
+                            <p id="stack-env-help" class="env-help-text">Edit the environment variables for this stack. Each line should be in KEY=VALUE format.</p>
                             <textarea id="stack-env-content" class="env-editor" placeholder="# Environment variables&#10;KEY=value&#10;ANOTHER_KEY=another_value" spellcheck="false"></textarea>
                         </div>
                         <div class="modal-footer">

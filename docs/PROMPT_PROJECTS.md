@@ -210,6 +210,28 @@ secrets:
 - **Ne définissez pas la même clé à la fois en secret et en variable d’environnement** : une variable d’environnement déjà présente a priorité sur le fichier `/run/secrets/` au chargement.
 
 
+## Environnement QA (`.env.qa`)
+
+Quand l’étape QA est activée, le déploiement QA (stack `qa-<stack>`) lit le **même** `devops/.env` que la production. Les variables `*_HOST` / `*_DOMAIN` contenant un point reçoivent automatiquement le préfixe `qa.` (`app.example.com` → `qa.app.example.com`). Toutes les autres valeurs (base de données, clés, tokens…) sont **celles de la production**.
+
+Pour isoler la QA, créez `devops/.env.qa` (éditeur web : onglet `.env.qa` de la modale `.env`, visible quand la QA est activée ; MCP : `set_stack_env(..., env="qa")`). En déploiement QA uniquement, ce fichier est chargé **par-dessus** `devops/.env` :
+
+- chaque `CLE=valeur` remplace la valeur de `.env` pour la QA ;
+- `CLE=` (sans valeur) vide la variable pour la QA (par exemple, pas de base de données partagée) ;
+- une clé définie dans `.env.qa` est utilisée telle quelle, **sans** préfixe `qa.` automatique ;
+- les clés absentes de `.env.qa` gardent la valeur de `.env`.
+
+```dotenv
+# devops/.env.qa : la QA ne partage pas la base de prod
+APP_DATABASE_CONNECTION_STRING=
+APP_SESSION_KEY=<clé propre à la QA>
+```
+
+Comme `.env`, `.env.qa` ne doit **jamais** être committé : ajoutez `.env.qa` au `.gitignore`. Il est sauvegardé/restauré autour des opérations git et versionné chiffré comme `.env`.
+
+Attention aux secrets Docker : les secrets QA s’appellent `qa-<stack>_<VAR>` et, comme indiqué plus haut, un secret existant est **réutilisé sans mise à jour**. Si un déploiement QA a déjà créé `qa-<stack>_<VAR>` avec la valeur de prod, changer `<VAR>` dans `.env.qa` n’a d’effet qu’après un `docker secret rm qa-<stack>_<VAR>`. Ce n’est pas nécessaire quand la variable est vidée, car aucun secret n’est alors monté.
+
+
 ## Configuration pour Docker Swarm (Stack)
 
 Chaque service doit :

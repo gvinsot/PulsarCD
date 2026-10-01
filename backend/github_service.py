@@ -1137,15 +1137,20 @@ class StackDeployer:
                 await self._run_command(f"mv {q_backup_path} {q_repo_path}")
                 return False, f"Failed to clone repository: {output}"
 
-            # 3. Copy config files from backup (devops/.env, .env, etc.)
+            # 3. Copy config files from backup (devops/.env, devops/.env.qa, .env)
             q_backup_devops_env = _shell_quote_path(f"{backup_path}/devops/.env")
+            q_backup_devops_env_qa = _shell_quote_path(f"{backup_path}/devops/.env.qa")
             q_backup_env = _shell_quote_path(f"{backup_path}/.env")
             q_repo_devops = _shell_quote_path(f"{repo_path}/devops")
             q_repo_devops_env = _shell_quote_path(f"{repo_path}/devops/.env")
+            q_repo_devops_env_qa = _shell_quote_path(f"{repo_path}/devops/.env.qa")
             q_repo_env = _shell_quote_path(f"{repo_path}/.env")
             restore_cmd = f"""
                 if [ -f {q_backup_devops_env} ]; then
                     mkdir -p {q_repo_devops} && cp {q_backup_devops_env} {q_repo_devops_env}
+                fi
+                if [ -f {q_backup_devops_env_qa} ]; then
+                    mkdir -p {q_repo_devops} && cp {q_backup_devops_env_qa} {q_repo_devops_env_qa}
                 fi
                 if [ -f {q_backup_env} ]; then
                     cp {q_backup_env} {q_repo_env}
@@ -1589,11 +1594,12 @@ class StackDeployer:
 
         return result
 
-    async def get_env_file(self, repo_name: str) -> tuple[bool, str]:
+    async def get_env_file(self, repo_name: str, env: str = "prod") -> tuple[bool, str]:
         """Get the content of the .env file for a repository.
 
         Args:
             repo_name: Name of the repository
+            env: "prod" for devops/.env, "qa" for the devops/.env.qa overrides
 
         Returns:
             Tuple of (success, content_or_error)
@@ -1604,20 +1610,26 @@ class StackDeployer:
             logger.warning("Rejected unsafe repository name", error=str(e))
             return False, str(e)
 
-        from .recovery import read_env
+        from .recovery import read_env, env_resource
         from .backup_vault import BackupError
         try:
-            content = await read_env(self, f"{repo_name}/devops/.env")
+            resource = env_resource(repo_name, env)
+        except ValueError as e:
+            return False, str(e)
+        try:
+            content = await read_env(self, resource)
             return True, "" if content is None else content.decode("utf-8")
         except (BackupError, UnicodeError):
             return False, "Unable to read the environment file"
 
-    async def save_env_file(self, repo_name: str, content: str, actor: str = "operator") -> tuple[bool, str]:
+    async def save_env_file(self, repo_name: str, content: str, actor: str = "operator",
+                            env: str = "prod") -> tuple[bool, str]:
         """Save the content of the .env file for a repository.
 
         Args:
             repo_name: Name of the repository
             content: The content to write to the .env file
+            env: "prod" for devops/.env, "qa" for the devops/.env.qa overrides
 
         Returns:
             Tuple of (success, message)
@@ -1630,10 +1642,12 @@ class StackDeployer:
 
         if not isinstance(content, str) or len(content.encode("utf-8")) > 4 * 1024 * 1024:
             return False, "Environment content must be text, at most 4 MiB"
-        from .recovery import save_env
+        from .recovery import save_env, ENV_FILES
         from .backup_vault import BackupError
+        if env not in ENV_FILES:
+            return False, "Unknown environment: expected 'prod' or 'qa'"
         try:
-            revision = await save_env(self, repo_name, content.encode("utf-8"), actor=actor)
+            revision = await save_env(self, repo_name, content.encode("utf-8"), actor=actor, env=env)
             return True, ("File saved and encrypted backup recorded" if revision
                           else "File saved (encrypted backup is disabled)")
         except BackupError as exc:

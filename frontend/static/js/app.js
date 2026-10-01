@@ -5377,7 +5377,7 @@ function renderStacksList() {
                         </svg>
                         <span>Activity</span>
                     </button>
-                    <button class="btn btn-sm btn-ghost" data-click="editStackEnv" data-args="${uiArgs(repo.name)}" title="Edit .env file">
+                    <button class="btn btn-sm btn-ghost" data-click="editStackEnv" data-args="${uiArgs(repo.name, qaEnabled)}" title="${qaEnabled ? 'Edit .env and .env.qa files' : 'Edit .env file'}">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
                             <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
@@ -7840,61 +7840,114 @@ function closeStackOutputModal() {
 
 // ============== Stack Env Editor ==============
 
-async function editStackEnv(repoName) {
+// The modal edits devops/.env and, when the stack's QA stage is enabled,
+// devops/.env.qa in a second tab: the variables it sets override .env for the
+// QA deployment only. Each tab keeps its own buffer, so switching tabs does not
+// lose unsaved edits.
+const STACK_ENV_FILES = {
+    prod: {
+        name: '.env',
+        help: 'Edit the environment variables for this stack. Each line should be in KEY=VALUE format.',
+    },
+    qa: {
+        name: '.env.qa',
+        help: 'Overrides for the QA deployment only. Each KEY=VALUE here replaces the .env value '
+            + 'in the QA stack, verbatim: no automatic "qa." domain prefix. KEY= with no value '
+            + 'blanks it. Variables not listed keep their .env value.',
+    },
+};
+let stackEnvState = null;
+
+async function editStackEnv(repoName, qaEnabled = false) {
     // .env contents are secrets: the backend serves them to admins only.
     if (!isAdmin()) {
         _notifyForbidden(`/stacks/${repoName}/env`);
         return;
     }
-    const modal = document.getElementById('stack-env-modal');
-    const title = document.getElementById('stack-env-title');
+    stackEnvState = { repo: repoName, active: null, files: {} };
+    document.getElementById('stack-env-tabs').style.display = qaEnabled ? '' : 'none';
+    document.getElementById('stack-env-modal').classList.add('active');
+    await switchStackEnvTab('prod');
+}
+
+async function switchStackEnvTab(env) {
+    const state = stackEnvState;
+    if (!state || !STACK_ENV_FILES[env] || state.active === env) return;
     const textarea = document.getElementById('stack-env-content');
     const saveBtn = document.getElementById('stack-env-save');
-    
-    title.textContent = `Edit .env: ${repoName}`;
-    textarea.value = 'Loading...';
-    textarea.disabled = true;
-    saveBtn.dataset.repo = repoName;
-    
-    modal.classList.add('active');
-    
-    // An empty .env and a backend that could not reach the build host look
-    // identical in the editor, and saving over the second one would wipe the
-    // real file, so the failure is shown verbatim and editing stays disabled.
-    const { data, error } = await apiGetOrError(
-        `/stacks/${encodeURIComponent(repoName)}/env`);
-    if (error) {
-        textarea.value = '# Could not read the .env file:\n# ' + error + '\n';
+
+    const leaving = state.files[state.active];
+    if (leaving && !leaving.error) leaving.content = textarea.value;
+    state.active = env;
+
+    document.querySelectorAll('#stack-env-tabs .env-tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.env === env);
+    });
+    document.getElementById('stack-env-title').textContent =
+        `Edit ${STACK_ENV_FILES[env].name}: ${state.repo}`;
+    document.getElementById('stack-env-help').textContent = STACK_ENV_FILES[env].help;
+
+    if (!state.files[env]) {
+        textarea.value = 'Loading...';
         textarea.disabled = true;
         saveBtn.disabled = true;
-        showNotification('error', error);
+        // An empty .env and a backend that could not reach the build host look
+        // identical in the editor, and saving over the second one would wipe the
+        // real file, so the failure is shown verbatim and editing stays disabled.
+        const { data, error } = await apiGetOrError(
+            `/stacks/${encodeURIComponent(state.repo)}/env?env=${env}`);
+        // The modal was reopened, or another tab picked, while this loaded.
+        if (stackEnvState !== state) return;
+        state.files[env] = error
+            ? { error }
+            : { content: data.content || '', saved: data.content || '' };
+        if (error) showNotification('error', error);
+        if (state.active !== env) return;
+    }
+
+    const file = state.files[env];
+    if (file.error) {
+        textarea.value = `# Could not read the ${STACK_ENV_FILES[env].name} file:\n# ${file.error}\n`;
+        textarea.disabled = true;
+        saveBtn.disabled = true;
         return;
     }
-    textarea.value = data.content || '';
+    textarea.value = file.content;
     textarea.disabled = false;
     saveBtn.disabled = false;
     textarea.focus();
 }
 
 async function saveStackEnv() {
-    const modal = document.getElementById('stack-env-modal');
+    const state = stackEnvState;
     const textarea = document.getElementById('stack-env-content');
     const saveBtn = document.getElementById('stack-env-save');
-    const repoName = saveBtn.dataset.repo;
-    
+    if (!state || !state.files[state.active] || state.files[state.active].error) return;
+    const env = state.active;
+    const content = textarea.value;
+
     saveBtn.disabled = true;
     saveBtn.innerHTML = '<span class="btn-loading"></span> Saving...';
-    
+
     try {
-        const result = await apiPut(`/stacks/${encodeURIComponent(repoName)}/env`, {
-            content: textarea.value
-        });
-        
+        const result = await apiPut(
+            `/stacks/${encodeURIComponent(state.repo)}/env?env=${env}`, { content });
+
         // apiPut returns null when the request was refused (403 already
         // reported to the user) or failed to parse.
         if (result && result.success) {
-            showNotification('success', 'File saved successfully');
-            closeStackEnvModal();
+            const file = state.files[env];
+            file.content = file.saved = content;
+            // Stay open while the other tab still holds unsaved edits.
+            const unsaved = Object.entries(state.files).find(
+                ([name, f]) => name !== env && !f.error && f.content !== f.saved);
+            if (unsaved) {
+                showNotification('warning', `${STACK_ENV_FILES[env].name} saved; `
+                    + `${STACK_ENV_FILES[unsaved[0]].name} still has unsaved changes`);
+            } else {
+                showNotification('success', `${STACK_ENV_FILES[env].name} saved successfully`);
+                closeStackEnvModal();
+            }
         } else if (result) {
             showNotification('error', result.message || 'Failed to save file');
         }
@@ -7914,6 +7967,7 @@ async function saveStackEnv() {
 }
 
 function closeStackEnvModal() {
+    stackEnvState = null;
     document.getElementById('stack-env-modal').classList.remove('active');
 }
 
@@ -8303,7 +8357,7 @@ const UI_HANDLERS = Object.freeze({
     sendLLMTest,
     setUserRole, showCommitDiff, showRecentQueries, showRecurringErrorDetail, showStackActivity,
     submitBuild, submitCreateTask, submitDeploy, submitPipeline, submitServiceDeploy,
-    submitTest, switchAgentTab, switchSettingsTab, testLLMConnection, testMCPServer,
+    submitTest, switchAgentTab, switchSettingsTab, switchStackEnvTab, testLLMConnection, testMCPServer,
     toggleBuildSource, toggleDeploySource, toggleMobileMenu, togglePasswordLogin,
     toggleServiceDeploySource, toggleServiceLogsAutoRefresh, toggleServiceStatusAutoRefresh,
     toggleStackExpand, toggleStackSubSection, toggleTaskPreview, toggleTestSource,

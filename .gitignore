@@ -44,6 +44,7 @@ logs/
 # Local config overrides
 config.local.yaml
 .env
+.env.qa
 .env.local
 
 # SSH keys (safety)

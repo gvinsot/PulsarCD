@@ -64,7 +64,7 @@ provoque un échec d'authentification des versions existantes et bloque le relev
   permissions `0600` sur Linux. Les contenus circulent sur stdin, jamais dans
   les arguments de commande. Les retours à la ligne sont préservés.
 - Dès le démarrage, puis toutes les 60 secondes par défaut, un relevé recherche
-  les fichiers nommés exactement `.env` sous le répertoire configuré des dépôts,
+  les fichiers nommés exactement `.env` ou `.env.qa` (surcharges QA) sous le répertoire configuré des dépôts,
   y compris les fichiers à leur racine et dans `devops`. Les répertoires `.git`,
   `node_modules`, `.venv`, `venv` et `__pycache__` sont exclus. Les liens
   symboliques ne sont pas suivis. Une version `observed` est créée si le contenu
@@ -97,8 +97,8 @@ secret dans les listes :
 | Route | Fonction |
 |---|---|
 | `GET /api/admin/recovery/status` | Dernier relevé réussi, erreur éventuelle et nombre de fichiers |
-| `GET /api/admin/recovery/env/{repo}/history` | Les 100 dernières versions de `devops/.env` |
-| `POST /api/admin/recovery/env/{repo}/restore/{revision}` | Restaure une version, en sauvegardant l'état actuel avant écriture |
+| `GET /api/admin/recovery/env/{repo}/history` | Les 100 dernières versions de `devops/.env` (`?env=qa` : `devops/.env.qa`) |
+| `POST /api/admin/recovery/env/{repo}/restore/{revision}` | Restaure une version, en sauvegardant l'état actuel avant écriture (`?env=qa` pour `devops/.env.qa`) |
 
 Une restauration ne redéploie pas automatiquement la stack. Les fichiers SSH
 se restaurent uniquement via l'outil autonome ci-dessous, dans un nouveau dossier.

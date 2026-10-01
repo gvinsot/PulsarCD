@@ -103,8 +103,8 @@ Both servers accept two token types:
 
 | Tool | Description |
 |------|-------------|
-| `get_stack_env` | List the variables of a stack's `.env` — **keys and value lengths only**. Values are never returned |
-| `set_stack_env` | Patch a stack's `.env` key by key (`updates` / `unset`). Comments, ordering and untouched variables survive |
+| `get_stack_env` | List the variables of a stack's `.env` — **keys and value lengths only**. Values are never returned. `env="qa"` lists `.env.qa`, the QA-only overrides |
+| `set_stack_env` | Patch a stack's `.env` key by key (`updates` / `unset`). Comments, ordering and untouched variables survive. `env="qa"` patches `.env.qa`: its keys override `.env` in the QA deployment, verbatim (no `qa.` prefix) |
 
 ### SwiftProof server (`/ai/swiftproof/mcp`)
 

@@ -3672,38 +3672,43 @@ async def cancel_action(action_id: str) -> Dict[str, Any]:
     return {"success": True, "message": "Action cancelled"}
 
 
+# env=prod is devops/.env; env=qa is devops/.env.qa, whose variables override
+# devops/.env for the QA deployment only.
+_ENV_QUERY = Query("prod", pattern="^(prod|qa)$")
+
+
 @app.get("/api/stacks/{repo_name}/env")
-async def get_stack_env(repo_name: str):
-    """Get the .env file content for a stack."""
+async def get_stack_env(repo_name: str, env: str = _ENV_QUERY):
+    """Get the .env (or .env.qa) file content for a stack."""
     if not github_service.is_configured():
         raise HTTPException(status_code=400, detail="GitHub integration not configured")
-    
+
     deployer = StackDeployer(settings.github, None)
-    success, content = await deployer.get_env_file(repo_name)
-    
+    success, content = await deployer.get_env_file(repo_name, env=env)
+
     if not success:
         raise HTTPException(status_code=500, detail=content)
-    
-    return {"content": content, "repo": repo_name}
+
+    return {"content": content, "repo": repo_name, "env": env}
 
 
 @app.put("/api/stacks/{repo_name}/env")
-async def save_stack_env(repo_name: str, request: Request):
-    """Save the .env file content for a stack."""
+async def save_stack_env(repo_name: str, request: Request, env: str = _ENV_QUERY):
+    """Save the .env (or .env.qa) file content for a stack."""
     if not github_service.is_configured():
         raise HTTPException(status_code=400, detail="GitHub integration not configured")
-    
+
     body = await request.json()
     content = body.get("content", "")
-    
+
     deployer = StackDeployer(settings.github, None)
     success, message = await deployer.save_env_file(
-        repo_name, content, actor=getattr(request.state, "user", "operator"))
-    
+        repo_name, content, actor=getattr(request.state, "user", "operator"), env=env)
+
     if not success:
         raise HTTPException(status_code=500, detail=message)
-    
-    return {"success": True, "message": message, "repo": repo_name}
+
+    return {"success": True, "message": message, "repo": repo_name, "env": env}
 
 
 @app.get("/api/admin/recovery/status")
@@ -3713,15 +3718,16 @@ async def recovery_status():
 
 
 @app.get("/api/admin/recovery/env/{repo_name}/history")
-async def env_backup_history(repo_name: str):
+async def env_backup_history(repo_name: str, env: str = _ENV_QUERY):
     from .backup_vault import get_vault, BackupError
     from .github_service import _validate_repo_name
+    from .recovery import env_resource
     try:
         _validate_repo_name(repo_name)
         vault = await asyncio.to_thread(get_vault)
         if vault is None:
             raise HTTPException(503, "Encrypted backup is disabled")
-        versions = await asyncio.to_thread(vault.history, "env", f"{repo_name}/devops/.env")
+        versions = await asyncio.to_thread(vault.history, "env", env_resource(repo_name, env))
         return {"versions": versions}
     except ValueError:
         raise HTTPException(400, "Invalid repository name") from None
@@ -3730,17 +3736,20 @@ async def env_backup_history(repo_name: str):
 
 
 @app.post("/api/admin/recovery/env/{repo_name}/restore/{revision}")
-async def restore_env_backup(repo_name: str, revision: str, request: Request):
+async def restore_env_backup(repo_name: str, revision: str, request: Request,
+                             env: str = _ENV_QUERY):
     from .backup_vault import get_vault, BackupError
     from .github_service import _validate_repo_name
+    from .recovery import env_resource
     try:
         _validate_repo_name(repo_name)
         vault = await asyncio.to_thread(get_vault)
         if vault is None:
             raise HTTPException(503, "Encrypted backup is disabled")
-        content = await asyncio.to_thread(vault.read, "env", f"{repo_name}/devops/.env", revision)
+        content = await asyncio.to_thread(vault.read, "env", env_resource(repo_name, env), revision)
         success, message = await StackDeployer(settings.github).save_env_file(
-            repo_name, content.decode("utf-8"), actor=getattr(request.state, "user", "operator"))
+            repo_name, content.decode("utf-8"), actor=getattr(request.state, "user", "operator"),
+            env=env)
         if not success:
             raise HTTPException(503, message)
         return {"success": True, "message": message}

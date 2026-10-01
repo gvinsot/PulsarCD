@@ -82,7 +82,7 @@ def handle(request):
                 ".git", "node_modules", ".venv", "venv", "__pycache__")
                 and not (Path(directory) / name).is_symlink()]
             for name in files:
-                if name == ".env":
+                if name in (".env", ".env.qa"):
                     relative = (Path(directory) / name).relative_to(root).as_posix()
                     safe_path(root, relative)
                     result.append(relative)

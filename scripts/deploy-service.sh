@@ -13,6 +13,9 @@
 #           This produces a fully isolated environment alongside production
 #           (e.g. https://pulsarteam.io → https://qa.pulsarteam.io,
 #           stack "pulsarcd" → "qa-pulsarcd").
+#           devops/.env.qa, when present, is loaded over devops/.env: its
+#           variables override the production values for the QA stack only
+#           and are used verbatim (no qa. prefix).
 #
 # Arguments:
 #   folder  - Repository folder name (e.g., "Art Retrainer") or full path
@@ -113,14 +116,14 @@ backup_env_files() {
     local repo_path="$1"
     ENV_BACKUP_DIR=$(mktemp -d)
     
-    # Find and backup all .env files
+    # Find and backup all .env files (and the .env.qa QA overrides)
     while IFS= read -r -d '' env_file; do
         local rel_path="${env_file#$repo_path/}"
         local backup_path="$ENV_BACKUP_DIR/$rel_path"
         mkdir -p "$(dirname "$backup_path")"
         cp "$env_file" "$backup_path"
         log_info "Backed up: $rel_path"
-    done < <(find "$repo_path" -name ".env" -type f -print0 2>/dev/null)
+    done < <(find "$repo_path" \( -name ".env" -o -name ".env.qa" \) -type f -print0 2>/dev/null)
 }
 
 # Restore .env files after git operations
@@ -134,7 +137,7 @@ restore_env_files() {
             mkdir -p "$(dirname "$target_path")"
             cp "$backup_file" "$target_path"
             log_info "Restored: $rel_path"
-        done < <(find "$ENV_BACKUP_DIR" -name ".env" -type f -print0 2>/dev/null)
+        done < <(find "$ENV_BACKUP_DIR" \( -name ".env" -o -name ".env.qa" \) -type f -print0 2>/dev/null)
         
         # Cleanup backup directory
         rm -rf "$ENV_BACKUP_DIR"
@@ -471,6 +474,28 @@ else
     set +u
 fi
 
+# QA mode: .env.qa, next to the .env, overrides some of its values for the QA
+# stack only (e.g. a separate database or session key). Variables it sets are
+# explicit QA values, so the qa. domain prefixing below leaves them alone.
+QA_OVERRIDE_KEYS=" "
+if [ "$QA_MODE" = "true" ]; then
+    ENV_QA_FILE=""
+    if [ -f "$DEVOPS_PATH/.env.qa" ]; then
+        ENV_QA_FILE="$DEVOPS_PATH/.env.qa"
+    elif [ -f "$REPO_PATH/.env.qa" ]; then
+        ENV_QA_FILE="$REPO_PATH/.env.qa"
+    fi
+    if [ -n "$ENV_QA_FILE" ]; then
+        log_info "Loading QA overrides from ${ENV_QA_FILE#$REPO_PATH/}..."
+        set +u
+        set -a
+        source "$ENV_QA_FILE"
+        # Key names only: the values are secrets.
+        QA_OVERRIDE_KEYS=" $(sed -nE 's/^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=.*/\2/p' "$ENV_QA_FILE" | sort -u | tr '\n' ' ')"
+        log_info "QA overrides:${QA_OVERRIDE_KEYS% }"
+    fi
+fi
+
 # Export VERSION and STACK_NAME for use in hook scripts
 export DEPLOY_VERSION="$VERSION"
 export DEPLOY_STACK_NAME="$STACK_NAME"
@@ -492,6 +517,11 @@ if [ "$QA_MODE" = "true" ]; then
         local var_name="$1"
         local cur_value="${!var_name:-}"
         if [ -z "$cur_value" ]; then
+            return 0
+        fi
+        # Set explicitly by .env.qa: already the QA value
+        if [[ "$QA_OVERRIDE_KEYS" == *" ${var_name} "* ]]; then
+            log_info "QA: ${var_name} set by .env.qa, not prefixed"
             return 0
         fi
         # Already prefixed? leave it alone

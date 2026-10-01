@@ -1363,6 +1363,8 @@ async def cancel_action(action_id: str) -> str:
 # only legitimate uses are "does KEY exist" and "set KEY to this", which the
 # key listing and the patch below cover without a value ever coming back.
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# prod is devops/.env; qa is devops/.env.qa, the QA-only overrides.
+_ENV_NAMES = ("prod", "qa")
 
 
 def _split_env_line(line: str):
@@ -1431,21 +1433,26 @@ def _patch_env(content: str, updates: Dict[str, str], unset: List[str]):
         "that a set_stack_env write landed. A stack .env holds deployment "
         "secrets and this output ends up in a context window, so there is no "
         "option to reveal them -- read them in the web UI if you must.\n"
+        "env: 'prod' (default) reads devops/.env; 'qa' reads devops/.env.qa, "
+        "whose variables override devops/.env for the QA deployment only "
+        "(used verbatim, without the automatic qa. domain prefix).\n"
         "Change a variable with set_stack_env."
     )
 )
-async def get_stack_env(repo_name: str) -> str:
+async def get_stack_env(repo_name: str, env: str = "prod") -> str:
     """List a stack's .env variables, values redacted."""
     from .api import settings
     from .github_service import StackDeployer
 
+    if env not in _ENV_NAMES:
+        return json.dumps({"error": "env must be 'prod' or 'qa'"})
     try:
         await _resolve_repo(repo_name)
     except ValueError as exc:
         return json.dumps({"error": str(exc)})
 
     deployer = StackDeployer(settings.github, None)
-    success, content = await deployer.get_env_file(repo_name)
+    success, content = await deployer.get_env_file(repo_name, env=env)
     if not success:
         return json.dumps({"error": content})
 
@@ -1459,6 +1466,7 @@ async def get_stack_env(repo_name: str) -> str:
 
     return json.dumps({
         "repo": repo_name,
+        "env": env,
         "variables": variables,
         "count": len(variables),
         "note": "Values are redacted: use set_stack_env to change one.",
@@ -1475,13 +1483,19 @@ async def get_stack_env(repo_name: str) -> str:
         "- unset: [\"KEY\"] deletes those assignments.\n"
         "Values must be single-line and are written verbatim (quote them "
         "yourself if the value needs quotes). Takes effect on the next deploy: "
-        "the running stack is not restarted."
+        "the running stack is not restarted.\n"
+        "- env: 'prod' (default) patches devops/.env; 'qa' patches "
+        "devops/.env.qa, the QA-only overrides (created on first write). A key "
+        "set there replaces the devops/.env value in the QA deployment and is "
+        "used verbatim, without the automatic qa. domain prefix; an empty "
+        "value blanks the variable for QA."
     )
 )
 async def set_stack_env(
     repo_name: str,
     updates: Optional[Dict[str, str]] = None,
     unset: Optional[List[str]] = None,
+    env: str = "prod",
 ) -> str:
     """Patch a stack's .env file, key by key."""
     from .api import settings
@@ -1508,6 +1522,8 @@ async def set_stack_env(
     both = sorted(set(updates) & set(unset))
     if both:
         return json.dumps({"error": f"Keys in both updates and unset: {', '.join(both)}"})
+    if env not in _ENV_NAMES:
+        return json.dumps({"error": "env must be 'prod' or 'qa'"})
 
     try:
         await _resolve_repo(repo_name)
@@ -1515,7 +1531,7 @@ async def set_stack_env(
         return json.dumps({"error": str(exc)})
 
     deployer = StackDeployer(settings.github, None)
-    success, content = await deployer.get_env_file(repo_name)
+    success, content = await deployer.get_env_file(repo_name, env=env)
     if not success:
         return json.dumps({"error": content})
 
@@ -1526,22 +1542,24 @@ async def set_stack_env(
         return json.dumps({
             "success": True,
             "repo": repo_name,
+            "env": env,
             "unchanged": True,
             "message": (f"No variable matched: {', '.join(missing)}" if missing
                         else "Nothing to change"),
         })
 
-    success, message = await deployer.save_env_file(repo_name, new_content, actor="mcp")
+    success, message = await deployer.save_env_file(repo_name, new_content, actor="mcp", env=env)
     if not success:
         return json.dumps({"error": message})
 
     # Keys only: the values are the secrets this tool exists to keep out of the
     # log store.
-    logger.info("MCP stack env patched", repo=repo_name,
+    logger.info("MCP stack env patched", repo=repo_name, env=env,
                 updated=updated, added=added, removed=removed)
     return json.dumps({
         "success": True,
         "repo": repo_name,
+        "env": env,
         "updated": updated,
         "added": added,
         "removed": removed,

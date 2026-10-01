@@ -68,6 +68,7 @@ MUTATING_ROUTES = [
     ("post", "/api/stacks/actions/abc123/cancel"),
     ("post", "/api/agent/action"),
     ("put", "/api/stacks/victim/env"),
+    ("put", "/api/stacks/victim/env?env=qa"),
     ("put", "/api/stacks/pipeline/victim/transition/build"),
     ("delete", "/api/stacks/victim/env"),
     ("patch", "/api/stacks/victim/env"),
@@ -78,6 +79,7 @@ SENSITIVE_GET_ROUTES = [
     "/api/config",
     "/api/config/test",
     "/api/stacks/victim/env",
+    "/api/stacks/victim/env?env=qa",
     "/api/containers/somehost/deadbeef/env",
 ]
 
@@ -1847,11 +1849,15 @@ class TestStackEnvNeverReturnsValues:
                 return [{"name": "myrepo", "owner": "o",
                          "ssh_url": "git@github.com:o/myrepo.git"}]
 
-        async def _get(self, repo_name):
-            return True, state["content"]
+        # devops/.env under "content", devops/.env.qa under "qa".
+        state["qa"] = ""
+        slot = {"prod": "content", "qa": "qa"}
 
-        async def _save(self, repo_name, content, actor="operator"):
-            state["content"] = content
+        async def _get(self, repo_name, env="prod"):
+            return True, state[slot[env]]
+
+        async def _save(self, repo_name, content, actor="operator", env="prod"):
+            state[slot[env]] = content
             return True, "File saved successfully"
 
         monkeypatch.setattr(api_module, "github_service", _Repos())
@@ -1912,3 +1918,21 @@ class TestStackEnvNeverReturnsValues:
         from backend.mcp_server import get_stack_env
         payload = json.loads(await get_stack_env("not-a-stack"))
         assert "Unknown stack" in payload["error"]
+
+    async def test_qa_overrides_are_patched_apart_from_the_env(self, env_file):
+        from backend.mcp_server import get_stack_env, set_stack_env
+        raw = await set_stack_env("myrepo", updates={"PULSARCD_AUTH__PASSWORD": "qa-only-pass"},
+                                  env="qa")
+        payload = json.loads(raw)
+        assert payload["env"] == "qa" and payload["added"] == ["PULSARCD_AUTH__PASSWORD"]
+        assert "qa-only-pass" not in raw
+        assert env_file["qa"] == "PULSARCD_AUTH__PASSWORD=qa-only-pass\n"
+        assert "PULSARCD_AUTH__PASSWORD=hunter2-hunter2" in env_file["content"]
+        listed = json.loads(await get_stack_env("myrepo", env="qa"))
+        assert [v["key"] for v in listed["variables"]] == ["PULSARCD_AUTH__PASSWORD"]
+
+    async def test_an_unknown_env_is_refused(self, env_file):
+        from backend.mcp_server import get_stack_env, set_stack_env
+        assert "env must be" in json.loads(await get_stack_env("myrepo", env="../x"))["error"]
+        payload = json.loads(await set_stack_env("myrepo", updates={"A": "1"}, env="staging"))
+        assert "env must be" in payload["error"]
