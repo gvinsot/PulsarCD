@@ -59,7 +59,11 @@ exit 0
 printf '%s\t' "$@" >> "$DOCKER_LOG"
 printf '\n' >> "$DOCKER_LOG"
 case "$*" in
-  "buildx inspect"*) echo 'Platforms: linux/amd64, linux/arm64*' ;;
+  "buildx inspect"*)
+    printf '%s\\n' 'Name: pulsarcd-multiarch' 'Nodes:' \\
+      'Name: pulsarcd-multiarch0' 'Platforms: linux/amd64, linux/arm64*' ;;
+  "exec buildx_buildkit_pulsarcd-multiarch0 cat /etc/resolv.conf")
+    echo 'nameserver 192.0.2.53' ;;
   "manifest inspect "*) [ "$3" = "$EXISTING_IMAGE" ]; exit $? ;;
   "buildx bake "*)
     allowed=false
@@ -189,6 +193,14 @@ exit 0
                 result, _ = self.run_build(failure=failure)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertNotIn("Build Complete!", result.stdout)
+
+    def test_failed_bake_reports_builder_dns_without_masking_failure(self):
+        result, calls = self.run_build(failure="bake")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("nameserver 192.0.2.53", result.stdout)
+        self.assertIn(["exec", "buildx_buildkit_pulsarcd-multiarch0",
+                       "cat", "/etc/resolv.conf"], calls)
+        self.assertFalse(any("--format" in c for c in calls if c[:2] == ["buildx", "inspect"]))
 
 
 if __name__ == "__main__":

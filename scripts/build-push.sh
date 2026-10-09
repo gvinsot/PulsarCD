@@ -802,7 +802,8 @@ for img in $IMAGES_TO_BUILD; do
             # a long-lived builder can retain obsolete DNS servers.
             log_info "Build host DNS servers:"
             awk '$1 == "nameserver" { print }' /etc/resolv.conf || true
-            docker buildx inspect "$BUILDER_NAME" || true
+            BUILDER_DETAILS=$(docker buildx inspect "$BUILDER_NAME" 2>/dev/null) || true
+            printf '%s\n' "$BUILDER_DETAILS"
             while IFS= read -r node; do
                 [ -n "$node" ] || continue
                 container="buildx_buildkit_${node}"
@@ -811,7 +812,8 @@ for img in $IMAGES_TO_BUILD; do
                     docker exec "$container" cat /etc/resolv.conf 2>/dev/null |
                         awk '$1 == "nameserver" { print }' || true
                 fi
-            done < <(docker buildx inspect "$BUILDER_NAME" --format '{{range .Nodes}}{{println .Name}}{{end}}' 2>/dev/null)
+            done < <(printf '%s\n' "$BUILDER_DETAILS" |
+                awk '/^Nodes:/ { nodes = 1 } nodes && /^Name:/ { print $2 }')
             BUILD_FAILED=true
             break
         fi
