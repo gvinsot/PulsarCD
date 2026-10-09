@@ -797,6 +797,21 @@ for img in $IMAGES_TO_BUILD; do
 
         if ! (cd "$DEVOPS_PATH" && "${BUILDX_CMD[@]}"); then
             log_error "Multi-arch build failed for $BASE_IMAGE!"
+            # Registry metadata is fetched by buildkitd itself, before any
+            # Dockerfile RUN. Show its resolver separately from the host's;
+            # a long-lived builder can retain obsolete DNS servers.
+            log_info "Build host DNS servers:"
+            awk '$1 == "nameserver" { print }' /etc/resolv.conf || true
+            docker buildx inspect "$BUILDER_NAME" || true
+            while IFS= read -r node; do
+                [ -n "$node" ] || continue
+                container="buildx_buildkit_${node}"
+                if docker container inspect "$container" >/dev/null 2>&1; then
+                    log_info "Local builder $node DNS servers:"
+                    docker exec "$container" cat /etc/resolv.conf 2>/dev/null |
+                        awk '$1 == "nameserver" { print }' || true
+                fi
+            done < <(docker buildx inspect "$BUILDER_NAME" --format '{{range .Nodes}}{{println .Name}}{{end}}' 2>/dev/null)
             BUILD_FAILED=true
             break
         fi
