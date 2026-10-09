@@ -1398,25 +1398,6 @@ class StackDeployer:
     async def deploy(self, repo_name: str, ssh_url: str, version: str = "1.0",
                     tag: str = None, qa: bool = False,
                     output_callback=None, cancel_event=None) -> Dict[str, Any]:
-        from . import swiftproof
-        async with swiftproof.deployment_lock(repo_name):
-            return await self._deploy(repo_name, ssh_url, version, tag, qa, output_callback, cancel_event)
-
-    async def review(self, repo_name, ssh_url, version, cancel_event=None):
-        from . import swiftproof
-        if not swiftproof.enabled(repo_name):
-            return {"status": "disabled", "reason": "SwiftProof is disabled for this project"}
-        async with swiftproof.deployment_lock(repo_name):
-            _validate_repo_name(repo_name)
-            _validate_ssh_url(ssh_url)
-            success, _ = await self._ensure_repo_cloned(repo_name, ssh_url)
-            if not success:
-                return {"status": "error", "reason": "Cannot prepare repository for SwiftProof"}
-            return await swiftproof.review(self, repo_name, version, cancel_event)
-
-    async def _deploy(self, repo_name: str, ssh_url: str, version: str = "1.0",
-                      tag: str = None, qa: bool = False,
-                      output_callback=None, cancel_event=None) -> Dict[str, Any]:
         """Deploy a stack from a repository.
 
         Args:
@@ -1474,8 +1455,7 @@ class StackDeployer:
                 result["output"] = clone_msg
                 return result
 
-            # Run deploy script. SwiftProof runs in the Test stage; deploying
-            # to QA or production is only a deployment.
+            # Run deploy script
             repos_path = self.config.repos_path
             scripts_path = f"{repos_path}/PulsarCD/scripts"
             repo_path = f"{repos_path}/{repo_name}"

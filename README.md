@@ -648,8 +648,7 @@ handler, so a route added later is protected by default:
   `/api/stacks/test-permissions/...` and `/api/github/check-access`.
   `GET /api/hosts` returns only host names to a viewer, and the full
   hostname/port/username triple to an admin;
-- the MCP actions server (`/ai/actions/mcp`) and the SwiftProof MCP server
-  (`/ai/swiftproof/mcp`, on-demand plans and proofs) require `role == "admin"`.
+- the MCP actions server (`/ai/actions/mcp`) requires `role == "admin"`.
 
 Adding a POST to the read-only allowlist means asserting it triggers no side effect
 at all - no background job, no LLM agent run, no remote command.
@@ -896,11 +895,6 @@ script when updating the build host's checkout.
    ```
 
 ## Contributing
-
-For an optional evidence-based review that closes the Test stage, using the
-existing LLM configuration, see [SwiftProof integration](docs/SWIFTPROOF.md).
-Plans and proofs can also be requested on demand, without running the
-pipeline, through the SwiftProof MCP server (`/ai/swiftproof/mcp`).
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 

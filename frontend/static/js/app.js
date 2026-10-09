@@ -5633,28 +5633,6 @@ async function openTransitionConfig(repoName, transition) {
                                 </span>
                             </label>
                         </div>
-                        <div id="transition-swiftproof-section" class="transition-qa-section start-hidden">
-                            <label><input type="checkbox" id="transition-swiftproof-enabled"> Run SwiftProof after the automated tests</label>
-                            <p><label><input type="checkbox" id="transition-swiftproof-blocking"> Blocking review: fail the Test stage if SwiftProof does not approve</label></p>
-                            <p>When unchecked, SwiftProof is non-blocking and does not change the automated test result. Its report remains available in the test results in both modes.</p>
-                            <p><label><input type="checkbox" id="transition-swiftproof-reviewer"> Use the LLM configured in PulsarCD</label></p>
-                            <label>Initial production commit (full SHA)
-                                <input id="transition-swiftproof-baseline" type="text" maxlength="40" placeholder="40-character SHA" autocomplete="off">
-                            </label>
-                            <p>Used only while no build provenance matches the images running in production; afterwards the baseline is the release Swarm actually runs. In blocking mode, a rejected or unavailable review fails the Test stage and stops the pipeline. The host needs SwiftProof, Docker, a preloaded sandbox test image and a trusted .swiftproof.json policy.</p>
-                            <p id="transition-swiftproof-status"></p>
-                            <div id="transition-swiftproof-actions" hidden>
-                                <button class="btn btn-secondary" data-click="viewSwiftproofReport">Read report</button>
-                                <button class="btn btn-secondary" data-click="downloadSwiftproofReport">Download evidence</button>
-                                <button class="btn btn-secondary" data-click="retrySwiftproofReport">Require a new review on next test run</button>
-                                <div id="transition-swiftproof-approval" hidden>
-                                    <label>Review decision <input id="transition-swiftproof-reason" maxlength="2000" placeholder="Explain why deployment is acceptable"></label>
-                                    <button class="btn btn-primary" data-click="approveSwiftproofReport">Approve this report</button>
-                                    <p>Approval applies only to these commits and image digests. Deploy explicitly after approval.</p>
-                                </div>
-                            </div>
-                            <pre id="transition-swiftproof-report" hidden></pre>
-                        </div>
                         <div id="transition-ai-logs-section" class="transition-ai-logs-section start-hidden">
                             <div class="section-caption">Last AI Decision</div>
                             <div id="transition-ai-decision-info" class="decision-info decision-info-compact">
@@ -5689,18 +5667,6 @@ async function openTransitionConfig(repoName, transition) {
         const config = (data && data.config) || {};
         const currentMode = config.mode || (transition === 'qa_to_deploy' ? 'manual' : 'auto_with_success');
         const lastDecision = data && data.last_decision;
-        const proof = data.swiftproof || {};
-        modal.dataset.reviewId = proof.id || '';
-        document.getElementById('transition-swiftproof-section').style.display = transition === 'build_to_test' ? '' : 'none';
-        document.getElementById('transition-swiftproof-enabled').checked = !!config.swiftproof_enabled;
-        document.getElementById('transition-swiftproof-blocking').checked = config.swiftproof_blocking !== false;
-        document.getElementById('transition-swiftproof-reviewer').checked = config.swiftproof_reviewer !== false;
-        document.getElementById('transition-swiftproof-baseline').value = config.swiftproof_initial_baseline || '';
-        document.getElementById('transition-swiftproof-status').textContent = proof.status ? `${proof.status}: ${proof.reason || ''}` : 'No report yet';
-        document.getElementById('transition-swiftproof-actions').hidden = !proof.id;
-        document.getElementById('transition-swiftproof-approval').hidden = proof.status !== 'needs_review';
-        document.getElementById('transition-swiftproof-reason').value = '';
-        document.getElementById('transition-swiftproof-report').hidden = true;
 
         // Select current mode
         document.querySelectorAll('#transition-mode-options input[name="transition-mode"]').forEach(r => {
@@ -5769,12 +5735,6 @@ async function saveTransitionConfig() {
             const qaCb = document.getElementById('transition-qa-enabled');
             body.qa_enabled = !!(qaCb && qaCb.checked);
         }
-        if (transition === 'build_to_test') {
-            body.swiftproof_enabled = document.getElementById('transition-swiftproof-enabled').checked;
-            body.swiftproof_blocking = document.getElementById('transition-swiftproof-blocking').checked;
-            body.swiftproof_reviewer = document.getElementById('transition-swiftproof-reviewer').checked;
-            body.swiftproof_initial_baseline = document.getElementById('transition-swiftproof-baseline').value.trim();
-        }
         await pipelineRequest(`/stacks/pipeline/${encodeURIComponent(repoName)}/transition/${encodeURIComponent(transition)}`, 'PUT', body);
         modal.classList.remove('active');
         // Refresh stacks view to reflect new config
@@ -5787,56 +5747,12 @@ async function saveTransitionConfig() {
     }
 }
 
-function swiftproofReportURL() {
-    const modal = document.getElementById('transition-config-modal');
-    return `/stacks/pipeline/${encodeURIComponent(modal.dataset.repo)}/swiftproof/${encodeURIComponent(modal.dataset.reviewId)}`;
-}
-
 async function pipelineRequest(endpoint, method, body) {
     const response = await fetch(API_BASE + endpoint, { method,
         headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || result.detail || `HTTP ${response.status}`);
     return result;
-}
-
-async function viewSwiftproofReport() {
-    try {
-        const response = await fetch(API_BASE + swiftproofReportURL() + '/report', { headers: authHeaders() });
-        if (!response.ok) throw new Error('Report unavailable');
-        const report = document.getElementById('transition-swiftproof-report');
-        report.textContent = await response.text();
-        report.hidden = false;
-    } catch (error) { alert(error.message); }
-}
-
-async function downloadSwiftproofReport() {
-    try {
-        const response = await fetch(API_BASE + swiftproofReportURL() + '/report?download=true', { headers: authHeaders() });
-        if (!response.ok) throw new Error('Report unavailable');
-        const url = URL.createObjectURL(await response.blob());
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = 'swiftproof-evidence.zip';
-        link.click();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch (error) { alert(error.message); }
-}
-
-async function approveSwiftproofReport() {
-    const modal = document.getElementById('transition-config-modal');
-    try {
-        await pipelineRequest(swiftproofReportURL() + '/approve', 'POST', { reason: document.getElementById('transition-swiftproof-reason').value });
-        await openTransitionConfig(modal.dataset.repo, 'test_to_deploy');
-    } catch (error) { alert(error.message); }
-}
-
-async function retrySwiftproofReport() {
-    const modal = document.getElementById('transition-config-modal');
-    try {
-        await pipelineRequest(swiftproofReportURL() + '/retry', 'POST', {});
-        await openTransitionConfig(modal.dataset.repo, 'test_to_deploy');
-    } catch (error) { alert(error.message); }
 }
 
 // ============== Pipeline Modal (Version → Build → Test → Deploy) ==============
@@ -8352,7 +8268,7 @@ const UI_HANDLERS = Object.freeze({
     refreshContainerEnv, refreshContainerLogs, refreshContainers, refreshDashboard,
     refreshLogsSearch, refreshServiceLogs, refreshServiceStatus, refreshStacks,
     removeDeployedStack, removeMCPServer, removeService, saveSettings, saveSettingsFromAgent,
-    saveStackEnv, saveTransitionConfig, viewSwiftproofReport, downloadSwiftproofReport, approveSwiftproofReport, retrySwiftproofReport, searchHttpErrors, selectBuildTag, selectDeployTag,
+    saveStackEnv, saveTransitionConfig, searchHttpErrors, selectBuildTag, selectDeployTag,
     selectPipelineCommit, selectPipelineTag, selectServiceDeployTag, selectTestTag, selectUsageStack,
     sendLLMTest,
     setUserRole, showCommitDiff, showRecentQueries, showRecurringErrorDetail, showStackActivity,

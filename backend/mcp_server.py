@@ -1,10 +1,8 @@
 """MCP (Model Context Protocol) servers for PulsarCD.
 
-Exposes PulsarCD functionality as MCP tools for AI agents via three servers:
-- mcp_read:       read-only tools mounted at /ai/mcp
-- mcp_actions:    build/deploy tools mounted at /ai/actions/mcp
-- mcp_swiftproof: on-demand SwiftProof plans and proofs mounted at
-                  /ai/swiftproof/mcp, which never trigger the CI/CD pipeline
+Exposes PulsarCD functionality as MCP tools for AI agents via two servers:
+- mcp_read:    read-only tools mounted at /ai/mcp
+- mcp_actions: build/deploy tools mounted at /ai/actions/mcp
 """
 
 import asyncio
@@ -76,33 +74,6 @@ mcp_actions = FastMCP(
     stateless_http=True,
     json_response=True,
 )
-
-mcp_swiftproof = FastMCP(
-    name="PulsarCD SwiftProof",
-    instructions=(
-        "SwiftProof plans and proofs on demand, without triggering the CI/CD "
-        "pipeline: nothing is built, tagged or deployed, and the pipeline's "
-        "SwiftProof gate is left untouched.\n\n"
-        "1. swiftproof_plan(repo_name, intent) before writing code: the LLM "
-        "configured in PulsarCD proposes a plan read-only, SwiftProof assesses "
-        "it with fixed rules (critical paths, exported signatures, dependency "
-        "manifests, regression risk).\n"
-        "2. Implement, commit and push.\n"
-        "3. swiftproof_prove(repo_name, head='<branch|tag|sha>', plan_id=...) "
-        "compares the pushed commit with what production runs, runs the "
-        "project's checks in the SwiftProof sandbox and returns the evidence; "
-        "with plan_id it also reports the scope drift against the plan.\n\n"
-        "Both return a job_id immediately: poll swiftproof_get_job(job_id) "
-        "until status is no longer queued/running (a proof can take up to 30 "
-        "minutes). The policy is always read from the production commit, so a "
-        "candidate cannot weaken the rules it is judged by. A passed proof is "
-        "not an approval and a flagged plan is not a defect: report findings, "
-        "reproduced issues and unverified areas as they are."
-    ),
-    stateless_http=True,
-    json_response=True,
-)
-
 
 # ---------------------------------------------------------------------------
 # Shared validation and repo resolution
@@ -1126,9 +1097,6 @@ async def get_pipeline_status(repo_name: Optional[str] = None) -> str:
         "test_to_deploy also carries qa_enabled: when true the pipeline deploys "
         "to the isolated QA environment first (test_to_deploy then governs Test → QA), "
         "and qa_to_deploy governs QA → production (default manual).\n"
-        "build_to_test carries the SwiftProof settings: the review runs at the end "
-        "of the Test stage and a rejection fails that stage, so the test_to_deploy "
-        "mode then applies to the failure. Deploying is only deploying.\n"
         "Omit `transition` to get all of them, each with its last recorded gate "
         "decision. Check this before assuming a pipeline will run to completion "
         "on its own."
@@ -1281,9 +1249,7 @@ async def trigger_pipeline(
         "mode: auto | auto_with_success | agent | manual\n"
         "qa_enabled (test_to_deploy only): run an isolated QA deploy before "
         "production. Omit it to keep the current value — passing false disables "
-        "QA. Read the current setting with get_transition_config first.\n"
-        "The SwiftProof settings on build_to_test are not editable here and keep "
-        "their value when the mode changes; use the web interface to change them."
+        "QA. Read the current setting with get_transition_config first."
     )
 )
 async def set_transition_config(
@@ -1710,168 +1676,6 @@ async def remove_stack(stack_name: str, host: Optional[str] = None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# SwiftProof on demand (mcp_swiftproof)
-# ---------------------------------------------------------------------------
-_GIT_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
-
-
-def _check_ref(name: str, value: Optional[str]) -> Optional[str]:
-    value = (value or "").strip() or None
-    if value and (not _GIT_REF_RE.match(value) or ".." in value):
-        raise ValueError(f"{name} must be a branch, tag, release or commit SHA, got '{value[:80]}'")
-    return value
-
-
-async def _canonical_repo(repo_name: str) -> str:
-    """Return the registered spelling of a starred repo (raises when unknown)."""
-    from .api import github_service
-
-    await _resolve_repo(repo_name)
-    repos = await github_service.get_starred_repos()
-    wanted = repo_name.strip().lower()
-    return next(r["name"] for r in repos if (r.get("name") or "").lower() == wanted)
-
-
-def _json_error(exc: Exception) -> str:
-    return json.dumps({"error": str(exc) if isinstance(exc, ValueError) else type(exc).__name__})
-
-
-@mcp_swiftproof.tool(
-    description=(
-        "Show a project's SwiftProof setup and latest results: whether the "
-        "pipeline review is enabled/blocking, the LLM reviewer choice, the "
-        "initial production baseline, the last pipeline verdict and the recent "
-        "on-demand plans and proofs."
-    )
-)
-async def swiftproof_status(repo_name: str) -> str:
-    from . import swiftproof, swiftproof_jobs
-
-    try:
-        repo = await _canonical_repo(repo_name)
-        cfg = swiftproof.config(repo)
-        entry = swiftproof.state().get_or_create(repo)
-        return json.dumps({
-            "repo": repo,
-            "pipeline_review_enabled": cfg.get("swiftproof_enabled", False) is True,
-            "pipeline_review_blocking": cfg.get("swiftproof_blocking", True) is not False,
-            "use_pulsarcd_llm": cfg.get("swiftproof_reviewer", True) is not False,
-            "initial_baseline": cfg.get("swiftproof_initial_baseline", ""),
-            "last_pipeline_review": entry.swiftproof,
-            "recent_jobs": swiftproof_jobs.listing(repo, 10),
-        }, default=str)
-    except Exception as exc:
-        return _json_error(exc)
-
-
-@mcp_swiftproof.tool(
-    description=(
-        "Plan a change before writing it, without running the pipeline. The "
-        "LLM configured in PulsarCD reads the repository (read-only, nothing "
-        "executes) and proposes the files, symbols and dependencies it would "
-        "change; SwiftProof assesses that plan with fixed rules and flags "
-        "critical parts, architecture changes and regression risk.\n\n"
-        "intent: the change to plan (task description, acceptance criteria), "
-        "max 64 KiB. base: branch, tag or commit to plan from (default: the "
-        "default branch tip of the deployment host's checkout, fetched first).\n"
-        "Returns a job_id: poll swiftproof_get_job. Status 'ok' or 'flagged'; "
-        "pass the job_id as plan_id to swiftproof_prove to check scope drift. "
-        "Needs a SwiftProof binary with the plan command."
-    )
-)
-async def swiftproof_plan(repo_name: str, intent: str, base: Optional[str] = None) -> str:
-    from . import swiftproof_jobs
-
-    try:
-        repo = await _canonical_repo(repo_name)
-        deployer, _ = _get_deployer_and_host()
-        job = await swiftproof_jobs.start(deployer, repo, "plan", intent=intent, head=_check_ref("base", base))
-        logger.info("MCP SwiftProof plan started", repo=repo, job_id=job["id"])
-        return json.dumps(dict(job, job_id=job["id"]), default=str)
-    except Exception as exc:
-        return _json_error(exc)
-
-
-@mcp_swiftproof.tool(
-    description=(
-        "Produce SwiftProof proofs for a commit without running the pipeline: "
-        "no build, tag or deploy, and the pipeline gate is unchanged. "
-        "SwiftProof compares head with base in its sandbox, runs the project's "
-        "configured checks on both, investigates with the PulsarCD LLM and "
-        "keeps the evidence.\n\n"
-        "head: branch, tag, release or commit SHA to prove (default: the "
-        "default branch tip; the host checkout is fetched first, so push "
-        "before calling). base: what to compare against (default: the commit "
-        "production runs). plan_id: a plan job to check scope drift against. "
-        "reviewer: use the PulsarCD LLM (default: the project's setting).\n"
-        "Returns a job_id: poll swiftproof_get_job. Status passed (exit 0), "
-        "blocked (1, reproduced high/critical issue), needs_review (2) or "
-        "error (3/4)."
-    )
-)
-async def swiftproof_prove(
-    repo_name: str,
-    head: Optional[str] = None,
-    base: Optional[str] = None,
-    plan_id: Optional[str] = None,
-    reviewer: Optional[bool] = None,
-) -> str:
-    from . import swiftproof_jobs
-
-    try:
-        repo = await _canonical_repo(repo_name)
-        deployer, _ = _get_deployer_and_host()
-        job = await swiftproof_jobs.start(
-            deployer, repo, "prove", head=_check_ref("head", head), base=_check_ref("base", base),
-            plan_id=(plan_id or "").strip() or None, reviewer=reviewer)
-        logger.info("MCP SwiftProof proof started", repo=repo, job_id=job["id"])
-        return json.dumps(dict(job, job_id=job["id"]), default=str)
-    except Exception as exc:
-        return _json_error(exc)
-
-
-@mcp_swiftproof.tool(
-    description=(
-        "Get a SwiftProof plan or proof job. While queued/running it returns "
-        "the status only. When finished: for a plan, the proposal, the "
-        "deterministic assessment and contract, and PLAN.md; for a proof, the "
-        "verdict, the findings index (hypotheses, signals, review targets, "
-        "unverified areas, with their evidence and file/line), the scope drift "
-        "when a plan was given, and CONFIDENCE_REPORT.md. "
-        "include_markdown=false returns the structured data only."
-    )
-)
-async def swiftproof_get_job(job_id: str, include_markdown: bool = True) -> str:
-    from . import swiftproof_jobs
-
-    try:
-        return json.dumps(swiftproof_jobs.result(job_id.strip(), include_markdown), default=str)
-    except Exception as exc:
-        return _json_error(exc)
-
-
-@mcp_swiftproof.tool(description="List recent SwiftProof plan and proof jobs, newest first, optionally for one project.")
-async def swiftproof_list_jobs(repo_name: Optional[str] = None, limit: int = 20) -> str:
-    from . import swiftproof_jobs
-
-    try:
-        repo = await _canonical_repo(repo_name) if repo_name else None
-        return json.dumps({"jobs": swiftproof_jobs.listing(repo, limit)}, default=str)
-    except Exception as exc:
-        return _json_error(exc)
-
-
-@mcp_swiftproof.tool(description="Cancel a queued or running SwiftProof plan or proof job.")
-async def swiftproof_cancel_job(job_id: str) -> str:
-    from . import swiftproof_jobs
-
-    try:
-        return json.dumps(swiftproof_jobs.cancel(job_id.strip()), default=str)
-    except Exception as exc:
-        return _json_error(exc)
-
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 def _get_deployer_and_host():
@@ -1913,11 +1717,3 @@ def get_mcp_actions_app():
     so the full endpoint is /ai/actions/mcp.
     """
     return mcp_actions.streamable_http_app()
-
-
-def get_mcp_swiftproof_app():
-    """Return the ASGI app for the SwiftProof MCP server.
-
-    FastAPI mounts it at /ai/swiftproof, so the endpoint is /ai/swiftproof/mcp.
-    """
-    return mcp_swiftproof.streamable_http_app()

@@ -350,7 +350,7 @@ if [ -n "$BRANCH" ] || [ -n "$COMMIT" ]; then
                 exit 1
             }
         elif git rev-parse --verify --quiet "${BRANCH}^{commit}" >/dev/null; then
-            # A commit ID, as a SwiftProof-reviewed deployment pins it
+            # A commit ID (pinned deployment)
             log_info "Checking out commit: $BRANCH"
             git checkout --detach "$BRANCH" || {
                 log_error "Failed to checkout commit: $BRANCH"

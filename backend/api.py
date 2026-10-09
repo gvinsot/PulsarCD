@@ -45,8 +45,7 @@ from .github_service import GitHubService, StackDeployer, close_shared_ssh_clien
 from .actions_queue import actions_queue, ActionType, ActionStatus
 from .pipeline_state import PipelineStateManager, _UNSET
 try:
-    from .mcp_server import (mcp_read, mcp_actions, mcp_swiftproof, get_mcp_read_app,
-                             get_mcp_actions_app, get_mcp_swiftproof_app)
+    from .mcp_server import mcp_read, mcp_actions, get_mcp_read_app, get_mcp_actions_app
     from .mcp_auth import MCPAuthMiddleware
     _mcp_available = True
 except Exception as _mcp_err:
@@ -279,8 +278,7 @@ async def lifespan(app: FastAPI):
     # Log MCP API key for configuration
     if _mcp_available and settings.mcp.enabled:
         logger.info("MCP server enabled")
-        async with (mcp_read.session_manager.run(), mcp_actions.session_manager.run(),
-                    mcp_swiftproof.session_manager.run()):
+        async with mcp_read.session_manager.run(), mcp_actions.session_manager.run():
             yield
     else:
         if not _mcp_available:
@@ -421,11 +419,7 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 #                    container_action, update_service_image, remove_service,
 #                    remove_stack). Every tool added here must also be listed in
 #                    config_file.DANGEROUS_TOOL_NAMES.
-# SwiftProof MCP: /ai/swiftproof/mcp (on-demand plans and proofs; admin only
-#                    because they spend the LLM budget and run repository
-#                    checks on the deployment host).
 if _mcp_available:
-    app.mount("/ai/swiftproof", MCPAuthMiddleware(get_mcp_swiftproof_app(), require_admin=True))
     app.mount("/ai/actions", MCPAuthMiddleware(get_mcp_actions_app(), require_admin=True))
     app.mount("/ai", MCPAuthMiddleware(get_mcp_read_app(), require_admin=False))
 
@@ -4161,40 +4155,6 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                     await _notify_agent_failure("test", repo_name, built_version or "", test_result.get("output", ""))
                 return
 
-            # ── SwiftProof review: the closing step of the Test stage ──
-            # Always retain the verdict and evidence. Only a blocking review
-            # changes the test outcome; the default preserves existing projects.
-            from . import swiftproof
-            if swiftproof.enabled(repo_name):
-                blocking = swiftproof.config(repo_name).get("swiftproof_blocking", True) is not False
-                test_action.append_output("SwiftProof: reviewing the change against production...")
-                try:
-                    proof = await deployer.review(repo_name, ssh_url, built_version or tag or "", test_action.cancel_event)
-                except Exception as error:
-                    # Repository/transport failures can happen before the review
-                    # worker handles errors. Keep credentials out of the result.
-                    proof = {"status": "error", "code": 4,
-                             "reason": "SwiftProof unavailable: " + type(error).__name__}
-                swiftproof.remember(repo_name, proof)
-                test_result["swiftproof"] = swiftproof.public_result(proof)
-                test_result["swiftproof_blocking"] = blocking
-                passed = proof["status"] in ("passed", "approved")
-                pipeline_state.record_gate(repo_name, "swiftproof", passed, proof["reason"], version=built_version)
-                summary = "SwiftProof: " + proof["status"] + " — " + proof["reason"]
-                if not blocking:
-                    summary += " (non-blocking)"
-                test_action.append_output(summary)
-                test_result["output"] = (test_result.get("output", "") + "\n" + summary).lstrip("\n")
-                if test_action.cancel_event.is_set() or (blocking and not passed):
-                    test_result["success"] = False
-                    test_action.status = "cancelled" if test_action.cancel_event.is_set() else "failed"
-                    _set_pipeline(repo_name, "test", "failed", built_version, build_id=build_id, test_id=test_id,
-                                  deploy_id=None, log_lines=test_action.output_lines)
-                    if not test_action.cancel_event.is_set():
-                        logger.warning("Pipeline: SwiftProof rejected the candidate", repo=repo_name, reason=proof["reason"][:200])
-                        await _notify_agent_failure("test", repo_name, built_version or "", proof["reason"])
-                    return
-
             test_action.status = "completed"
             _set_pipeline(repo_name, "test", "success", built_version, build_id=build_id, test_id=test_id, deploy_id=None, log_lines=test_action.output_lines)
             logger.info("Pipeline: test succeeded", repo=repo_name)
@@ -4475,8 +4435,7 @@ async def get_transition_config(repo_name: str, transition: str):
             if g.transition == transition:
                 last_decision = g.to_dict()
                 break
-    return {"repo": repo_name, "transition": transition, "config": config, "last_decision": last_decision,
-            "swiftproof": entry.swiftproof if entry else {}}
+    return {"repo": repo_name, "transition": transition, "config": config, "last_decision": last_decision}
 
 
 @app.put("/api/stacks/pipeline/{repo_name}/transition/{transition}")
@@ -4486,10 +4445,6 @@ async def set_transition_config(repo_name: str, transition: str, request: Reques
     For test_to_deploy, accepts an optional ``qa_enabled`` boolean: when true,
     the pipeline runs an isolated QA deploy (stack prefixed ``qa-``, domains
     prefixed ``qa.``) before the production deploy.
-
-    For build_to_test, accepts the SwiftProof settings: the review runs at the
-    end of the Test stage. ``swiftproof_blocking`` defaults to true; when false,
-    the verdict remains available without failing that stage.
     """
     valid = {"version_to_build", "build_to_test", "test_to_deploy", "qa_to_deploy"}
     if transition not in valid:
@@ -4502,67 +4457,10 @@ async def set_transition_config(repo_name: str, transition: str, request: Reques
     cfg: Dict[str, Any] = {"mode": mode}
     if transition == "test_to_deploy":
         cfg["qa_enabled"] = bool(body.get("qa_enabled", False))
-    if transition == "build_to_test":
-        for key in ("swiftproof_enabled", "swiftproof_blocking", "swiftproof_reviewer"):
-            if key in body:
-                if type(body[key]) is not bool:
-                    return JSONResponse({"error": key + " must be a boolean"}, status_code=400)
-                cfg[key] = body[key]
-        if "swiftproof_initial_baseline" in body:
-            baseline = body["swiftproof_initial_baseline"]
-            if not isinstance(baseline, str) or (baseline and not re.fullmatch(r"[0-9a-f]{40}", baseline)):
-                return JSONResponse({"error": "Initial baseline must be an exact lowercase Git SHA"}, status_code=400)
-            cfg["swiftproof_initial_baseline"] = baseline
     pipeline_state.set_transition_config(repo_name, transition, cfg)
     logger.info("Transition config updated", repo=repo_name, transition=transition,
                 mode=mode, qa_enabled=cfg.get("qa_enabled"))
     return {"saved": True, "repo": repo_name, "transition": transition, **cfg}
-
-
-@app.get("/api/stacks/pipeline/{repo_name}/swiftproof/{review_id}/report")
-async def get_swiftproof_report(repo_name: str, review_id: str, download: bool = False, format: str = "text"):
-    from . import swiftproof
-    import zipfile
-    from fastapi.responses import PlainTextResponse
-    try:
-        result = swiftproof.read_result(review_id)
-        if result["identity"]["repo"] != repo_name:
-            raise ValueError("Repository mismatch")
-        path = swiftproof.report_file(review_id, "report.zip")
-        if download:
-            return FileResponse(path, media_type="application/zip", filename="swiftproof-" + review_id[:12] + ".zip")
-        if format == "json":
-            return swiftproof.structured_report(review_id, result)
-        with zipfile.ZipFile(path) as bundle:
-            return PlainTextResponse(bundle.read("CONFIDENCE_REPORT.md").decode("utf-8"))
-    except (ValueError, OSError, KeyError, UnicodeError, zipfile.BadZipFile):
-        return JSONResponse({"error": "Report not found or integrity check failed"}, status_code=404)
-
-
-@app.post("/api/stacks/pipeline/{repo_name}/swiftproof/{review_id}/approve")
-async def approve_swiftproof_report(repo_name: str, review_id: str, request: Request):
-    from . import swiftproof
-    # A human decision must not be manufactured by an agent API credential.
-    if getattr(request.state, "role", "") != "admin" or getattr(request.state, "auth_source", "") not in (AUTH_SOURCE_LOCAL, AUTH_SOURCE_GOOGLE):
-        return JSONResponse({"error": "Administrator sign-in required"}, status_code=403)
-    body = await request.json()
-    try:
-        return swiftproof.approve(repo_name, review_id, request.state.user, body.get("reason"))
-    except (ValueError, OSError, KeyError) as error:
-        return JSONResponse({"error": str(error) if isinstance(error, ValueError) else "Report unavailable"}, status_code=409)
-
-
-@app.post("/api/stacks/pipeline/{repo_name}/swiftproof/{review_id}/retry")
-async def retry_swiftproof_report(repo_name: str, review_id: str):
-    from . import swiftproof
-    async with swiftproof.deployment_lock(repo_name):
-        entry = pipeline_state.get_or_create(repo_name)
-        if entry.swiftproof.get("id") != review_id:
-            return JSONResponse({"error": "Report is no longer current"}, status_code=409)
-        entry.swiftproof_revision += 1
-        entry.swiftproof = {}
-        pipeline_state._save()
-    return {"reset": True, "message": "The next deployment attempt will generate a new review"}
 
 
 @app.get("/api/stacks/auto-build/status")

@@ -1,4 +1,4 @@
-/* Structured test output and SwiftProof evidence. No report content is executable. */
+/* Structured test output. No log content is executable. */
 class TestLogsViewer {
     constructor(actionId, repo, rawContent) {
         this.actionId = actionId;
@@ -20,11 +20,9 @@ class TestLogsViewer {
         this.root = document.createElement('div');
         this.root.className = 'test-workspace';
         this.root.innerHTML = `
-            <section class="test-proof" aria-label="SwiftProof review"><div data-slot="proof">Loading SwiftProof status…</div></section>
             <nav class="test-tabs" aria-label="Test log views">
                 <button class="btn btn-sm" data-view="results" aria-pressed="true">Test explorer</button>
                 <button class="btn btn-sm" data-view="raw" aria-pressed="false">Raw logs</button>
-                <button class="btn btn-sm" data-view="report" aria-pressed="false" disabled>SwiftProof report</button>
                 <span class="test-live" data-slot="live" role="status">Waiting for output…</span>
             </nav>
             <section data-pane="results">
@@ -43,8 +41,7 @@ class TestLogsViewer {
             <section data-pane="raw" hidden>
                 <div class="test-toolbar"><button class="btn btn-sm btn-secondary" data-action="previous">Earlier lines</button><button class="btn btn-sm btn-secondary" data-action="next">Later lines</button><label class="test-follow"><input type="checkbox" data-control="follow" checked> Follow live output</label><span data-slot="range" class="test-note"></span></div>
                 <div class="test-raw" data-slot="raw" tabindex="0" aria-label="Numbered test logs"></div>
-            </section>
-            <section data-pane="report" hidden><div data-slot="report"></div></section>`;
+            </section>`;
         rawContent.hidden = true;
         rawContent.before(this.root);
         document.getElementById('action-logs-modal').classList.add('test-logs-modal');
@@ -73,7 +70,6 @@ class TestLogsViewer {
             }
         });
         this.renderResults();
-        this.pollProof();
     }
 
     slot(name) { return this.root.querySelector(`[data-slot="${name}"]`); }
@@ -88,7 +84,6 @@ class TestLogsViewer {
         this.closed = true;
         this.abort.abort();
         clearTimeout(this.refreshTimer);
-        clearTimeout(this.proofTimer);
         this.root.remove();
         this.rawContent.hidden = false;
         document.getElementById('action-logs-modal').classList.remove('test-logs-modal');
@@ -144,7 +139,6 @@ class TestLogsViewer {
             if (this.follow) this.rawStart = Math.max(this.offset, this.offset + this.lines.length - 500);
             this.renderRaw();
         }
-        if (view === 'report') this.renderReport();
     }
 
     click(event) {
@@ -152,15 +146,6 @@ class TestLogsViewer {
         if (!button || !this.root.contains(button) || button.disabled) return;
         if (button.dataset.view) this.showView(button.dataset.view);
         if (button.dataset.line !== undefined) this.jumpToLine(Number(button.dataset.line));
-        if (button.dataset.finding !== undefined) {
-            this.selectedFinding = Number(button.dataset.finding);
-            this.showView('report');
-            this.slot('report').scrollIntoView({ block: 'nearest' });
-        }
-        if (button.dataset.reportLine !== undefined) {
-            const target = this.root.querySelector(`[data-report-anchor="${Number(button.dataset.reportLine)}"]`);
-            if (target) { target.scrollIntoView({ block: 'nearest' }); target.focus({ preventScroll: true }); }
-        }
         const action = button.dataset.action;
         if (action === 'previous' || action === 'next') {
             this.follow = false;
@@ -169,7 +154,6 @@ class TestLogsViewer {
             this.renderRaw();
         }
         if (action === 'themes') this.groupWithLLM();
-        if (action === 'download') this.downloadProof();
         if (action === 'more') { this.resultLimit = (this.resultLimit || 150) + 150; this.renderResults(); }
     }
 
@@ -259,101 +243,5 @@ class TestLogsViewer {
         } catch (error) {
             if (!this.closed && revision === this.revision) this.slot('themes').textContent = `LLM grouping unavailable. Automatic themes remain available. ${error.message}`;
         } finally { if (!this.closed && revision === this.revision) button.disabled = false; }
-    }
-
-    proofURL(id) { return `/stacks/pipeline/${encodeURIComponent(this.repo)}/swiftproof/${encodeURIComponent(id)}/report`; }
-
-    async pollProof() {
-        try {
-            const response = await this.request(`/stacks/pipeline/${encodeURIComponent(this.repo)}/transition/build_to_test`);
-            const data = await response.json();
-            if (this.closed) return;
-            this.proofEnabled = !!data.config?.swiftproof_enabled;
-            this.proofBlocking = data.config?.swiftproof_blocking !== false;
-            this.proof = data.swiftproof || {};
-            this.root.querySelector('.test-proof').hidden = !this.proofEnabled;
-            if (this.proofEnabled && this.proof.id && this.proof.status !== 'running' && this.reportId !== this.proof.id) {
-                // A new review must not keep the preceding review's findings on screen.
-                this.report = null;
-                this.reportId = null;
-                this.selectedFinding = undefined;
-                this.renderProof();
-                const reportResponse = await this.request(this.proofURL(this.proof.id) + '?format=json');
-                const report = await reportResponse.json();
-                if (this.closed) return;
-                this.report = report;
-                this.reportId = this.proof.id;
-            } else if (!this.proofEnabled || !this.proof.id || this.proof.id !== this.reportId) {
-                this.report = null;
-                this.reportId = null;
-                this.selectedFinding = undefined;
-            }
-            this.proofError = '';
-            this.renderProof();
-        } catch (error) {
-            if (!this.closed) { this.proofError = 'SwiftProof status or report unavailable. Retrying automatically…'; this.renderProof(); }
-        } finally {
-            if (!this.closed) this.proofTimer = setTimeout(() => this.pollProof(), 4000);
-        }
-    }
-
-    renderProof() {
-        const proof = this.proof || {};
-        const toolVersion = this.report?.report?.tool_version || proof.tool_version;
-        const findings = this.report?.findings || [];
-        const signature = JSON.stringify([this.proofEnabled, this.proofBlocking, proof, this.reportId, this.proofError]);
-        this.root.querySelector('[data-view="report"]').disabled = !this.report;
-        if (signature === this.proofSignature) return;
-        this.proofSignature = signature;
-        this.slot('proof').innerHTML = `<div class="test-proof-heading"><div><strong>SwiftProof${toolVersion ? ' ' + this.escape(toolVersion) : ''}</strong> ${this.badge(proof.status || 'pending')} <span class="test-badge test-badge-neutral">${this.proofBlocking !== false ? 'Blocking' : 'Non-blocking'}</span><p class="test-note">Latest project review${proof.release ? ` · ${this.escape(proof.release)}` : ''}${proof.head ? ` · ${this.escape(proof.head.slice(0, 12))}` : ''}. Independent of the selected test run.</p></div>${this.report ? '<button class="btn btn-sm btn-secondary" data-action="download">Download evidence</button>' : ''}</div>
-            <p class="test-note">${this.proofBlocking !== false ? 'A rejected or unavailable review fails the Test stage and stops the pipeline.' : 'This review is non-blocking: its verdict does not change the automated test result.'}</p>
-            <p>${this.escape(proof.reason || 'The deployment review will appear here when SwiftProof runs.')}</p>
-            ${this.proofError ? `<p class="test-warning" role="status">${this.escape(this.proofError)}</p>` : ''}
-            ${findings.length ? `<p class="test-note">${findings.length} findings / review areas · Select a finding to inspect its evidence and source changes.</p><div class="test-risk-list">${findings.map((finding, index) => `<button class="test-risk" data-finding="${index}"><span>${this.badge(finding.severity)}${finding.status ? ' ' + this.badge(finding.status) : ''}</span><strong>${this.escape(finding.title)}</strong><small>${this.escape(finding.path || finding.kind)}${finding.line ? ':' + finding.line : ''} ↗</small></button>`).join('')}</div>` : this.report ? '<p class="test-note">No structured findings in this report. Consult the full report for coverage and limitations.</p>' : ''}
-            ${this.report ? '<button class="btn btn-sm btn-secondary" data-view="report">Open full report</button>' : ''}`;
-        if (this.view === 'report') this.renderReport();
-    }
-
-    renderReport() {
-        if (!this.report) { this.slot('report').innerHTML = '<p class="test-empty">Waiting for a SwiftProof report.</p>'; return; }
-        const report = this.report.report || {};
-        const finding = this.report.findings?.[this.selectedFinding];
-        let detail = '';
-        if (finding) {
-            const files = report.change?.files || [];
-            const file = files.find(file => (finding.side === 'old' ? file.old_path || file.path : file.path) === finding.path);
-            const source = (file?.hunks || []).flatMap(hunk => hunk.lines || []);
-            const target = source.findIndex(line => Number(finding.side === 'old' ? line.old_line : line.new_line) === finding.line);
-            const context = target < 0 ? source.slice(0, 80) : source.slice(Math.max(0, target - 12), target + 40);
-            detail = `<article class="test-finding"><h3>${this.escape(finding.title)}</h3><p>${this.badge(finding.severity)} ${finding.status ? this.badge(finding.status) : ''} <span class="test-note">${this.escape(finding.path)}${finding.line ? ':' + finding.line : ''}</span></p>
-                ${(finding.evidence || []).map(evidence => {
-                    const checks = [['Baseline', evidence.base_check_id], ['Candidate', evidence.check_id]].map(([label, id]) => {
-                        const check = (report.checks || []).find(check => id && check.id === id);
-                        return check ? `<details class="test-group" open><summary>${label} check ${this.badge(check.status)}${check.duration_ms != null ? ' · ' + this.escape(check.duration_ms) + ' ms' : ''}</summary><pre>${this.escape((check.command || []).join(' '))}\n${this.escape(check.output || 'No captured output.')}${check.truncated ? '\n[Output truncated by SwiftProof]' : ''}</pre></details>` : '';
-                    }).join('');
-                    return `<details class="test-group" open><summary>${this.escape(evidence.description || evidence.id || 'Evidence')}</summary>${evidence.path ? `<p class="test-note">${this.escape(evidence.path)}</p>` : ''}${evidence.test_names?.length ? `<p class="test-note">Tests: ${this.escape(evidence.test_names.join(', '))}</p>` : ''}${evidence.output || evidence.status ? `<pre>${this.escape(evidence.output || evidence.status)}</pre>` : ''}${checks}</details>`;
-                }).join('') || '<p class="test-note">No linked execution evidence for this finding.</p>'}
-                ${context.length ? `<h4>Source changes · ${this.escape(finding.side || 'new')} side</h4><div class="test-source">${context.map(line => {
-                    const number = finding.side === 'old' ? line.old_line : line.new_line;
-                    const highlighted = finding.line > 0 && number >= finding.line && number <= (finding.end_line || finding.line);
-                    return `<div class="test-log-line ${highlighted ? 'test-log-selected' : ''}"><span class="test-line-number">${this.escape(number || '·')}</span><span>${this.escape(line.kind)} ${this.escape(line.content)}</span></div>`;
-                }).join('')}</div>` : '<p class="test-note">No source excerpt is available in the retained report. The location above identifies the review target.</p>'}</article>`;
-        }
-        const lines = String(this.report.markdown || '').split('\n');
-        const headings = lines.map((text, index) => ({ text, index })).filter(item => /^#{1,6}\s/.test(item.text));
-        this.slot('report').innerHTML = detail + `<div class="test-report-heading"><h3>Full confidence report</h3><button class="btn btn-sm btn-secondary" data-action="download">Download evidence</button></div><nav class="test-section-links" aria-label="Report sections">${headings.map(item => `<button class="btn btn-sm btn-secondary" data-report-line="${item.index}">${this.escape(item.text.replace(/^#+\s*/, ''))}</button>`).join('')}</nav><div class="test-markdown">${lines.map((line, index) => /^#{1,6}\s/.test(line) ? `<h4 tabindex="-1" data-report-anchor="${index}">${this.escape(line.replace(/^#+\s*/, ''))}</h4>` : `<div>${this.escape(line) || ' '}</div>`).join('')}</div>`;
-    }
-
-    async downloadProof() {
-        if (!this.reportId) return;
-        try {
-            const response = await this.request(this.proofURL(this.reportId) + '?download=true');
-            const url = URL.createObjectURL(await response.blob());
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = `swiftproof-${this.reportId.slice(0, 12)}.zip`;
-            link.click();
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
-        } catch (error) { if (!this.closed) showNotification('error', error.message); }
     }
 }

@@ -39,7 +39,7 @@
 
         let theme = 'General';
         if (/\b(auth\w*|login|logout|session\w*|token\w*|permission\w*|security|csrf|xss|injection)\b/.test(name)) theme = 'Authentication & security';
-        else if (/\b(deploy\w*|pipeline\w*|docker|swarm|build\w*|release\w*|swiftproof)\b/.test(name)) theme = 'Build & deployment';
+        else if (/\b(deploy\w*|pipeline\w*|docker|swarm|build\w*|release\w*)\b/.test(name)) theme = 'Build & deployment';
         else if (/\b(database\w*|db|sql\w*|mongo\w*|storage|persist\w*|migration\w*|cache\w*)\b/.test(name)) theme = 'Data & storage';
         else if (/\b(api|http|route\w*|endpoint\w*|request\w*|response\w*|webhook\w*)\b/.test(name)) theme = 'API & networking';
         else if (/\b(ui|component\w*|render\w*|button\w*|modal\w*|browser\w*|accessibility|a11y)\b/.test(name)) theme = 'Interface & accessibility';
@@ -132,7 +132,7 @@
             // Preserve execution phases and failure/traceback headings as raw-log shortcuts.
             if ((match = text.match(/^(?:={3,}|_{3,})\s*(.+?)\s*(?:={3,}|_{3,})$/)) && /[a-z]/i.test(match[1])) {
                 section(match[1], index);
-            } else if (/^\[(?:INFO|ERROR|WARNING|SUCCESS)\]\s/.test(text) || /^SwiftProof:/i.test(text)) {
+            } else if (/^\[(?:INFO|ERROR|WARNING|SUCCESS)\]\s/.test(text)) {
                 section(text, index);
             } else if (index - (sections[sections.length - 1]?.line - offset || 0) >= 100) {
                 section('Output · line ' + (index + offset + 1), index);
