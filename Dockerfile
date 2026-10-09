@@ -23,6 +23,9 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements first for better caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+# Validate runtime compatibility too: package metadata does not catch MCP's
+# dependency on private Pydantic APIs. Fail the build before publishing images.
+RUN pip check && python -c "from mcp.server.fastmcp import FastMCP"
 
 # Copy application code
 COPY shared/ ./shared/

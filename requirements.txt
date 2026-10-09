@@ -12,7 +12,9 @@ asyncssh>=2.14.2
 opensearch-py>=2.4.2
 
 # Data & Async
-pydantic>=2.5.3
+# The MCP version compatible with our Starlette pin imports eval_type_backport,
+# which Pydantic removed in 2.14. Lift this cap with the FastAPI/Starlette upgrade.
+pydantic>=2.5.3,<2.14
 pydantic-settings>=2.5.2
 aiohttp>=3.9.1
 
