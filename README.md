@@ -877,6 +877,31 @@ manifest validation. Unsupported authentication or incomplete responses fall
 back to that validation. Keep `scripts/registry_tag_exists.py` beside the build
 script when updating the build host's checkout.
 
+### BuildKit DNS timeout while resolving a base image
+
+An error such as `lookup registry-1.docker.io ... i/o timeout` during
+`load metadata` comes from the BuildKit daemon, before Dockerfile commands run.
+A long-lived `docker-container` builder can retain an obsolete DNS resolver
+even while the host and other builder nodes resolve the registry successfully.
+The build script prints the host's DNS servers, builder nodes, and DNS servers
+of locally accessible builder containers after a multi-architecture build fails.
+
+On the affected build host, inspect the builder and compare its resolver with
+the host's. Once no builds are using that node, restart just its container:
+
+```bash
+docker buildx inspect pulsarcd-multiarch
+cat /etc/resolv.conf
+docker exec buildx_buildkit_pulsarcd-multiarch0 cat /etc/resolv.conf
+docker restart buildx_buildkit_pulsarcd-multiarch0
+```
+
+Use the node name reported by `buildx inspect` (container names are
+`buildx_buildkit_<node>`). Re-run the failed build and check its logs. Restarting
+preserves the builder's cache and other nodes; do not remove the builder or
+change the application's Dockerfile to address a resolver failure. If the
+failure persists, investigate DNS configuration on that Docker host.
+
 ### SSH Mode Issues (Legacy)
 
 1. Ensure SSH key-based authentication is configured:
