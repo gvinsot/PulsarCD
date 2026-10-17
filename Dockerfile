@@ -44,6 +44,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends bash gawk gette
 
 # Install test dependencies
 RUN pip install --no-cache-dir pytest pytest-asyncio "httpx>=0.23.0,<0.28.0"
+# Static-check tools, pinned so a new release cannot fail an unchanged commit.
+RUN pip install --no-cache-dir "ruff==0.17.1" "mypy==2.4.0" "pip-audit==2.10.1"
 
 # pytest.ini carries asyncio_mode=auto (async tests are collected but not run
 # without it, they fail as "async def not natively supported") and
@@ -60,6 +62,13 @@ COPY scripts/registry_tag_exists.py ./scripts/registry_tag_exists.py
 # Build contexts may come from a Windows checkout, while these tests run Bash
 # on Linux. Match the script's Linux line endings and validate it at build time.
 RUN sed -i 's/\r$//' scripts/build-push.sh && bash -n scripts/build-push.sh
+
+# Static checks: ruff and mypy fail the build on likely bugs (undefined names,
+# unknown attributes, bad calls); pip-audit only warns. pyproject.toml holds
+# their configuration and scripts/static-checks.sh explains each choice.
+COPY pyproject.toml ./
+COPY scripts/static-checks.sh ./scripts/static-checks.sh
+RUN sed -i 's/\r$//' scripts/static-checks.sh && bash scripts/static-checks.sh
 
 # Run tests on container start
 CMD ["python", "-m", "pytest", "tests/", "-v", "--tb=short", "-p", "no:warnings"]

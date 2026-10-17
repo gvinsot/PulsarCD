@@ -289,6 +289,22 @@ docker run -d -p 127.0.0.1:9200:9200 -e "discovery.type=single-node" \
 python -m backend.main
 ```
 
+### Tests and Static Checks
+
+```bash
+pip install pytest pytest-asyncio "httpx>=0.23.0,<0.28.0" ruff mypy pip-audit
+python -m pytest tests/ -q
+bash scripts/static-checks.sh   # ruff + mypy (blocking), pip-audit (warning only)
+```
+
+The Dockerfile `test` stage runs `scripts/static-checks.sh` while building, so a
+ruff or mypy error fails the test build (and `scripts/test.sh`) before any test
+runs. Both tools are configured permissively in `pyproject.toml`: they report
+likely bugs (undefined names, unknown attributes, wrong call signatures), not
+style. pip-audit only warns because the deliberately pinned FastAPI/Starlette
+and PyJWT versions carry advisories until the framework upgrade; set
+`PULSARCD_SKIP_AUDIT=1` to skip it offline.
+
 ### Project Structure
 
 ```
