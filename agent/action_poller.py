@@ -1,7 +1,6 @@
 """Action poller for the agent - polls backend for pending actions and executes them."""
 
 import asyncio
-import subprocess
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 

@@ -10,7 +10,6 @@ from backend.error_detector import (
     ErrorPattern,
     RecurringErrorDetector,
     normalize_message,
-    text_fingerprint,
 )
 
 

@@ -13,7 +13,7 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 
 import structlog
 
@@ -103,7 +103,6 @@ class ErrorPattern:
             try:
                 # Handle ISO format with or without Z suffix
                 clean = timestamp.replace("Z", "+00:00")
-                from datetime import timezone
                 dt = datetime.fromisoformat(clean)
                 return dt.replace(tzinfo=None) if dt.tzinfo else dt
             except (ValueError, TypeError):

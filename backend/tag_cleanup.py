@@ -261,8 +261,8 @@ class TagCleaner:
             return []
 
         # Match registry repos that start with the project stack name
-        from .github_service import GitHubService
-        stack_name = GitHubService._repo_to_stack_name(repo)
+        from .github_service import StackDeployer
+        stack_name = StackDeployer._repo_to_stack_name(repo)
         matching_repos = [r for r in catalog if r.startswith(f"{stack_name}/") or r == stack_name]
 
         deleted: List[str] = []

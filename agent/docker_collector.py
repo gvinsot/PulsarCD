@@ -1,9 +1,6 @@
 """Docker collector for the agent - collects containers, stats, and logs locally."""
 
-import asyncio
 import calendar
-import json
-import re
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 

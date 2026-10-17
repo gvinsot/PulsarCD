@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 
 import structlog
 
@@ -348,7 +348,9 @@ class Collector:
                     local_node_id = None
                     if hasattr(manager_client, "_get_local_node_id"):
                         local_node_id = await manager_client._get_local_node_id()
-                    nodes = await manager_client.get_swarm_nodes()
+                    # Only DockerAPIClient has get_all_swarm_containers, and it
+                    # also has get_swarm_nodes; the protocol declares neither.
+                    nodes = await manager_client.get_swarm_nodes()  # type: ignore[attr-defined]
                     manager_node_hostname = None
                     if local_node_id:
                         for node in nodes:
@@ -470,7 +472,6 @@ class Collector:
         Returns:
             ContainerInfo if found, None otherwise
         """
-        from .models import ContainerInfo
         
         containers = self._containers_cache.get(host, [])
         
@@ -592,7 +593,10 @@ class Collector:
                     # because Swarm manages the container lifecycle and replaces stopped containers.
                     if container_action == ContainerAction.RESTART:
                         manager_client = self.clients.get(self._swarm_manager_host)
-                        if manager_client:
+                        # Only DockerAPIClient can force-update a service; an SSH
+                        # manager (swarm_routing allows mode "ssh") falls back to a
+                        # plain container restart instead of raising AttributeError.
+                        if manager_client and hasattr(manager_client, "force_update_service"):
                             return await manager_client.force_update_service(service_name)
                     elif not is_on_manager:
                         # For other actions on worker nodes, block unsupported operations

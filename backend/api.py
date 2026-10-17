@@ -48,8 +48,12 @@ try:
     from .mcp_server import mcp_read, mcp_actions, get_mcp_read_app, get_mcp_actions_app
     from .mcp_auth import MCPAuthMiddleware
     _mcp_available = True
-except Exception as _mcp_err:
+    _mcp_import_error = ""
+except Exception as exc:
+    # Python unbinds an "except ... as" name when the block ends, so the
+    # lifespan hook cannot read it later: keep the message in its own name.
     _mcp_available = False
+    _mcp_import_error = str(exc)
 
 logger = structlog.get_logger()
 
@@ -282,7 +286,7 @@ async def lifespan(app: FastAPI):
             yield
     else:
         if not _mcp_available:
-            logger.warning("MCP server not available", error=str(_mcp_err))
+            logger.warning("MCP server not available", error=_mcp_import_error)
         yield
 
     # Shutdown

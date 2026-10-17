@@ -61,6 +61,8 @@ from pydantic_settings import BaseSettings
 
 from shared.secrets import load_docker_secrets_into_env
 
+from backend.config_file import PulsarConfig
+
 # Load Docker secrets (mounted at /run/secrets/<NAME>) into the environment so
 # the existing pydantic / os.environ based loading picks them up transparently.
 load_docker_secrets_into_env()
@@ -288,7 +290,7 @@ class Settings(BaseSettings):
     hosts: List[HostConfig] = []
 
     # Config file (loaded from /data/config.yml)
-    pulsar_config: Optional[object] = None
+    pulsar_config: Optional[PulsarConfig] = None
 
     class Config:
         env_prefix = "PULSARCD_"
