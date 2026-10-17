@@ -476,9 +476,13 @@ deleted any more. The backend, in the background:
 
 1. creates `<name>-v<N+1>` with the right mapping and reindexes into it while
    reads and writes continue on the current index;
-2. blocks writes on the current index for a few seconds and copies the
-   documents of the last `MIGRATION_CATCHUP_SECONDS` again;
-3. checks the copy holds at least as many documents, then switches the alias
+2. copies again, still without blocking, the documents that arrived during
+   that copy (window: copy start minus `MIGRATION_CATCHUP_SECONDS`);
+3. blocks writes on the current index for a short time and copies once more
+   what arrived during step 2 (same margin), so the block stays short even
+   when the bulk copy took hours;
+4. checks the copy holds at least as many documents and has the expected
+   mapping, then switches the alias
    and removes the old index in one atomic call.
 
 Any failure lifts the write block, drops the partial copy and keeps the old

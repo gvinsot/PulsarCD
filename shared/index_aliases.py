@@ -15,8 +15,9 @@ away every stored log line and metric. This module replaces that with:
   1. create ``<name>-v<N+1>`` with the expected mapping, no alias yet;
   2. reindex the current index into it (async OpenSearch task, startup is not
      blocked; reads and writes keep hitting the current index meanwhile);
-  3. block writes on the current index, then copy whatever arrived during the
-     reindex (catch-up on a recent ``timestamp`` window);
+  3. copy again, unblocked, what arrived during the reindex (catch-up on a
+     recent ``timestamp`` window), then block writes on the current index and
+     copy what arrived during that catch-up, so the block stays short;
   4. check the new index holds at least as many documents as the old one;
   5. in one atomic ``_aliases`` call, point the alias at the new index and
      remove the old one (``remove_index`` is what lets a plain index named
@@ -310,7 +311,8 @@ class IndexManager:
             tasks = _unwrap(await self._client.tasks.list(actions="*reindex", detailed=True)) or {}
             for node in (tasks.get("nodes") or {}).values():
                 for task_id, task in (node.get("tasks") or {}).items():
-                    if orphan in str(task.get("description", "")):
+                    # Match "[name]" exactly: "-v2" must not hit "-v20".
+                    if f"[{orphan}]" in str(task.get("description", "")):
                         await self._client.tasks.cancel(task_id=task_id)
                         logger.warning("Cancelled stale reindex task", task_id=task_id)
         except Exception as e:
@@ -335,18 +337,29 @@ class IndexManager:
             # Server ran it synchronously (or an older client): result is inline.
             return resp
         last_log = time.monotonic()
-        while True:
-            task = _unwrap(await self._client.tasks.get(task_id=task_id)) or {}
-            if task.get("completed"):
-                if task.get("error"):
-                    raise IndexMigrationError(f"Reindex task failed: {task['error']}")
-                return task.get("response") or {}
-            if time.monotonic() - last_log >= 60:
-                status = (task.get("task") or {}).get("status") or {}
-                logger.warning("Reindex in progress", task_id=task_id,
-                               total=status.get("total"), created=status.get("created"))
-                last_log = time.monotonic()
-            await asyncio.sleep(self.task_poll_seconds)
+        try:
+            while True:
+                task = _unwrap(await self._client.tasks.get(task_id=task_id)) or {}
+                if task.get("completed"):
+                    if task.get("error"):
+                        raise IndexMigrationError(f"Reindex task failed: {task['error']}")
+                    return task.get("response") or {}
+                if time.monotonic() - last_log >= 60:
+                    status = (task.get("task") or {}).get("status") or {}
+                    logger.warning("Reindex in progress", task_id=task_id,
+                                   total=status.get("total"), created=status.get("created"))
+                    last_log = time.monotonic()
+                await asyncio.sleep(self.task_poll_seconds)
+        except BaseException:
+            # Cancelled (shutdown) or polling failed: stop the server-side
+            # task too. Left running, it would keep writing into the target
+            # the rollback is about to delete, and OpenSearch would auto-create
+            # it again with a dynamic mapping.
+            try:
+                await self._client.tasks.cancel(task_id=task_id)
+            except Exception as e:
+                logger.warning("Cannot cancel reindex task", task_id=task_id, error=str(e))
+            raise
 
     @staticmethod
     def _check_reindex(result: Dict[str, Any], step: str) -> None:
@@ -379,23 +392,29 @@ class IndexManager:
             logger.warning("Index migration: bulk copy done", index=name, target=target,
                            created=result.get("created"), total=result.get("total"))
 
+            # A range on "timestamp" is only meaningful if the *source* maps
+            # it as a date (or an ISO string keyword); otherwise copy
+            # everything again, skipping documents already present.
+            source_props = await self._props_of(source)
+            ts_type = (source_props.get("timestamp") or {}).get("type")
+            use_range = ts_type in ("date", "date_nanos", "keyword")
+
+            # First catch-up without any block: copies what arrived during
+            # the (possibly long) bulk copy, so the blocked pass below only
+            # covers a short window.
+            catchup_started = datetime.now(timezone.utc)
+            self._check_reindex(
+                await self._reindex(self._catchup_body(source, target, started, use_range)),
+                "Catch-up reindex")
+
             # Freeze the source so nothing written from now on can be missed,
-            # then copy what arrived while the bulk copy was running.
+            # then copy what arrived during the first catch-up.
             await self._set_write_block(source, True)
             blocked = True
-            catchup: Dict[str, Any] = {
-                "conflicts": "proceed",
-                "source": {"index": source},
-                "dest": {"index": target},
-            }
-            props = mapping.get("mappings", {}).get("properties", {})
-            if "timestamp" in props:
-                since = started - timedelta(seconds=self.catchup_margin_seconds)
-                catchup["source"]["query"] = {
-                    "range": {"timestamp": {"gte": since.isoformat()}}}
-            else:
-                catchup["dest"]["op_type"] = "create"
-            self._check_reindex(await self._reindex(catchup), "Catch-up reindex")
+            self._check_reindex(
+                await self._reindex(
+                    self._catchup_body(source, target, catchup_started, use_range)),
+                "Final catch-up reindex")
 
             await self._client.indices.refresh(index=target)
             source_count = await self._count(source)
@@ -404,6 +423,14 @@ class IndexManager:
                 raise IndexMigrationError(
                     f"Copy is incomplete: {target_count} documents in {target}, "
                     f"{source_count} in {source}")
+
+            # Guard against swapping onto an index that is not the one created
+            # above (e.g. deleted by a concurrent rollback and auto-created
+            # again by a still-running reindex with a dynamic mapping).
+            target_mismatches = mapping_mismatches(mapping, await self._props_of(target))
+            if target_mismatches:
+                raise IndexMigrationError(
+                    f"Target {target} does not have the expected mapping: {target_mismatches}")
 
             # One atomic call: readers and writers go from the old index to
             # the new one with no window where the name resolves to nothing.
@@ -418,6 +445,27 @@ class IndexManager:
         finally:
             if not switched:
                 await self._rollback(source, target, blocked)
+
+    def _catchup_body(self, source: str, target: str, since: datetime,
+                      use_range: bool) -> Dict[str, Any]:
+        body: Dict[str, Any] = {
+            "conflicts": "proceed",
+            "source": {"index": source},
+            "dest": {"index": target},
+        }
+        if use_range:
+            gte = since - timedelta(seconds=self.catchup_margin_seconds)
+            body["source"]["query"] = {"range": {"timestamp": {"gte": gte.isoformat()}}}
+        else:
+            body["dest"]["op_type"] = "create"
+        return body
+
+    async def _props_of(self, index: str) -> Dict[str, Any]:
+        mappings = _unwrap(await self._client.indices.get_mapping(index=index)) or {}
+        entry = mappings.get(index)
+        if entry is None and len(mappings) == 1:
+            entry = next(iter(mappings.values()))
+        return ((entry or {}).get("mappings") or {}).get("properties") or {}
 
     async def _rollback(self, source: str, target: str, blocked: bool) -> None:
         if blocked:

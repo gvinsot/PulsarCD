@@ -541,3 +541,64 @@ def test_config_env_overrides(monkeypatch):
     assert settings.opensearch.auto_migrate_mappings is False
     assert settings.opensearch.migrate_legacy_indices is True
     assert settings.opensearch.migration_catchup_seconds == 60
+
+
+# ------------------------------------------------------------ review fixes
+
+async def test_close_also_cancels_server_side_reindex_task(cluster):
+    cluster.seed_plain("pulsarcd-logs", BAD_PROPS, _docs(2))
+    cluster.task_polls_before_done = 10 ** 9
+    m = _manager(cluster, allow_migration=True)
+    await m.ensure("pulsarcd-logs", MAPPING)
+    await asyncio.sleep(0.01)
+    await m.close()
+    assert cluster.cancelled, "the OpenSearch reindex task kept running"
+
+
+async def test_orphan_cleanup_does_not_cancel_unrelated_version_task(cluster):
+    cluster.seed_plain("pulsarcd-logs", BAD_PROPS, _docs(1))
+    cluster.seed_plain("pulsarcd-logs-v2", MAPPING["mappings"]["properties"], {})
+    cluster.tasks["other:1"] = {"run": lambda: {}, "polls": 0,
+                                "description": "reindex from [x] to [pulsarcd-logs-v20]"}
+    m = _manager(cluster, allow_migration=True)
+    await m._cleanup_orphan("pulsarcd-logs-v2", "pulsarcd-logs")
+    assert "other:1" not in cluster.cancelled
+
+
+async def test_catchup_without_date_timestamp_copies_everything(cluster):
+    props = dict(BAD_PROPS, timestamp={"type": "text"})
+    cluster.seed_plain("pulsarcd-logs", props, _docs(3))
+    bodies = []
+    original = cluster.reindex
+
+    async def spy(body, **kw):
+        bodies.append(copy.deepcopy(body))
+        return await original(body, **kw)
+
+    cluster.reindex = spy
+    m = _manager(cluster, allow_migration=True)
+    await m.ensure("pulsarcd-logs", MAPPING)
+    await _wait(m, "pulsarcd-logs")
+    assert len(bodies) == 3   # bulk copy, unblocked catch-up, blocked catch-up
+    assert all("query" not in b["source"] for b in bodies[1:])
+    assert all(b["dest"].get("op_type") == "create" for b in bodies[1:])
+    assert len(cluster.indices["pulsarcd-logs-v2"]["docs"]) == 3
+
+
+async def test_swap_refused_when_target_mapping_is_wrong(cluster):
+    cluster.seed_plain("pulsarcd-logs", BAD_PROPS, _docs(2))
+    cluster.task_polls_before_done = 2
+
+    async def clobber_target():
+        # Target deleted and auto-created again with a dynamic mapping.
+        if "pulsarcd-logs-v2" in cluster.indices:
+            cluster.indices["pulsarcd-logs-v2"]["props"] = dict(BAD_PROPS)
+
+    cluster.on_task_poll = clobber_target
+    m = _manager(cluster, allow_migration=True)
+    await m.ensure("pulsarcd-logs", MAPPING)
+    await _wait(m, "pulsarcd-logs")
+    assert len(cluster.indices["pulsarcd-logs"]["docs"]) == 2
+    assert not cluster.indices["pulsarcd-logs"]["blocked"]
+    assert not [c for c in cluster.calls if c[0] == "update_aliases"]
+    assert "expected mapping" in m.status["pulsarcd-logs"]["error"]
