@@ -18,7 +18,8 @@ BASH = str(GIT_BASH) if GIT_BASH.exists() else shutil.which("bash")
 
 @unittest.skipUnless(BASH, "Bash is required")
 class BuildPushTests(unittest.TestCase):
-    def run_build(self, *, existing="", failure="", platforms="", no_cache=False, tag_status=2):
+    def run_build(self, *, existing="", failure="", platforms="", no_cache=False, tag_status=2,
+                  version="1.2.3"):
         self.assertTrue(SCRIPT.is_file(), f"Build script missing from test environment: {SCRIPT}")
         with tempfile.TemporaryDirectory(prefix="build push ") as directory:
             root = Path(directory)
@@ -101,10 +102,10 @@ exit 0
                        FAIL_COMMAND=failure, BUILD_PLATFORMS=platforms,
                        STUB_TAG_STATUS=str(tag_status))
             # Add stubs inside Bash so Git Bash receives a POSIX PATH.
-            command = 'export PATH="$(cd "$1" && pwd):$PATH"; cd "$2"; bash "$3" "$PWD" 1.2.3 "" "" "$4"'
+            command = 'export PATH="$(cd "$1" && pwd):$PATH"; cd "$2"; bash "$3" "$PWD" "$5" "" "" "$4"'
             result = subprocess.run(
                 [BASH, "-c", command, "test", bin_dir.as_posix(), repo.as_posix(),
-                 SCRIPT.as_posix(), "--no-cache" if no_cache else ""],
+                 SCRIPT.as_posix(), "--no-cache" if no_cache else "", version],
                 env=env, capture_output=True, text=True, timeout=30,
             )
             calls = [line.rstrip("\t").split("\t") for line in log.read_text().splitlines()] if log.exists() else []
@@ -201,6 +202,31 @@ exit 0
         self.assertIn(["exec", "buildx_buildkit_pulsarcd-multiarch0",
                        "cat", "/etc/resolv.conf"], calls)
         self.assertFalse(any("--format" in c for c in calls if c[:2] == ["buildx", "inspect"]))
+
+    def test_preview_build_publishes_only_the_preview_tag(self):
+        """A branch preview must never push a compose or release tag production uses."""
+        result, calls = self.run_build(version="pv-feature-x", tag_status=0,
+                                       existing="registry.methodinfo.fr/web:pv-feature-x")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # The preview tag moves with the branch: an existing image never skips the build
+        self.assertFalse(any(c[0] == "tag-check" or c[:2] == ["manifest", "inspect"] for c in calls))
+        bake, = [c for c in calls if c[:2] == ["buildx", "bake"]]
+        self.assertIn("tts-server.tags=registry.methodinfo.fr/speech:cuda-arm64-pv-feature-x", bake)
+        self.assertFalse(any(c[:3] == ["buildx", "imagetools", "create"] for c in calls))
+        pushes = [c[1] for c in calls if c[0] == "push"]
+        self.assertEqual(sorted(pushes), ["registry.methodinfo.fr/speech:rocm-pv-feature-x",
+                                          "registry.methodinfo.fr/web:pv-feature-x"])
+        self.assertIn(["tag", "registry.methodinfo.fr/web:latest",
+                       "registry.methodinfo.fr/web:pv-feature-x"], calls)
+        self.assertIn("Skipping git tagging (preview build)", result.stdout)
+        self.assertNotIn("Creating git tag", result.stdout)
+
+    def test_malformed_preview_tag_is_refused(self):
+        for version in ("pv-", "pv-Feature", "pv-x;id", "pv--"):
+            with self.subTest(version=version):
+                result, calls = self.run_build(version=version)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertFalse(any(c[:2] == ["buildx", "bake"] for c in calls))
 
 
 if __name__ == "__main__":

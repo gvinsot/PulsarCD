@@ -5,7 +5,7 @@
 # Deploys a service stack using previously built and tagged Docker images
 #
 # Usage:
-#   ./deploy-service.sh [--qa] <folder> <version> [branch] [commit]
+#   ./deploy-service.sh [--qa | --preview <branch>] <folder> <version> [branch] [commit]
 #
 # Options:
 #   --qa    Deploy as QA environment: prefix the stack name with "qa-" and
@@ -16,6 +16,17 @@
 #           devops/.env.qa, when present, is loaded over devops/.env: its
 #           variables override the production values for the QA stack only
 #           and are used verbatim (no qa. prefix).
+#   --preview <branch>
+#           Deploy a per-branch preview environment. Same machinery as --qa
+#           (devops/.env.qa overlay, Traefik label isolation, host prefixing)
+#           with a branch-derived prefix instead of "qa":
+#             slug  = DNS-safe, collision-safe name of <branch>
+#                     (see shared/preview_naming.py, also used by the API)
+#             stack = "pv-<slug>-<repo>"      host = "<slug>.<TRAEFIK_HOST>"
+#           TRAEFIK_HOST is always prefixed in preview mode, even when
+#           .env.qa sets it, so a preview can never answer on the prod or QA
+#           host. A preview can never deploy over the prod or QA stack: the
+#           script refuses any stack name that does not start with "pv-".
 #
 # Arguments:
 #   folder  - Repository folder name (e.g., "Art Retrainer") or full path
@@ -26,6 +37,7 @@
 # Examples:
 #   ./deploy-service.sh "Art Retrainer" 42
 #   ./deploy-service.sh --qa "Art Retrainer" 42 main
+#   ./deploy-service.sh --preview feature/login "Art Retrainer" pv-feature-login-df7c7a feature/login
 #   ./deploy-service.sh "Art Retrainer" 42 main abc1234
 #   ./deploy-service.sh "Art Retrainer" main          # Deploy using branch tag
 #
@@ -59,6 +71,11 @@ QA_MODE=false
 QA_STACK_PREFIX="qa-"
 QA_DOMAIN_PREFIX="qa."
 
+# Preview mode (set via --preview <branch>): names computed later from the branch
+PREVIEW_MODE=false
+PREVIEW_BRANCH=""
+PREVIEW_SLUG=""
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -87,10 +104,11 @@ log_error() {
 }
 
 show_usage() {
-    echo "Usage: $0 [--qa] <folder> <version> [branch] [commit]"
+    echo "Usage: $0 [--qa | --preview <branch>] <folder> <version> [branch] [commit]"
     echo ""
     echo "Options:"
-    echo "  --qa    Deploy as QA environment (stack prefixed 'qa-', domains 'qa.')"
+    echo "  --qa                Deploy as QA environment (stack prefixed 'qa-', domains 'qa.')"
+    echo "  --preview <branch>  Deploy a preview of <branch> (stack 'pv-<slug>-<repo>', domains '<slug>.')"
     echo ""
     echo "Arguments:"
     echo "  folder  - Repository folder name (sibling to this repo) or full path"
@@ -210,6 +228,20 @@ while [ $# -gt 0 ]; do
             QA_MODE=true
             shift
             ;;
+        --preview)
+            if [ $# -lt 2 ] || [ -z "$2" ]; then
+                log_error "--preview requires a branch name"
+                show_usage
+            fi
+            PREVIEW_MODE=true
+            PREVIEW_BRANCH="$2"
+            shift 2
+            ;;
+        --preview=*)
+            PREVIEW_MODE=true
+            PREVIEW_BRANCH="${1#--preview=}"
+            shift
+            ;;
         --help|-h)
             show_usage
             ;;
@@ -225,6 +257,11 @@ while [ $# -gt 0 ]; do
     esac
 done
 set -- "${POSITIONAL[@]}"
+
+if [ "$QA_MODE" = "true" ] && [ "$PREVIEW_MODE" = "true" ]; then
+    log_error "--qa and --preview are mutually exclusive"
+    exit 1
+fi
 
 # Check arguments
 if [ $# -lt 2 ]; then
@@ -272,14 +309,56 @@ fi
 BASE_STACK_NAME=$(get_stack_name "$REPO_PATH")
 if [ "$QA_MODE" = "true" ]; then
     STACK_NAME="${QA_STACK_PREFIX}${BASE_STACK_NAME}"
+elif [ "$PREVIEW_MODE" = "true" ]; then
+    # Names come from shared/preview_naming.py, the same code the API uses, so
+    # the stack the API records is exactly the stack deployed here.
+    PREVIEW_NAMING="$(dirname "$SCRIPT_DIR")/shared/preview_naming.py"
+    PREVIEW_PYTHON="$(command -v python3 || command -v python || true)"
+    if [ -z "$PREVIEW_PYTHON" ] || [ ! -f "$PREVIEW_NAMING" ]; then
+        log_error "Preview mode needs python3 and $PREVIEW_NAMING"
+        exit 1
+    fi
+    PREVIEW_NAMES=$("$PREVIEW_PYTHON" "$PREVIEW_NAMING" "$PREVIEW_BRANCH" "$BASE_STACK_NAME") || {
+        log_error "Invalid preview branch: $PREVIEW_BRANCH"
+        exit 1
+    }
+    PREVIEW_NAMES="${PREVIEW_NAMES%$'\r'}"
+    IFS=$'\t' read -r PREVIEW_SLUG STACK_NAME _PREVIEW_TAG <<< "$PREVIEW_NAMES"
+    # Defence in depth: whatever the helper printed, a preview must never
+    # target the production or QA stack of this repository.
+    if [ -z "$PREVIEW_SLUG" ] || [[ "$STACK_NAME" != pv-* ]] \
+        || [ "$STACK_NAME" = "$BASE_STACK_NAME" ] \
+        || [ "$STACK_NAME" = "${QA_STACK_PREFIX}${BASE_STACK_NAME}" ] \
+        || ! [[ "$PREVIEW_SLUG" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]]; then
+        log_error "Refusing preview stack '$STACK_NAME' (slug '$PREVIEW_SLUG')"
+        exit 1
+    fi
+    # The preview stack's isolation prefix (Traefik names, named networks) and
+    # host prefix replace QA's "qa-" / "qa." in the shared code paths below.
+    QA_STACK_PREFIX="pv-${PREVIEW_SLUG}-"
+    QA_DOMAIN_PREFIX="${PREVIEW_SLUG}."
 else
     STACK_NAME="$BASE_STACK_NAME"
+fi
+
+# Shared by QA and preview deployments: overlay .env.qa, prefix hosts and
+# isolate Traefik labels. ENV_LABEL only names the mode in log lines.
+ISOLATED_MODE=false
+ENV_LABEL=""
+if [ "$QA_MODE" = "true" ]; then
+    ISOLATED_MODE=true
+    ENV_LABEL="QA"
+elif [ "$PREVIEW_MODE" = "true" ]; then
+    ISOLATED_MODE=true
+    ENV_LABEL="Preview"
 fi
 
 echo ""
 echo "=============================================="
 if [ "$QA_MODE" = "true" ]; then
     echo "  Deploy Service (QA environment)"
+elif [ "$PREVIEW_MODE" = "true" ]; then
+    echo "  Deploy Service (preview of $PREVIEW_BRANCH)"
 else
     echo "  Deploy Service"
 fi
@@ -289,6 +368,7 @@ log_info "Repository: $REPO_PATH"
 log_info "DevOps folder: $DEVOPS_PATH"
 log_info "Stack name: $STACK_NAME"
 [ "$QA_MODE" = "true" ] && log_info "Mode: QA (domains will be prefixed with '${QA_DOMAIN_PREFIX}')"
+[ "$PREVIEW_MODE" = "true" ] && log_info "Mode: preview of '$PREVIEW_BRANCH' (domains will be prefixed with '${QA_DOMAIN_PREFIX}')"
 log_info "Version: $VERSION"
 [ -n "$BRANCH" ] && log_info "Branch: $BRANCH"
 [ -n "$COMMIT" ] && log_info "Commit: $COMMIT"
@@ -477,8 +557,9 @@ fi
 # QA mode: .env.qa, next to the .env, overrides some of its values for the QA
 # stack only (e.g. a separate database or session key). Variables it sets are
 # explicit QA values, so the qa. domain prefixing below leaves them alone.
+# Preview deployments load the same overlay (non-production settings).
 QA_OVERRIDE_KEYS=" "
-if [ "$QA_MODE" = "true" ]; then
+if [ "$ISOLATED_MODE" = "true" ]; then
     ENV_QA_FILE=""
     if [ -f "$DEVOPS_PATH/.env.qa" ]; then
         ENV_QA_FILE="$DEVOPS_PATH/.env.qa"
@@ -510,8 +591,14 @@ export REPO_NAME="${REPO_NAME:-$STACK_NAME}"
 # QA mode: prepend "qa." to host/domain env vars so the QA stack runs on
 # qa.<domain> instead of <domain>. Skip values that already start with "qa.".
 # ============================================================================
-if [ "$QA_MODE" = "true" ]; then
-    export DEPLOY_ENV="qa"
+if [ "$ISOLATED_MODE" = "true" ]; then
+    if [ "$PREVIEW_MODE" = "true" ]; then
+        export DEPLOY_ENV="preview"
+        export DEPLOY_PREVIEW_BRANCH="$PREVIEW_BRANCH"
+        export DEPLOY_PREVIEW_SLUG="$PREVIEW_SLUG"
+    else
+        export DEPLOY_ENV="qa"
+    fi
 
     apply_qa_domain_prefix() {
         local var_name="$1"
@@ -519,9 +606,12 @@ if [ "$QA_MODE" = "true" ]; then
         if [ -z "$cur_value" ]; then
             return 0
         fi
-        # Set explicitly by .env.qa: already the QA value
-        if [[ "$QA_OVERRIDE_KEYS" == *" ${var_name} "* ]]; then
-            log_info "QA: ${var_name} set by .env.qa, not prefixed"
+        # Set explicitly by .env.qa: already the QA value. A preview still
+        # prefixes TRAEFIK_HOST: it is the host Traefik routes to this stack,
+        # and the verbatim QA value would steal the QA stack's traffic.
+        if [[ "$QA_OVERRIDE_KEYS" == *" ${var_name} "* ]] \
+            && ! { [ "$PREVIEW_MODE" = "true" ] && [ "$var_name" = "TRAEFIK_HOST" ]; }; then
+            log_info "${ENV_LABEL}: ${var_name} set by .env.qa, not prefixed"
             return 0
         fi
         # Already prefixed? leave it alone
@@ -530,7 +620,7 @@ if [ "$QA_MODE" = "true" ]; then
         fi
         local new_value="${QA_DOMAIN_PREFIX}${cur_value}"
         export "$var_name"="$new_value"
-        log_info "QA: ${var_name} = ${cur_value} → ${new_value}"
+        log_info "${ENV_LABEL}: ${var_name} = ${cur_value} → ${new_value}"
     }
 
     # Always rewrite TRAEFIK_HOST when present (most common case)
@@ -607,21 +697,29 @@ fi
 # routers with identical names and Traefik silently drops one — making the QA
 # instance unreachable even when its Host() rule is already qa-prefixed.
 # ----------------------------------------------------------------------------
-if [ "$QA_MODE" = "true" ]; then
+if [ "$ISOLATED_MODE" = "true" ]; then
     QA_LABELS_PROCESSOR="$SCRIPT_DIR/process_qa_labels.py"
     if [ -f "$QA_LABELS_PROCESSOR" ] && [ -n "$PYTHON_BIN" ]; then
-        log_info "Prefixing Traefik labels with '${QA_STACK_PREFIX}' for QA isolation..."
+        log_info "Prefixing Traefik labels with '${QA_STACK_PREFIX}' for ${ENV_LABEL} isolation..."
         TMP_LABELS="${DEPLOY_COMPOSE}.qa-labels"
-        if "$PYTHON_BIN" "$QA_LABELS_PROCESSOR" "$DEPLOY_COMPOSE" "$TMP_LABELS" "$QA_STACK_PREFIX"; then
+        # QA_HOST_APEX is a QA-only override (an already qa-prefixed apex): a
+        # preview always derives its hosts from the compose file's own apex.
+        if [ "$PREVIEW_MODE" = "true" ]; then
+            LABELS_APEX=""
+        else
+            LABELS_APEX="${QA_HOST_APEX:-}"
+        fi
+        if QA_HOST_APEX="$LABELS_APEX" "$PYTHON_BIN" "$QA_LABELS_PROCESSOR" \
+            "$DEPLOY_COMPOSE" "$TMP_LABELS" "$QA_STACK_PREFIX" "$QA_DOMAIN_PREFIX"; then
             mv "$TMP_LABELS" "$DEPLOY_COMPOSE"
-            log_success "Traefik labels prefixed for QA"
+            log_success "Traefik labels prefixed for ${ENV_LABEL}"
         else
             log_error "Failed to prefix Traefik labels — aborting deployment"
             rm -f "$DEPLOY_COMPOSE" "$TMP_LABELS"
             exit 1
         fi
     elif [ ! -f "$QA_LABELS_PROCESSOR" ]; then
-        log_warning "process_qa_labels.py not found at $QA_LABELS_PROCESSOR — Traefik labels NOT isolated for QA"
+        log_warning "process_qa_labels.py not found at $QA_LABELS_PROCESSOR — Traefik labels NOT isolated for ${ENV_LABEL}"
     fi
 fi
 

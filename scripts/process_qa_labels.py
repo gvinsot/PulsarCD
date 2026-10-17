@@ -31,7 +31,11 @@ The apex can be overridden by setting ``QA_HOST_APEX`` in the environment
 literal host.
 
 Usage:
-    process_qa_labels.py <input_compose> <output_compose> <prefix>
+    process_qa_labels.py <input_compose> <output_compose> <prefix> [domain_prefix]
+
+``domain_prefix`` defaults to ``qa.``. Preview deployments pass their own
+(``<slug>.``, with ``pv-<slug>-`` as ``prefix``), so the same rewrite isolates a
+per-branch preview from both production and QA.
 
 Example with prefix="qa-":
     "traefik.http.routers.foo.rule=..."         -> "traefik.http.routers.qa-foo.rule=..."
@@ -51,7 +55,7 @@ except ImportError:
         "[qa-labels] PyYAML not available - skipping Traefik label rewrite.\n"
         "          Install with: pip install pyyaml\n"
     )
-    if len(sys.argv) == 4 and sys.argv[1] != sys.argv[2]:
+    if len(sys.argv) in (4, 5) and sys.argv[1] != sys.argv[2]:
         try:
             with open(sys.argv[1], "rb") as src, open(sys.argv[2], "wb") as dst:
                 dst.write(src.read())
@@ -320,7 +324,8 @@ def _detect_apex(data):
     return _common_dot_suffix(hostnames)
 
 
-def process(compose_path: str, output_path: str, prefix: str) -> None:
+def process(compose_path: str, output_path: str, prefix: str,
+            domain_prefix: str = "qa.") -> None:
     with open(compose_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
 
@@ -328,15 +333,16 @@ def process(compose_path: str, output_path: str, prefix: str) -> None:
     override = os.environ.get("QA_HOST_APEX", "").strip() or None
     if override:
         apex_qa = override
-        apex_original = override[3:] if override.startswith("qa.") else override
+        apex_original = (override[len(domain_prefix):]
+                         if override.startswith(domain_prefix) else override)
     else:
         apex_original = _detect_apex(data)
         apex_qa = None
         if apex_original:
             apex_qa = (
                 apex_original
-                if apex_original.startswith("qa.")
-                else f"qa.{apex_original}"
+                if apex_original.startswith(domain_prefix)
+                else f"{domain_prefix}{apex_original}"
             )
 
     if apex_original and apex_qa:
@@ -355,9 +361,14 @@ def process(compose_path: str, output_path: str, prefix: str) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
+    if len(sys.argv) not in (4, 5):
         sys.stderr.write(
-            "Usage: process_qa_labels.py <input_compose> <output_compose> <prefix>\n"
+            "Usage: process_qa_labels.py <input_compose> <output_compose> <prefix>"
+            " [domain_prefix]\n"
         )
         sys.exit(2)
-    process(sys.argv[1], sys.argv[2], sys.argv[3])
+    _domain_prefix = sys.argv[4] if len(sys.argv) == 5 else "qa."
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.", _domain_prefix):
+        sys.stderr.write(f"Invalid domain prefix: {_domain_prefix!r}\n")
+        sys.exit(2)
+    process(sys.argv[1], sys.argv[2], sys.argv[3], _domain_prefix)
