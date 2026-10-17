@@ -18,7 +18,9 @@
 #       (replicas: 0 converges as soon as the old tasks are gone);
 #     - global services: every task the scheduler wants running is running the
 #       current image;
-#     - job services (replicated-job / global-job): only checked for failures.
+#     - job services (replicated-job / global-job): only checked for failures;
+#     - one-shot replicated services (restart_policy condition none or
+#       on-failure): tasks that completed on the current image count as done.
 #   It fails as soon as:
 #     - a task created by this deploy ends up Failed or Rejected (more than
 #       DEPLOY_CONVERGE_MAX_FAILURES of them), which is how a crash loop shows;
@@ -101,17 +103,17 @@ strip_digest() {
 #   SVC_DETAIL one-line human summary
 check_service() {
     local svc="$1" baseline_file="$2" start_epoch="$3"
-    local info mode spec_image update_state update_started
+    local info mode spec_image restart_condition update_state update_started
     SVC_STATE="pending"
     SVC_DETAIL=""
 
     if ! info=$(docker service inspect "$svc" --format \
-        '{{if .Spec.Mode.Global}}global{{else if .Spec.Mode.Replicated}}{{.Spec.Mode.Replicated.Replicas}}{{else}}job{{end}}|{{.Spec.TaskTemplate.ContainerSpec.Image}}|{{with .UpdateStatus}}{{.State}}|{{with .StartedAt}}{{.Unix}}{{end}}{{end}}' \
+        '{{if .Spec.Mode.Global}}global{{else if .Spec.Mode.Replicated}}{{.Spec.Mode.Replicated.Replicas}}{{else}}job{{end}}|{{.Spec.TaskTemplate.ContainerSpec.Image}}|{{with .Spec.TaskTemplate.RestartPolicy}}{{.Condition}}{{end}}|{{with .UpdateStatus}}{{.State}}|{{with .StartedAt}}{{.Unix}}{{end}}{{end}}' \
         2>/dev/null); then
         SVC_DETAIL="cannot inspect service"
         return
     fi
-    IFS='|' read -r mode spec_image update_state update_started <<< "$info"
+    IFS='|' read -r mode spec_image restart_condition update_state update_started <<< "$info"
     spec_image=$(strip_digest "$spec_image")
 
     # A swarm update started by this deploy that the swarm paused or rolled
@@ -139,7 +141,7 @@ check_service() {
     fi
 
     local id image desired current error
-    local running_new=0 desired_running=0 failed=0 failure_detail=""
+    local running_new=0 desired_running=0 completed_new=0 failed=0 failure_detail=""
     while IFS='|' read -r id image desired current error; do
         [ -z "$id" ] && continue
         if [ "$desired" = "Running" ]; then
@@ -147,6 +149,11 @@ check_service() {
             if [[ "$current" == Running* ]] && [ "$(strip_digest "$image")" = "$spec_image" ]; then
                 running_new=$((running_new + 1))
             fi
+        fi
+        # A one-shot task (restart_policy none / on-failure) that exited 0
+        # is done: swarm moves it to desired Shutdown / current Complete.
+        if [[ "$current" == Complete* ]] && [ "$(strip_digest "$image")" = "$spec_image" ]; then
+            completed_new=$((completed_new + 1))
         fi
         # Only tasks created by this deploy count as failures.
         if [[ "$current" == Failed* || "$current" == Rejected* ]]; then
@@ -190,7 +197,20 @@ check_service() {
     fi
     if [ "$running_new" -eq "$expected" ] && [ "$desired_running" -eq "$expected" ]; then
         SVC_STATE="converged"
+        return
     fi
+    # One-shot services (e.g. a migration with restart_policy condition: none
+    # or on-failure) are never restarted once they exit 0, so their replicas
+    # end up Complete instead of Running: count those as converged, as long as
+    # no task is still pending or running an old image.
+    case "${restart_condition:-any}" in
+        none|on-failure)
+            if [ "$desired_running" -eq "$running_new" ]                 && [ $((running_new + completed_new)) -ge "$expected" ]; then
+                SVC_STATE="converged"
+                SVC_DETAIL="${SVC_DETAIL}, ${completed_new} completed (restart_policy ${restart_condition})"
+            fi
+            ;;
+    esac
 }
 
 converge() {

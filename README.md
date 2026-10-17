@@ -446,7 +446,9 @@ verifies the deploy (`scripts/verify-deploy.sh`) before reporting success:
 
 1. **Convergence** — waits until every service of the stack runs its requested
    replicas on the new image (`replicas: 0` and `mode: global` are handled; job
-   services are only checked for failures), and stays that way for a few
+   services are only checked for failures; one-shot services with
+   `restart_policy.condition: none` or `on-failure`, such as migrations, count
+   as done once their task completed), and stays that way for a few
    seconds. It fails as soon as a task created by this deploy is `Failed` or
    `Rejected` (a crash loop), or the swarm paused/rolled back the update, or the
    timeout expires.

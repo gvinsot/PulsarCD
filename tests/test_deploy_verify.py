@@ -82,10 +82,10 @@ exit 0
 '''
 
 
-def inspect_line(mode="2", image=IMAGE, update_state="", started=""):
+def inspect_line(mode="2", image=IMAGE, update_state="", started="", restart="any"):
     """One line as produced by verify-deploy.sh's `service inspect` template."""
     update = f"{update_state}|{started}" if update_state else ""
-    return f"{mode}|{image}@sha256:abc|{update}\n"
+    return f"{mode}|{image}@sha256:abc|{restart}|{update}\n"
 
 
 def task(task_id, state="Running 5 seconds ago", desired="Running", image=IMAGE, error=""):
@@ -185,6 +185,32 @@ class ConvergeTests(_StubbedBash):
         self.write("ps_app_web", task("t2") + task("t1", "Failed 9 seconds ago", "Shutdown", error="oom"))
         result = self.converge(baseline=[], env={"DEPLOY_CONVERGE_MAX_FAILURES": "1"})
         self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_one_shot_service_that_completed_converges(self):
+        # e.g. a migration service: replicas 1, restart_policy condition none
+        self.services("app_migrate")
+        self.write("inspect_app_migrate", inspect_line("1", restart="none"))
+        self.write("ps_app_migrate",
+                   task("m1", "Complete 3 seconds ago", "Shutdown")
+                   + task("m0", "Complete 2 days ago", "Shutdown", OLD_IMAGE))
+        result = self.converge(baseline=["m0"])
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_one_shot_service_still_pending_does_not_converge(self):
+        self.services("app_migrate")
+        self.write("inspect_app_migrate", inspect_line("1", restart="on-failure"))
+        self.write("ps_app_migrate",
+                   task("m1", "Preparing 1 second ago")
+                   + task("m0", "Complete 2 days ago", "Shutdown"))
+        result = self.converge(baseline=["m0"], env={"DEPLOY_CONVERGE_TIMEOUT": "0"})
+        self.assertEqual(result.returncode, 3, result.stdout)
+
+    def test_completed_task_with_restart_any_does_not_converge(self):
+        self.services("app_web")
+        self.write("inspect_app_web", inspect_line("1"))
+        self.write("ps_app_web", task("t1", "Complete 3 seconds ago", "Shutdown"))
+        result = self.converge(baseline=[], env={"DEPLOY_CONVERGE_TIMEOUT": "0"})
+        self.assertEqual(result.returncode, 3, result.stdout)
 
     def test_waits_for_rolling_update_then_converges(self):
         self.services("app_web")
