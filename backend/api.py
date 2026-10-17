@@ -312,6 +312,11 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
     await collector.stop()
+    try:
+        # Flush pending run-history writes before the client closes.
+        await asyncio.wait_for(run_history.recorder.drain(), timeout=10)
+    except Exception as e:
+        logger.warning("Pipeline run history: pending writes not flushed", error=str(e))
     await opensearch.close()
     await github_service.close()
     await close_shared_ssh_clients()
@@ -3294,6 +3299,7 @@ async def build_stack(
     _background_actions[action_id] = action
 
     # Update pipeline state so all browsers see the build
+    run_history.set_commit(commit)
     _set_pipeline(repo_name, "build", "running", version, build_id=action_id)
 
     async def _run_build():
@@ -3670,15 +3676,19 @@ async def cancel_action(action_id: str) -> Dict[str, Any]:
 
     # Update pipeline state so UI reflects cancellation immediately
     kwargs = {}
-    if action.action_type == "build":
+    # A QA deployment runs as a "qa-deploy" action but is the "qa" pipeline stage.
+    stage = "qa" if action.action_type == "qa-deploy" else action.action_type
+    if stage == "build":
         kwargs["build_id"] = action_id
-    elif action.action_type == "test":
+    elif stage == "test":
         kwargs["test_id"] = action_id
-    elif action.action_type == "deploy":
+    elif stage == "qa":
+        kwargs["qa_id"] = action_id
+    elif stage == "deploy":
         kwargs["deploy_id"] = action_id
     _set_pipeline(
         action.repo_name,
-        action.action_type,
+        stage,
         "failed",
         pipeline_state.get_legacy(action.repo_name).get("version", ""),
         log_lines=action.output_lines,

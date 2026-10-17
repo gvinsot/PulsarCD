@@ -600,3 +600,88 @@ class TestMcpTools:
         from backend.config_file import is_dangerous_tool
         assert not is_dangerous_tool("get_pipeline_history")
         assert not is_dangerous_tool("get_pipeline_run")
+
+
+# ---------------------------------------------------------------------------
+# Review fixes
+# ---------------------------------------------------------------------------
+
+class TestRedaction:
+    @pytest.mark.parametrize("raw,expected", [
+        ("git clone https://bot:s3cr3t@github.com/o/r.git",
+         "git clone https://bot:[REDACTED]@github.com/o/r.git"),
+        ("token ghp_abcdefghijklmnopqrstuvwxyz0123 used", "token [REDACTED] used"),
+        ("DB_PASSWORD=hunter2 rest", "DB_PASSWORD=[REDACTED] rest"),
+        ('api_key: "a b c"', "api_key: [REDACTED]"),
+        ("Authorization: Bearer abc.def", "Authorization: Bearer [REDACTED]"),
+        ("Step 3/10 : RUN npm ci", "Step 3/10 : RUN npm ci"),
+        ("[SUCCESS] Commit: abcdef1", "[SUCCESS] Commit: abcdef1"),
+    ])
+    def test_redact_secrets(self, raw, expected):
+        assert run_history.redact_secrets(raw) == expected
+
+    async def test_stored_logs_and_excerpt_are_redacted(self, bulk_calls):
+        rec, fake = await _attached()
+        rec.observe("r", "deploy", "running", "1.0", action_id="d9")
+        rec.observe("r", "deploy", "failed", "1.0", action_id="d9",
+                    log_lines=["export REGISTRY_PASSWORD=topsecret", "ERROR: login failed"])
+        await rec.drain()
+        final = _indexed_docs(fake)[-1]
+        assert "topsecret" not in (final["error_excerpt"] or "")
+        (actions,) = bulk_calls
+        assert "topsecret" not in actions[0]["_source"]["message"]
+
+    async def test_cancel_marker_anywhere_in_log(self, bulk_calls):
+        rec, fake = await _attached()
+        rec.observe("r", "build", "running", "1.0", action_id="b9")
+        lines = ["[Cancellation requested...]"] + [f"cleanup {i}" for i in range(100)]
+        rec.observe("r", "build", "failed", "1.0", action_id="b9", log_lines=lines)
+        await rec.drain()
+        assert _indexed_docs(fake)[-1]["status"] == "cancelled"
+
+
+class TestQueryFixes:
+    async def test_log_search_is_time_bounded_and_newest_first(self):
+        from datetime import datetime, timezone
+        rec, fake = await _attached()
+        fake._client.search = AsyncMock(side_effect=[
+            {"aggregations": {"runs": {"buckets": []}}},
+            {"hits": {"total": {"value": 0}, "hits": []}},
+        ])
+        since = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        await rec.list_runs(q="OOMKilled", since=since)
+        body = fake._client.search.await_args_list[0].kwargs["body"]
+        assert {"range": {"timestamp": {"gte": since.isoformat()}}} in body["query"]["bool"]["filter"]
+        assert body["aggs"]["runs"]["terms"]["order"] == {"latest": "desc"}
+
+    async def test_get_run_requests_enough_chunks_for_the_window(self):
+        rec, fake = await _attached()
+        fake._client.get = AsyncMock(return_value={"_source": {
+            "run_id": "abc", "log_line_count": 20000, "log_stored_lines": 20000,
+        }})
+        fake._client.search = AsyncMock(return_value={"hits": {"hits": []}})
+        await rec.get_run("abc", log_offset=0, log_limit=20000)
+        # Small chunks (log_chunk_lines=10) need up to 2000 documents.
+        assert fake._client.search.await_args.kwargs["body"]["size"] >= 2000
+
+
+class TestCancelWiring:
+    def test_cancel_qa_deploy_reports_the_qa_stage(self, client, auth_headers, monkeypatch, tmp_path):
+        import backend.api as api_module
+        from backend.pipeline_state import PipelineStateManager
+
+        monkeypatch.setattr(api_module, "pipeline_state", PipelineStateManager(data_dir=str(tmp_path)))
+        seen = []
+        monkeypatch.setattr(
+            run_history.recorder, "observe",
+            lambda *a, **kw: seen.append((a, kw, run_history._actor_var.get())))
+        action = api_module.BackgroundAction("qa1", "qa-deploy", "repo")
+        monkeypatch.setitem(api_module._background_actions, "qa1", action)
+
+        resp = client.post("/api/stacks/actions/qa1/cancel", headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        (args, kwargs, actor), = seen
+        assert args[1] == "qa" and args[2] == "failed"
+        assert kwargs["action_id"] == "qa1"
+        # The authenticated user reaches the recorder through the auth middleware.
+        assert actor == "testuser"

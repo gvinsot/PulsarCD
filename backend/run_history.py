@@ -62,6 +62,23 @@ _COMMIT_RE = re.compile(r"(?i)\b(?:commit|HEAD is now at)[:\s]+([0-9a-f]{7,40})\
 _ERROR_HINT_RE = re.compile(r"(?i)\b(error|failed|failure|fatal|exception|traceback|denied)\b")
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
+# Credentials a build/deploy script may echo. Run logs are kept for months and
+# are full-text searchable by viewers, so they are masked before being stored.
+_SECRET_PATTERNS = (
+    # GitHub tokens (classic and fine-grained)
+    (re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b"), "[REDACTED]"),
+    # user:password@ in URLs
+    (re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s/:@]+:)[^\s/@]+@"), r"\1[REDACTED]@"),
+    # Authorization headers / bearer tokens
+    (re.compile(r"(?i)\b(authorization:\s*(?:bearer|basic|token)\s+)\S+"), r"\1[REDACTED]"),
+    (re.compile(r"(?i)\b(bearer\s+)(?!\[REDACTED\])[A-Za-z0-9._~+/=-]{16,}"), r"\1[REDACTED]"),
+    # KEY=value / key: value where the key names a secret
+    (re.compile(
+        r"(?i)\b([A-Z0-9_.-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key"
+        r"|private[_-]?key)[A-Z0-9_.-]*\s*[=:]\s*)(?!\[REDACTED\])(\"[^\"]*\"|'[^']*'|[^\s\"']+)"),
+     r"\1[REDACTED]"),
+)
+
 # Operators allowed in history full-text queries (same allow-list rationale as
 # opensearch_client.SIMPLE_QUERY_FLAGS: no fuzzy, slop or regexp).
 _SIMPLE_QUERY_FLAGS = "AND|OR|NOT|PHRASE|PRECEDENCE|PREFIX|WHITESPACE|ESCAPE"
@@ -172,6 +189,13 @@ def normalize_stage(stage: Optional[str]) -> Optional[str]:
 
 def strip_ansi(line: str) -> str:
     return _ANSI_RE.sub("", line)
+
+
+def redact_secrets(line: str) -> str:
+    """Mask credentials a script printed (tokens, URL passwords, KEY=secret)."""
+    for pattern, repl in _SECRET_PATTERNS:
+        line = pattern.sub(repl, line)
+    return line
 
 
 def extract_commit(lines: Iterable[str]) -> Optional[str]:
@@ -483,8 +507,8 @@ class RunHistoryRecorder:
                 log_lines = self._log_source(doc["repo"], doc["stage"], doc.get("action_id"))
             except Exception:
                 log_lines = None
-        lines = [str(line) for line in (log_lines or [])]
-        if status == "failed" and any(_CANCEL_MARKER in line for line in lines[-50:]):
+        lines = [redact_secrets(strip_ansi(str(line))) for line in (log_lines or [])]
+        if status == "failed" and any(_CANCEL_MARKER in line for line in lines):
             status = "cancelled"
 
         finished = _now()
@@ -623,12 +647,22 @@ class RunHistoryRecorder:
             raise RuntimeError("Pipeline run history is not available")
 
     async def _run_ids_matching_logs(self, text: str, repo: Optional[str],
-                                     stage: Optional[str]) -> List[str]:
+                                     stage: Optional[str],
+                                     since: Optional[datetime] = None,
+                                     until: Optional[datetime] = None) -> List[str]:
         filters: List[Dict[str, Any]] = []
         if repo:
             filters.append({"term": {"repo": repo}})
         if stage:
             filters.append({"term": {"stage": normalize_stage(stage) or stage}})
+        if since or until:
+            # A log chunk's timestamp is its run's started_at.
+            window: Dict[str, str] = {}
+            if since:
+                window["gte"] = since.isoformat()
+            if until:
+                window["lte"] = until.isoformat()
+            filters.append({"range": {"timestamp": window}})
         body = {
             "size": 0,
             "timeout": "30s",
@@ -639,7 +673,11 @@ class RunHistoryRecorder:
                     "default_operator": "and", "flags": _SIMPLE_QUERY_FLAGS,
                 }}],
             }},
-            "aggs": {"runs": {"terms": {"field": "run_id", "size": 500}}},
+            # Most recent runs first, so a broad query keeps the newest matches.
+            "aggs": {"runs": {
+                "terms": {"field": "run_id", "size": 500, "order": {"latest": "desc"}},
+                "aggs": {"latest": {"max": {"field": "timestamp"}}},
+            }},
         }
         resp = await self._client.search(index=self.logs_index, body=body)
         buckets = resp.get("aggregations", {}).get("runs", {}).get("buckets", [])
@@ -663,7 +701,7 @@ class RunHistoryRecorder:
         page_size = _clamp(page_size, 1, MAX_PAGE_SIZE, 20)
         start = min((page - 1) * page_size, MAX_FROM - page_size)
         text = (q or "").strip()[:MAX_QUERY_LENGTH] or None
-        run_ids = await self._run_ids_matching_logs(text, repo, stage) if text else None
+        run_ids = await self._run_ids_matching_logs(text, repo, stage, since, until) if text else None
         body = {
             "from": start,
             "size": page_size,
@@ -720,7 +758,8 @@ class RunHistoryRecorder:
         lines: List[str] = []
         if stored and end > log_offset:
             body = {
-                "size": 1000,
+                # Every chunk holds at least one line of the window.
+                "size": min(MAX_FROM, end - log_offset),
                 "sort": [{"chunk": {"order": "asc"}}],
                 "query": {"bool": {"filter": [
                     {"term": {"run_id": run_id}},
