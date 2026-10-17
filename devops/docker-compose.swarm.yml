@@ -140,6 +140,10 @@ services:
       - PULSARCD_GITHUB__SSH_USER=${PULSARCD_GITHUB__SSH_USER:-user}
       # Which repos to show in Stacks: "all" (default) or "starred"
       - PULSARCD_GITHUB__REPOS_MODE=${PULSARCD_GITHUB__REPOS_MODE:-all}
+      # Push webhook (POST /api/webhooks/github). Empty keeps it disabled (404)
+      # and the 10s poller as the only auto-build trigger.
+      - PULSARCD_GITHUB__WEBHOOK_SECRET=${PULSARCD_GITHUB__WEBHOOK_SECRET:-}
+      - PULSARCD_GITHUB__WEBHOOK_POLL_INTERVAL=${PULSARCD_GITHUB__WEBHOOK_POLL_INTERVAL:-120}
       # Docker registry for build/push operations
       - PULSARCD_GITHUB__REGISTRY_URL=${DOCKER_REGISTRY_URL}
       - PULSARCD_GITHUB__REGISTRY_USERNAME=${DOCKER_REGISTRY_USERNAME}
