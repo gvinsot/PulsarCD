@@ -183,6 +183,19 @@ class TestSuccessPath:
         env.llm.evaluate_gate.assert_not_awaited()
         assert api._buildable_cache["app"] is True
 
+    async def test_successful_deploy_log_survives_restart(self, env, client, auth_headers):
+        """/actions/{id}/logs falls back to the persisted log after a restart."""
+        await _run()
+        deploy_id = _legacy(env)["deploy_action_id"]
+        reloaded = PipelineStateManager(data_dir=str(env.tmp_path))
+        assert reloaded.get("app").stages["deploy"].last_log == ["deploy done"]
+
+        api._background_actions.clear()  # what a restart does to live actions
+        resp = client.get(f"/api/stacks/actions/{deploy_id}/logs", headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["lines"] == ["deploy done"]
+        assert resp.json()["restored"] is True
+
     async def test_version_comes_from_build_output(self, env):
         """Auto-increment builds ("1.0") learn their version from the script."""
         env.deployer.build_output = ["Version: 1.0.42 (tag: v1.0.42)"]

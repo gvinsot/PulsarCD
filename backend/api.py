@@ -3203,8 +3203,10 @@ def _set_pipeline(
         repo_name, stage, status, version,
         build_id=build_id, test_id=test_id, qa_id=qa_id, deploy_id=deploy_id,
     )
-    if log_lines and stage in ("build", "test", "qa", "deploy"):
-        pipeline_state.update_log(repo_name, stage, log_lines)
+    # "done" is how a successful deploy is recorded; its log is the deploy's.
+    log_stage = "deploy" if stage == "done" else stage
+    if log_lines and log_stage in ("build", "test", "qa", "deploy"):
+        pipeline_state.update_log(repo_name, log_stage, log_lines)
 
 
 def _get_deployer_and_host():
