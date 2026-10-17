@@ -652,6 +652,7 @@ class World:
         self.untagged = 0
         self.latest_tag = {"name": "v1.0.5", "sha": "sha0"}
         self.fail_commits = False
+        self.empty = False
         self.repo_calls = 0
 
     def service(self):
@@ -665,6 +666,8 @@ class World:
             self.repo_calls += 1
             if self.fail_commits:
                 raise OSError("GitHub unreachable")
+            if self.empty:
+                return {"commits": [], "has_more": False}
             return {"commits": [{"sha": self.sha}], "has_more": False}
 
         async def untagged(owner, name, limit=20):
@@ -793,6 +796,48 @@ class TestAutoBuildPoller:
         await poller.run(polls=1)
         poller.trigger.assert_not_awaited()
         assert api._auto_build_state["app"]["last_sha"] == "sha0"
+
+    async def test_commit_pushed_during_a_build_is_built_afterwards(self, poller):
+        """The poller must come back to a commit it had to skip while building."""
+        w = poller.world
+
+        def step(i):
+            if i == 0:   # a build is running when the next commit lands
+                api._auto_build_state["app"]["building"] = True
+                w.pushed_at, w.sha = "t1", "sha1"
+            elif i == 1:  # build finished; no further push happens
+                api._auto_build_state["app"]["building"] = False
+
+        await poller.run(polls=3, between=step)
+        poller.trigger.assert_awaited_once_with("app", SSH, version="1.0.5", tag="v1.0.5")
+
+    async def test_commit_seen_during_a_github_outage_is_built_afterwards(self, poller):
+        w = poller.world
+
+        def step(i):
+            if i == 0:
+                w.pushed_at, w.sha, w.fail_commits = "t1", "sha1", True
+            elif i == 1:
+                w.fail_commits = False
+
+        await poller.run(polls=3, between=step)
+        poller.trigger.assert_awaited_once()
+
+    async def test_empty_repo_is_not_rechecked_every_poll(self, poller):
+        poller.world.empty = True
+        await poller.run(polls=3)
+        assert poller.world.repo_calls == 1
+
+    async def test_rate_limited_commit_listing_is_retried(self, poller):
+        calls = []
+
+        async def limited(owner, name, per_page=1):
+            calls.append(name)
+            return {"commits": [], "has_more": False, "error": "Rate limited by GitHub API"}
+
+        poller.gh.get_repo_commits = AsyncMock(side_effect=limited)
+        await poller.run(polls=3)
+        assert len(calls) == 3
 
     async def test_poller_survives_repo_listing_errors(self, poller):
         poller.gh.get_starred_repos = AsyncMock(side_effect=RuntimeError("boom"))
