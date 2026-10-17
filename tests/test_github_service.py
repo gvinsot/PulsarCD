@@ -243,6 +243,47 @@ class TestRateLimit:
         assert svc._is_rate_limited() is False
         assert svc._rate_limit_reset is None
 
+    @staticmethod
+    def _expire(cache):
+        for key, (value, _) in list(cache.items()):
+            cache[key] = (value, datetime.now() - timedelta(hours=1))
+
+    async def test_rate_limited_serves_stale_branches(self):
+        svc, session = _service(lambda *a: FakeResponse(200, [_branch("main")]))
+        fresh = await svc.get_repo_branches("o", "r")
+        self._expire(svc._branches_cache)
+        svc._rate_limit_reset = datetime.now() + timedelta(minutes=5)
+        assert await svc.get_repo_branches("o", "r") == fresh
+        assert len(session.calls) == 1
+
+    async def test_rate_limited_serves_stale_commits_and_diff(self):
+        diff = {"sha": "abc", "commit": {"message": "m", "author": {"name": "n", "date": "d"}},
+                "files": []}
+
+        def handler(method, url, kwargs):
+            return FakeResponse(200, diff if url.endswith("/abc") else [_commit("abc")])
+
+        svc, session = _service(handler)
+        commits = await svc.get_repo_commits("o", "r", per_page=1)
+        commit_diff = await svc.get_commit_diff("o", "r", "abc")
+        self._expire(svc._commits_cache)
+        self._expire(svc._commit_diff_cache)
+        svc._rate_limit_reset = datetime.now() + timedelta(minutes=5)
+        assert await svc.get_repo_commits("o", "r", per_page=1) == commits
+        assert await svc.get_commit_diff("o", "r", "abc") == commit_diff
+        assert len(session.calls) == 2
+
+    async def test_rate_limited_next_version_uses_stale_tags(self):
+        """Without the stale tags the next version silently fell back to 1.0.0."""
+        svc, session = _service(_tags_handler([_tag("v1.4.2", "s1")]))
+        assert await svc.get_next_version("o", "r") == "1.4.3"
+        calls = len(session.calls)
+        self._expire(svc._tags_cache)
+        self._expire(svc._branches_cache)
+        svc._rate_limit_reset = datetime.now() + timedelta(minutes=5)
+        assert await svc.get_next_version("o", "r") == "1.4.3"
+        assert len(session.calls) == calls
+
     async def test_rate_limited_without_cache_returns_empty(self):
         svc, session = _service(lambda *a: FakeResponse(200, []))
         svc._rate_limit_reset = datetime.now() + timedelta(minutes=5)

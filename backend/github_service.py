@@ -207,13 +207,17 @@ class GitHubService:
         return datetime.now() - self._starred_repos_cache_time < STARRED_REPOS_CACHE_TTL
 
     def _get_cached(self, cache: dict, key: str, ttl: timedelta) -> Optional[Any]:
-        """Get value from a TTL cache dict. Returns None if missing or expired."""
+        """Get value from a TTL cache dict. Returns None if missing or expired.
+
+        Expired entries are kept (and overwritten by the next successful
+        fetch): they are what the rate-limited paths fall back to. Deleting
+        them here made every one of those stale fallbacks unreachable.
+        """
         entry = cache.get(key)
         if entry is None:
             return None
         value, cached_at = entry
         if datetime.now() - cached_at >= ttl:
-            del cache[key]
             return None
         return value
 
