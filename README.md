@@ -819,8 +819,9 @@ with a branch-derived prefix instead of `qa`.
 **Names** come from `shared/preview_naming.py`, used by both the API and the
 deploy script. The slug is a DNS label of at most 24 characters. A branch that
 cannot be used verbatim (upper case, `/`, `_`, too long, or a reserved name such
-as `qa` or `www`) gets a 6-character hash of its exact name, so `feature/x` and
-`feature-x` never share a stack. Stack names are capped at 48 characters.
+as `qa` or `www`, or a name already ending in `-<6 hex digits>`) gets a
+6-character hash of its exact name, so `feature/x` and `feature-x` never share
+a stack. Stack names are capped at 48 characters.
 
 **Build**: the branch is built through the regular build path with the version
 `pv-<slug>`. `build-push.sh` then publishes that tag only. It never pushes the
@@ -834,6 +835,9 @@ rebuilds, because the tag follows the branch.
   of the same repository and branch.
 - `DELETE /api/previews/{stack}` only removes stacks recorded in
   `<data_dir>/previews.json`.
+- A running stack is only redeployed or removed (by hand or on expiry) while
+  it runs at least one image tagged `pv-<slug>`, so a production repository
+  that happens to be named `pv-<x>-<repo>` is never removed in its place.
 - Previews never touch the pipeline state of the repository.
 
 **Expiry**: a preview that has not been redeployed for `ttl_hours` is removed
@@ -850,8 +854,10 @@ it until it is torn down by hand.
 ### DNS and Traefik requirements
 
 Each preview answers on `<slug>.<TRAEFIK_HOST>`. If `devops/.env.qa` sets
-`TRAEFIK_HOST`, the preview uses `<slug>.<that QA host>`. Other `*_HOST` /
-`*_DOMAIN` values follow the QA rules. For previews to be reachable:
+`TRAEFIK_HOST`, the preview uses `<slug>.<that QA host>`; the same applies to
+any `*_HOST` / `*_DOMAIN` variable referenced in a Traefik `rule` label, so a
+preview never routes on a QA host. Other `*_HOST` / `*_DOMAIN` values follow
+the QA rules. For previews to be reachable:
 
 1. **DNS**: add a wildcard record for every apex you preview, e.g.
    `*.example.com` (and `*.qa.example.com` if `.env.qa` moves `TRAEFIK_HOST`

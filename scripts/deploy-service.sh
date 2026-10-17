@@ -600,6 +600,16 @@ if [ "$ISOLATED_MODE" = "true" ]; then
         export DEPLOY_ENV="qa"
     fi
 
+    # Preview: the variables Traefik routes on (TRAEFIK_HOST and any ${VAR}
+    # inside a "rule" label). Their .env.qa value is a QA host, so a preview
+    # using it verbatim would compete with the QA stack's routers.
+    PREVIEW_ROUTED_VARS=" TRAEFIK_HOST "
+    if [ "$PREVIEW_MODE" = "true" ] && [ -f "$COMPOSE_PATH" ]; then
+        PREVIEW_ROUTED_VARS+="$( { grep -E 'rule' "$COMPOSE_PATH" || true; } \
+            | grep -oE '\$\{?[A-Za-z_][A-Za-z0-9_]*' | sed -E 's/^\$\{?//' \
+            | sort -u | tr '\n' ' ')"
+    fi
+
     apply_qa_domain_prefix() {
         local var_name="$1"
         local cur_value="${!var_name:-}"
@@ -607,10 +617,10 @@ if [ "$ISOLATED_MODE" = "true" ]; then
             return 0
         fi
         # Set explicitly by .env.qa: already the QA value. A preview still
-        # prefixes TRAEFIK_HOST: it is the host Traefik routes to this stack,
-        # and the verbatim QA value would steal the QA stack's traffic.
+        # prefixes the variables Traefik routes on: the verbatim QA value
+        # would steal the QA stack's traffic.
         if [[ "$QA_OVERRIDE_KEYS" == *" ${var_name} "* ]] \
-            && ! { [ "$PREVIEW_MODE" = "true" ] && [ "$var_name" = "TRAEFIK_HOST" ]; }; then
+            && ! { [ "$PREVIEW_MODE" = "true" ] && [[ "$PREVIEW_ROUTED_VARS" == *" ${var_name} "* ]]; }; then
             log_info "${ENV_LABEL}: ${var_name} set by .env.qa, not prefixed"
             return 0
         fi

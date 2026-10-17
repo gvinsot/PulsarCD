@@ -32,6 +32,7 @@ COMPOSE = """services:
         - traefik.http.routers.shop.rule=Host(`${TRAEFIK_HOST}`)
         - traefik.http.routers.shop.service=shop
         - traefik.http.routers.www.rule=Host(`www.example.com`)
+        - traefik.http.routers.api.rule=Host(`${API_HOST}`)
         - traefik.http.services.shop.loadbalancer.server.port=80
 networks:
   shop-net:
@@ -47,6 +48,8 @@ if [ "$1 $2" = "stack deploy" ]; then
     printf '%s\n' "$5" > "$CAPTURE_DIR/stack_arg"
     printf '%s\n' "$TRAEFIK_HOST" > "$CAPTURE_DIR/traefik_host"
     printf '%s\n' "$DEPLOY_ENV" > "$CAPTURE_DIR/deploy_env"
+    printf '%s\n' "$API_HOST" > "$CAPTURE_DIR/api_host"
+    printf '%s\n' "$INTERNAL_HOST" > "$CAPTURE_DIR/internal_host"
 fi
 case "$1 $2" in
     "service inspect") exit 1 ;;
@@ -90,7 +93,7 @@ class DeployServicePreviewTests(unittest.TestCase):
                 env=env, capture_output=True, text=True, timeout=60,
             )
             captured = {}
-            for name in ("stack_arg", "traefik_host", "deploy_env"):
+            for name in ("stack_arg", "traefik_host", "deploy_env", "api_host", "internal_host"):
                 path = capture / name
                 captured[name] = path.read_text().strip() if path.exists() else None
             compose_path = capture / "compose.yml"
@@ -122,6 +125,22 @@ class DeployServicePreviewTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(captured["traefik_host"], "main.qa.example.com")
         self.assertEqual(captured["stack_arg"], "pv-main-shop")
+
+    def test_preview_prefixes_routed_hosts_set_by_env_qa(self):
+        """A ${VAR} used in a Traefik rule must not keep its QA value."""
+        names = preview_names("main", "shop")
+        result, captured = self.deploy(
+            "--preview", "main", version=names.image_tag,
+            env_qa="API_HOST=api.qa.example.com\nINTERNAL_HOST=db.qa.lan\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(captured["api_host"], "main.api.qa.example.com")
+        # Not routed by Traefik: the .env.qa value is used verbatim.
+        self.assertEqual(captured["internal_host"], "db.qa.lan")
+
+    def test_qa_keeps_env_qa_hosts_verbatim(self):
+        result, captured = self.deploy("--qa", version="1.2.3", env_qa="API_HOST=api.qa.example.com\n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(captured["api_host"], "api.qa.example.com")
 
     def test_reserved_branch_cannot_take_the_qa_host(self):
         result, captured = self.deploy("--preview", "qa")
