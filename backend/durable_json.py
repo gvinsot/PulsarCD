@@ -37,3 +37,22 @@ def atomic_write_json(path: Path, payload: Any, indent: int = 2) -> None:
         except OSError:
             pass
         raise
+    _fsync_directory(path.parent)
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Persist the rename itself: without it a power loss right after
+    ``os.replace`` can bring back the previous file on some filesystems.
+    Best effort, and a no-op where directories cannot be opened (Windows)."""
+    if os.name != "posix":
+        return
+    try:
+        fd = os.open(str(directory), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
