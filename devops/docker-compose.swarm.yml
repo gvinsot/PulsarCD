@@ -243,6 +243,8 @@ services:
     depends_on:
       - opensearch
     deploy:
+      # Must stay 1: the agent actions queue and pipeline state live in this
+      # process and its /data files (actions_queue.json, pipeline_state.json).
       replicas: 1
       labels:
         # Enable Traefik
