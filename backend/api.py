@@ -28,6 +28,8 @@ from shared.access_log import is_internal_ip, normalize_ip
 from .auth import AUTH_SOURCE_GOOGLE, AUTH_SOURCE_LOCAL, create_token, decode_token
 from .allowlist import EmailAllowlist
 from .auto_ban import AutoBanWorker
+from . import notifier
+from .notifications_api import router as notifications_router
 from .ip_blocklist import (
     IpBlocklist,
     covers as ip_blocklist_covers,
@@ -209,6 +211,9 @@ async def lifespan(app: FastAPI):
     collector = Collector(settings, opensearch)
     await collector.start()
 
+    # Outbound notifications (ntfy / webhook / e-mail); a no-op when unset.
+    notifier.configure(getattr(settings, "notify", None))
+
     if settings.autoban.enabled and settings.auth.edge_key:
         auto_ban_worker = AutoBanWorker(
             opensearch, ip_blocklist, settings.autoban,
@@ -307,6 +312,7 @@ async def lifespan(app: FastAPI):
             await _auto_build_task
         except asyncio.CancelledError:
             pass
+    await notifier.get_notifier().close()
     await collector.stop()
     await opensearch.close()
     await github_service.close()
@@ -1208,6 +1214,12 @@ async def admin_delete_user(email: str):
         return {"deleted": True}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ============== Admin: Notifications ==============
+
+# GET /api/admin/notifications and POST /api/admin/notifications/test
+app.include_router(notifications_router)
 
 
 # ============== Admin: Configuration ==============
@@ -3205,6 +3217,8 @@ def _set_pipeline(
     )
     if log_lines and stage in ("build", "test", "qa", "deploy"):
         pipeline_state.update_log(repo_name, stage, log_lines)
+    # Failures (any stage) and production deploys; fire-and-forget, deduplicated.
+    notifier.notify_pipeline_stage(repo_name, stage, status, version)
 
 
 def _get_deployer_and_host():

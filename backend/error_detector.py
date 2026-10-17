@@ -17,6 +17,8 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import structlog
 
+from .notifier import notify_recurring_error
+
 logger = structlog.get_logger()
 
 # Lazy-loaded zvec (optional dependency)
@@ -923,6 +925,10 @@ class RecurringErrorDetector:
         ]
         self._notification_history.insert(0, entry)
         self._notification_history = self._notification_history[:20]
+
+        # Outbound notification (no-op unless PULSARCD_NOTIFY__* is configured)
+        notify_recurring_error(pattern.fingerprint, pattern.count, entry["services"],
+                               stacks, pattern.sample_message)
 
         # Delegate to LLM agent for investigation and action
         if not self._llm_agent:

@@ -1712,6 +1712,7 @@
                             <button class="settings-tab active" data-tab="llm" data-click="switchSettingsTab" data-args='["llm"]'>LLM</button>
                             <button class="settings-tab" data-tab="mcp" data-click="switchSettingsTab" data-args='["mcp"]'>MCP Servers</button>
                             <button class="settings-tab" data-tab="users" data-click="switchSettingsTab" data-args='["users"]'>Users</button>
+                            <button class="settings-tab" data-tab="notifications" data-click="switchSettingsTab" data-args='["notifications"]'>Notifications</button>
                         </div>
 
                         <!-- LLM Tab -->
@@ -1783,6 +1784,20 @@
                                     Whoever controls that Google account can sign in. Removing an
                                     address ends its open sessions immediately.
                                 </p>
+                            </div>
+                        </div>
+
+                        <!-- Notifications Tab: read-only, configured by environment (see notifications-settings.js) -->
+                        <div class="settings-panel" id="settings-panel-notifications">
+                            <p class="settings-section-desc">
+                                Outbound notifications (ntfy, Discord/Slack webhook, e-mail) are configured with
+                                <code>PULSARCD_NOTIFY__*</code> environment variables and are read-only here.
+                                Secrets (tokens, webhook URLs, passwords) are never shown.
+                            </p>
+                            <div id="notifications-status"></div>
+                            <div class="settings-field settings-field-inline">
+                                <button class="btn btn-sm btn-secondary" id="notifications-test-btn">Send test notification</button>
+                                <span id="notifications-test-result" class="settings-status"></span>
                             </div>
                         </div>
                     </div>
@@ -1894,5 +1909,6 @@
     <script src="/static/js/test-log-model.js"></script>
     <script src="/static/js/test-log-viewer.js"></script>
     <script src="/static/js/app.js"></script>
+    <script src="/static/js/notifications-settings.js"></script>
 </body>
 </html>

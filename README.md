@@ -67,6 +67,7 @@ For production? Not yet. But the gap is closing fast. And when it does, PulsarCD
 - **Docker Swarm**: Deploy as Swarm stacks for high availability
 - **Environment Management**: Configure environment variables per stack
 - **Tag Selection**: Deploy specific versions or latest builds
+- **Notifications**: Pipeline failures, automatic edge bans and recurring errors pushed to ntfy, a Discord/Slack webhook or e-mail (see [Notifications](#notifications))
 
 ### Monitoring & Logs
 - **Centralized Log Collection**: Agents collect logs from all containers across all hosts
@@ -430,6 +431,13 @@ pulsarcd/
 | `/api/security/blocklist?ip=...` | DELETE | Unblock one (admin) |
 | `/api/security/waf/traefik-config` | GET | The blocklist as a Traefik dynamic configuration, polled by the edge. Authenticates with `PULSARCD_AUTH__EDGE_KEY`, not a session token |
 
+### Notifications
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/admin/notifications` | GET | Configured channels, event switches and last delivery result, without any secret (admin) |
+| `/api/admin/notifications/test` | POST | Send a test notification to every configured channel and report each result (admin) |
+
 ### Hosts
 
 | Endpoint | Method | Description |
@@ -480,6 +488,46 @@ All backend configuration is done via environment variables prefixed with `PULSA
 | `PULSARCD_COLLECTOR__METRICS_INTERVAL_SECONDS` | Metrics collection interval | `15` |
 | `PULSARCD_COLLECTOR__LOG_LINES_PER_FETCH` | Lines per container per fetch | `500` |
 | `PULSARCD_COLLECTOR__RETENTION_DAYS` | Data retention period | `7` |
+
+#### Notifications
+
+Outbound notifications are sent to every channel whose target is configured;
+with none configured (the default) nothing is sent. Delivery is fire-and-forget
+with a per-channel timeout, so a slow or failing channel never delays or breaks
+a pipeline. The same event (same repo/stage/version, same banned IP, same error
+pattern) is sent at most once per `DEDUPE_SECONDS`, and at most `MAX_PER_HOUR`
+notifications leave per rolling hour; dropped ones are counted in the next
+message. Messages carry repository names, stages, versions, banned addresses and
+error counts only - never build output or `.env` values - and tokens, webhook
+URLs and passwords are never logged or shown in the UI.
+
+Events: a pipeline stage failing (build, test, QA deploy, deploy), a successful
+production deploy (opt-in), an automatic rollback (reserved: PulsarCD has no
+automatic rollback yet), an automatic edge ban, and a recurring error pattern.
+Settings > Notifications shows the active configuration and sends a test
+notification (`POST /api/admin/notifications/test`).
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PULSARCD_NOTIFY__NTFY_URL` | ntfy server, e.g. `https://ntfy.sh` | - |
+| `PULSARCD_NOTIFY__NTFY_TOPIC` | ntfy topic (on a public server the name is effectively a password) | - |
+| `PULSARCD_NOTIFY__NTFY_TOKEN` | ntfy access token for a protected topic | - |
+| `PULSARCD_NOTIFY__WEBHOOK_URL` | Discord, Slack or generic JSON webhook URL | - |
+| `PULSARCD_NOTIFY__WEBHOOK_FORMAT` | `auto` (from the URL), `discord`, `slack` or `generic` | `auto` |
+| `PULSARCD_NOTIFY__SMTP_HOST` / `__SMTP_PORT` | SMTP server | - / `587` |
+| `PULSARCD_NOTIFY__SMTP_USERNAME` / `__SMTP_PASSWORD` | SMTP credentials (optional) | - |
+| `PULSARCD_NOTIFY__SMTP_STARTTLS` / `__SMTP_SSL` | STARTTLS, or implicit TLS (port 465) | `true` / `false` |
+| `PULSARCD_NOTIFY__EMAIL_FROM` / `__EMAIL_TO` | Sender, and comma-separated recipients | - |
+| `PULSARCD_NOTIFY__ON_PIPELINE_FAILURE` | Notify failed build/test/QA/deploy stages | `true` |
+| `PULSARCD_NOTIFY__ON_DEPLOY_SUCCESS` | Notify successful production deploys | `false` |
+| `PULSARCD_NOTIFY__ON_ROLLBACK` | Notify automatic rollbacks | `true` |
+| `PULSARCD_NOTIFY__ON_AUTO_BAN` | Notify automatic edge bans | `true` |
+| `PULSARCD_NOTIFY__ON_RECURRING_ERROR` | Notify recurring error patterns | `true` |
+| `PULSARCD_NOTIFY__INCLUDE_ERROR_SAMPLES` | Add a redacted, truncated log sample to recurring-error messages | `false` |
+| `PULSARCD_NOTIFY__PUBLIC_URL` | PulsarCD URL used as the click-through link | - |
+| `PULSARCD_NOTIFY__TIMEOUT_SECONDS` | Per-channel delivery timeout | `10` |
+| `PULSARCD_NOTIFY__DEDUPE_SECONDS` | Window during which a repeated event is not resent | `900` |
+| `PULSARCD_NOTIFY__MAX_PER_HOUR` | Cap on notifications per rolling hour | `30` |
 
 ### Agent Settings
 
