@@ -3656,9 +3656,13 @@ async def cancel_action(action_id: str) -> Dict[str, Any]:
         kwargs["test_id"] = action_id
     elif action.action_type == "deploy":
         kwargs["deploy_id"] = action_id
+    elif action.action_type == "qa-deploy":
+        kwargs["qa_id"] = action_id
+    # A QA deploy action runs the pipeline's "qa" stage
+    stage = "qa" if action.action_type == "qa-deploy" else action.action_type
     _set_pipeline(
         action.repo_name,
-        action.action_type,
+        stage,
         "failed",
         pipeline_state.get_legacy(action.repo_name).get("version", ""),
         log_lines=action.output_lines,

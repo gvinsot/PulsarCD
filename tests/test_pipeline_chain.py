@@ -848,3 +848,39 @@ class TestAutoBuildPoller:
         poller.gh.is_configured.return_value = False
         await poller.run(polls=2)
         poller.gh.get_starred_repos.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Cancellation endpoint
+# ---------------------------------------------------------------------------
+
+class TestCancelAction:
+    @pytest.mark.parametrize("action_type,stage,id_key", [
+        ("build", "build", "build_action_id"),
+        ("test", "test", "test_action_id"),
+        ("deploy", "deploy", "deploy_action_id"),
+        ("qa-deploy", "qa", "qa_action_id"),
+    ])
+    def test_cancel_marks_the_matching_stage_failed(self, client, auth_headers, env,
+                                                    action_type, stage, id_key):
+        action = api.BackgroundAction("act12345", action_type, "app")
+        api._background_actions[action.id] = action
+        env.state.set_pipeline("app", stage, "running", "1.0.0")
+
+        resp = client.post(f"/api/stacks/actions/{action.id}/cancel", headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        assert action.cancel_event.is_set()
+        assert action.status == "cancelled"
+
+        legacy = _legacy(env)
+        assert (legacy["stage"], legacy["status"]) == (stage, "failed")
+        assert legacy["stages"][stage]["status"] == "failed"
+        assert legacy[id_key] == action.id
+
+    def test_cancel_finished_action_is_refused(self, client, auth_headers, env):
+        action = api.BackgroundAction("done1234", "build", "app")
+        action.status = "completed"
+        api._background_actions[action.id] = action
+        resp = client.post(f"/api/stacks/actions/{action.id}/cancel", headers=auth_headers)
+        assert resp.json()["success"] is False
+        assert env.state.get("app") is None
