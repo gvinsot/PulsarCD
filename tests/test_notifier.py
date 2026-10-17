@@ -103,6 +103,11 @@ class TestConfig:
         s = Settings()
         assert not nt.Notifier(s.notify).enabled
         assert s.notify.smtp_port == 587
+        # Every documented setting reaches the container (no env_file in the
+        # stack), and the compose defaults match the model defaults.
+        assert {name for name, _ in found} == {
+            f"PULSARCD_NOTIFY__{f.upper()}" for f in NotifyConfig.model_fields}
+        assert s.notify == NotifyConfig()
 
     def test_channels_require_complete_targets(self):
         assert nt.Notifier(NotifyConfig(ntfy_url="https://n.example")).channels() == []
@@ -433,3 +438,60 @@ class TestAdminApi:
     def test_requires_authentication(self, client):
         assert client.get("/api/admin/notifications").status_code == 401
         assert client.post("/api/admin/notifications/test").status_code == 401
+
+    def test_viewer_is_forbidden(self, client):
+        import backend.api as api_module
+        from backend.auth import create_token
+        token = create_token("viewer1", api_module.settings.auth.jwt_secret, 1, role="viewer")
+        headers = {"Authorization": f"Bearer {token}"}
+        assert client.get("/api/admin/notifications", headers=headers).status_code == 403
+        assert client.post("/api/admin/notifications/test", headers=headers).status_code == 403
+
+
+class TestHardening:
+    def test_title_is_single_line(self):
+        n = nt.Notification(event="test", title="repo\r\nBcc: x@example.com", message="m")
+        assert "\n" not in n.title and "\r" not in n.title
+        msg = nt.email_message(n, "a@example.com", ["b@example.com"])
+        assert msg["Bcc"] is None
+
+    def test_slack_text_is_escaped(self):
+        n = nt.Notification(event="test", title="<!channel> t", message="a <@U1> & b")
+        text = nt.webhook_payload(n, "slack")["text"]
+        assert "<!channel>" not in text and "<@U1>" not in text
+        assert "&lt;!channel&gt;" in text and "&amp;" in text
+
+
+class TestCancelledActions:
+    """A cancellation is recorded as "failed" but must not page anyone."""
+
+    ACTION_ID = "act-notify-1"
+
+    def _set(self, **ids):
+        import backend.api as api_module
+        with patch.object(api_module, "pipeline_state"), \
+                patch.object(api_module.notifier, "notify_pipeline_stage") as notify:
+            api_module._set_pipeline("app", "test", "failed", "1.0", **ids)
+        return notify
+
+    def _action(self, cancelled):
+        import backend.api as api_module
+        action = api_module.BackgroundAction(self.ACTION_ID, "test", "app")
+        if cancelled:
+            action.cancel_event.set()
+        api_module._background_actions[action.id] = action
+
+    def teardown_method(self):
+        import backend.api as api_module
+        api_module._background_actions.pop(self.ACTION_ID, None)
+
+    def test_cancelled_action_is_not_notified(self):
+        self._action(cancelled=True)
+        self._set(test_id=self.ACTION_ID).assert_not_called()
+
+    def test_real_failure_is_notified(self):
+        self._action(cancelled=False)
+        self._set(test_id=self.ACTION_ID).assert_called_once_with("app", "test", "failed", "1.0")
+
+    def test_without_action_ids_is_notified(self):
+        self._set().assert_called_once()

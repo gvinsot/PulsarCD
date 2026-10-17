@@ -3218,7 +3218,22 @@ def _set_pipeline(
     if log_lines and stage in ("build", "test", "qa", "deploy"):
         pipeline_state.update_log(repo_name, stage, log_lines)
     # Failures (any stage) and production deploys; fire-and-forget, deduplicated.
-    notifier.notify_pipeline_stage(repo_name, stage, status, version)
+    # A cancelled action is recorded as "failed" in pipeline state, but an
+    # operator cancelling it is not an incident: no notification then (the
+    # LLM-agent failure path skips cancellations the same way).
+    if not _involves_cancelled_action(build_id, test_id, qa_id, deploy_id):
+        notifier.notify_pipeline_stage(repo_name, stage, status, version)
+
+
+def _involves_cancelled_action(*action_ids) -> bool:
+    """True when one of the given background action ids was cancelled."""
+    for action_id in action_ids:
+        if action_id is _UNSET or not action_id:
+            continue
+        action = _background_actions.get(action_id)
+        if action is not None and (action.cancel_event.is_set() or action.status == "cancelled"):
+            return True
+    return False
 
 
 def _get_deployer_and_host():

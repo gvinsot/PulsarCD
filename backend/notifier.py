@@ -57,6 +57,7 @@ MAX_TITLE_CHARS = 200
 MAX_SAMPLE_CHARS = 200
 
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+_LINE_BREAKS = re.compile(r"[\r\n\t  \x85]+")
 
 # Redaction applied to (opt-in) log samples. Deliberately broad: a false
 # positive costs a few characters of context, a false negative leaks a secret.
@@ -115,7 +116,9 @@ class Notification:
         default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
     def __post_init__(self):
-        self.title = _clean(self.title, MAX_TITLE_CHARS)
+        # One line: the title becomes an e-mail Subject header, where a line
+        # break makes EmailMessage raise (and would be header injection).
+        self.title = _clean(_LINE_BREAKS.sub(" ", str(self.title or "")), MAX_TITLE_CHARS)
         self.message = _clean(self.message, MAX_MESSAGE_CHARS)
         if not self.key:
             self.key = f"{self.event}:{self.title}"
@@ -170,6 +173,10 @@ def webhook_format_for(url: str, configured: str) -> str:
     return "generic"
 
 
+def _slack_escape(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def webhook_payload(n: Notification, fmt: str) -> Dict[str, Any]:
     """Discord, Slack or generic JSON body for one notification."""
     link = f"\n{n.url}" if n.url else ""
@@ -182,7 +189,9 @@ def webhook_payload(n: Notification, fmt: str) -> Dict[str, Any]:
             "allowed_mentions": {"parse": []},
         }
     if fmt == "slack":
-        return {"text": f"{emoji} *{n.title}*\n{n.message}{link}"}
+        # Slack parses <...> as links and mentions (<!channel>, <@U123>):
+        # escape its three control characters so the text cannot ping anyone.
+        return {"text": f"{emoji} *{_slack_escape(n.title)}*\n{_slack_escape(n.message)}{link}"}
     # Generic: carries both "text" (Slack, Mattermost, Rocket.Chat, Teams
     # connectors) and "content" (Discord-like) plus structured fields.
     return {
