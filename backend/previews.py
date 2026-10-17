@@ -285,7 +285,10 @@ class PreviewManager:
             slug=names.slug,
             image_tag=names.image_tag,
             host_prefix=names.host_prefix,
-            ttl_hours=self.config.ttl_hours if ttl_hours is None else ttl_hours,
+            # A redeploy without an explicit TTL keeps the preview's own TTL
+            # (e.g. 0 = never), rather than falling back to the default.
+            ttl_hours=(ttl_hours if ttl_hours is not None
+                       else existing.get("ttl_hours", self.config.ttl_hours)),
             created_at=existing.get("created_at", now),
             updated_at=now,
             last_deployed_at=existing.get("last_deployed_at"),

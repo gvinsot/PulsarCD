@@ -259,6 +259,14 @@ class TestExpiry:
         assert manager.store.get(fresh.stack) and manager.store.get(never.stack)
         assert f"docker stack rm {old.stack}" in deployer.commands
 
+    async def test_redeploy_without_ttl_keeps_the_preview_ttl(self, tmp_path):
+        manager, _ = make_manager(tmp_path, ttl_hours=24)
+        names, _ = await deploy(manager, branch="pinned", ttl=0)
+        await deploy(manager, branch="pinned")  # UI "Redeploy" sends no TTL
+        assert manager.store.get(names.stack)["ttl_hours"] == 0
+        await deploy(manager, branch="pinned", ttl=5)
+        assert manager.store.get(names.stack)["ttl_hours"] == 5
+
     async def test_ttl_zero_in_settings_means_never(self, tmp_path):
         manager, _ = make_manager(tmp_path, ttl_hours=0)
         names, _ = await deploy(manager)
