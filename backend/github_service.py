@@ -1397,7 +1397,8 @@ class StackDeployer:
 
     async def deploy(self, repo_name: str, ssh_url: str, version: str = "1.0",
                     tag: str = None, qa: bool = False,
-                    output_callback=None, cancel_event=None) -> Dict[str, Any]:
+                    output_callback=None, cancel_event=None,
+                    preview_branch: Optional[str] = None) -> Dict[str, Any]:
         """Deploy a stack from a repository.
 
         Args:
@@ -1407,6 +1408,10 @@ class StackDeployer:
             tag: Optional specific tag to deploy (e.g., v1.0.5)
             qa: When True, deploy to the isolated QA environment (stack
                 prefixed with 'qa-', domains prefixed with 'qa.').
+            preview_branch: Deploy a per-branch preview of this branch instead
+                (stack "pv-<slug>-<repo>", domains "<slug>.", see
+                shared/preview_naming.py). ``version`` must then be the
+                preview image tag and the compose file is read from the branch.
             output_callback: Optional callable(str) for streaming output
             cancel_event: Optional asyncio.Event for cancellation
 
@@ -1424,16 +1429,23 @@ class StackDeployer:
         # Ensure we always have a tag for git checkout so the deploy script
         # checks out the correct commit (not the latest on current branch)
         checkout_ref = tag
-        if not checkout_ref and deploy_version:
+        if preview_branch:
+            # A preview reads its compose file from the branch it previews
+            if qa:
+                raise ValueError("qa and preview_branch are mutually exclusive")
+            from shared.preview_naming import validate_branch
+            checkout_ref = validate_branch(preview_branch)
+        elif not checkout_ref and deploy_version:
             checkout_ref = f"v{deploy_version}"
 
-        action_label = "qa-deploy" if qa else "deploy"
+        action_label = "preview-deploy" if preview_branch else ("qa-deploy" if qa else "deploy")
         result = {
             "action": action_label,
             "repo": repo_name,
             "version": deploy_version,
             "tag": tag,
             "qa": qa,
+            "preview_branch": preview_branch,
             "success": False,
             "output": "",
             "started_at": start_time.isoformat(),
@@ -1463,6 +1475,8 @@ class StackDeployer:
             # Pass absolute repo_path to avoid path computation mismatch
             # Script format: deploy-service.sh [--qa] <folder> <version> [branch/tag]
             qa_flag = "--qa " if qa else ""
+            if preview_branch:
+                qa_flag = f"--preview {shlex.quote(preview_branch)} "
             deploy_cmd = f"cd {_shell_quote_path(scripts_path)} && bash deploy-service.sh {qa_flag}{_shell_quote_path(repo_path)} {shlex.quote(deploy_version)}"
             if checkout_ref:
                 deploy_cmd += " " + shlex.quote(checkout_ref)

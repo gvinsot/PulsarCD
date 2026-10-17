@@ -241,6 +241,20 @@ class AutoBanConfig(BaseModel):
         return [str(ipaddress.ip_network(value, strict=False)) for value in values]
 
 
+class PreviewConfig(BaseModel):
+    """Per-branch preview environments (see backend/previews.py).
+
+    Environment: PULSARCD_PREVIEWS__ENABLED, PULSARCD_PREVIEWS__TTL_HOURS,
+    PULSARCD_PREVIEWS__CLEANUP_INTERVAL_MINUTES, PULSARCD_PREVIEWS__MAX_ACTIVE.
+    """
+    enabled: bool = True
+    # A preview not redeployed for this long is removed. 0 disables expiry.
+    ttl_hours: int = Field(default=72, ge=0, le=24 * 365)
+    cleanup_interval_minutes: int = Field(default=30, ge=1, le=24 * 60)
+    # Upper bound on recorded previews, so a script cannot fill the swarm.
+    max_active: int = Field(default=20, ge=1, le=500)
+
+
 class SwarmConfig(BaseModel):
     """Swarm agent API configuration."""
     secret_key: str = ""  # API key for swarm.methodinfo.fr (Bearer token)
@@ -283,6 +297,9 @@ class Settings(BaseSettings):
 
     # Swarm agent API (legacy, replaced by LLM agent)
     swarm: SwarmConfig = SwarmConfig()
+
+    # Per-branch preview environments
+    previews: PreviewConfig = PreviewConfig()
 
     # Hosts (configured via PULSARCD_HOSTS env var)
     hosts: List[HostConfig] = []
