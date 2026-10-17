@@ -40,7 +40,18 @@
 #   2. Run docker-compose.pre.sh if it exists
 #   3. Update image tags in docker-compose.swarm.yml to use the specified version
 #   4. Deploy the stack using docker stack deploy
-#   5. Run docker-compose.post.sh if it exists
+#   5. Wait until every service converges on the new version (verify-deploy.sh)
+#   6. Run docker-compose.post.sh if it exists
+#   7. Optionally probe an HTTP health URL through Traefik
+#
+# Post-deploy verification (variables read from the environment / devops/.env):
+#   DEPLOY_VERIFY=false            skip convergence and health checks
+#   DEPLOY_CONVERGE_TIMEOUT=180    seconds to wait for all replicas (see
+#                                  verify-deploy.sh for the other knobs)
+#   DEPLOY_HEALTHCHECK_PATH=/health  probe https://$TRAEFIK_HOST/health
+#   DEPLOY_HEALTHCHECK_URL=...     or probe this exact URL
+#   A failed verification exits with code 3 and prints a line starting with
+#   PULSARCD_DEPLOY_VERIFICATION_FAILED (the stack stays deployed).
 #
 
 set -e
@@ -53,6 +64,12 @@ DEVOPS_FOLDER="devops"
 COMPOSE_FILE="docker-compose.swarm.yml"
 PRE_SCRIPT="docker-compose.pre.sh"
 POST_SCRIPT="docker-compose.post.sh"
+
+# Post-deploy verification (see verify-deploy.sh). A failed verification exits
+# with this code and prints this marker; the backend keys its automatic
+# rollback on the marker.
+DEPLOY_VERIFY_EXIT_CODE=3
+DEPLOY_VERIFY_MARKER="PULSARCD_DEPLOY_VERIFICATION_FAILED"
 
 # QA mode flags (set via --qa)
 QA_MODE=false
@@ -172,6 +189,33 @@ update_image_tags() {
         "$compose_file" > "$output_file"
 }
 
+# Abort after a failed post-deploy verification. The stack IS deployed (and may
+# be crash-looping), so this exits with its own code and prints a stable marker
+# line: the PulsarCD backend looks for that marker to decide on an automatic
+# rollback to the previously deployed version.
+fail_verification() {
+    local check="$1"
+    local reason="$2"
+    log_error "Post-deploy verification failed ($check): $reason"
+    echo "${DEPLOY_VERIFY_MARKER} check=${check} stack=${STACK_NAME} version=${VERSION}"
+    rm -f "$DEPLOY_COMPOSE"
+    exit "$DEPLOY_VERIFY_EXIT_CODE"
+}
+
+# Hostnames served by the deployed stack, one per line, de-duplicated:
+#   1. TRAEFIK_HOST from the loaded .env (already qa-prefixed if applicable)
+#   2. Host(`...`) rules declared in the deploy compose file
+collect_probe_hosts() {
+    {
+        [ -n "${TRAEFIK_HOST:-}" ] && echo "$TRAEFIK_HOST"
+        if [ -f "$DEPLOY_COMPOSE" ]; then
+            grep -oE 'Host\(`[^`]+`\)' "$DEPLOY_COMPOSE" \
+                | sed -E 's/Host\(`([^`]+)`\)/\1/' \
+                | sort -u
+        fi
+    } | awk 'NF && !seen[$0]++'
+}
+
 # Run a hook script if it exists
 run_hook() {
     local script_path="$1"
@@ -240,6 +284,7 @@ COMMIT="${4:-}"
 # Get the script's directory and the repos root (two levels up since scripts are in PulsarCD/scripts)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPOS_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
+VERIFY_SCRIPT="$SCRIPT_DIR/verify-deploy.sh"
 
 # Resolve absolute path
 if [[ "$REPO_FOLDER" = /* ]]; then
@@ -760,12 +805,40 @@ echo ""
 # ============================================================================
 log_info "Deploying stack: $STACK_NAME"
 
+# Remember which tasks exist before the deploy, so the convergence check below
+# only blames this deploy for failures of the tasks it creates.
+DEPLOY_START_EPOCH=$(date +%s)
+BASELINE_TASKS_FILE=$(mktemp)
+docker stack ps "$STACK_NAME" -q --no-trunc > "$BASELINE_TASKS_FILE" 2>/dev/null || true
+
 # Deploy the stack (rolling update if it already exists)
 docker stack deploy -c "$DEPLOY_COMPOSE" "$STACK_NAME" --with-registry-auth --prune || {
     log_error "Failed to deploy stack!"
-    rm -f "$DEPLOY_COMPOSE"
+    rm -f "$DEPLOY_COMPOSE" "$BASELINE_TASKS_FILE"
     exit 1
 }
+
+log_success "Stack submitted to the swarm"
+
+# ============================================================================
+# Step 7b: Wait for every service to converge on the new version
+# ============================================================================
+# "docker stack deploy" returns as soon as the specs are accepted; a service
+# whose new containers crash in a loop would still count as deployed. Wait
+# until all replicas run the new image (see verify-deploy.sh for the rules).
+if [ "${DEPLOY_VERIFY:-true}" = "false" ]; then
+    log_warning "DEPLOY_VERIFY=false — skipping the convergence check"
+elif [ ! -f "$VERIFY_SCRIPT" ]; then
+    log_warning "verify-deploy.sh not found at $VERIFY_SCRIPT — skipping the convergence check"
+else
+    VERIFY_RC=0
+    bash "$VERIFY_SCRIPT" converge "$STACK_NAME" "$BASELINE_TASKS_FILE" "$DEPLOY_START_EPOCH" || VERIFY_RC=$?
+    if [ "$VERIFY_RC" -ne 0 ]; then
+        rm -f "$BASELINE_TASKS_FILE"
+        fail_verification "converge" "stack $STACK_NAME did not converge on version $VERSION"
+    fi
+fi
+rm -f "$BASELINE_TASKS_FILE"
 
 log_success "Stack deployed successfully!"
 
@@ -782,27 +855,11 @@ run_hook "$POST_SCRIPT_PATH" "$POST_SCRIPT" "$DEVOPS_PATH" || {
 # ============================================================================
 # Skip when deploying the privatenetwork stack itself (already updated above).
 if [ "$STACK_NAME" != "privatenetwork" ] && docker service inspect privatenetwork_traefik >/dev/null 2>&1; then
-    # Collect hostnames to probe:
-    #   1. TRAEFIK_HOST from the loaded .env (already qa-prefixed if applicable)
-    #   2. Host(`...`) rules declared in the deploy compose file
-    CHECK_HOSTS=()
-    if [ -n "${TRAEFIK_HOST:-}" ]; then
-        CHECK_HOSTS+=("$TRAEFIK_HOST")
-    fi
-    if [ -f "$DEPLOY_COMPOSE" ]; then
-        while IFS= read -r host; do
-            [ -n "$host" ] && CHECK_HOSTS+=("$host")
-        done < <(grep -oE 'Host\(`[^`]+`\)' "$DEPLOY_COMPOSE" \
-                    | sed -E 's/Host\(`([^`]+)`\)/\1/' \
-                    | sort -u)
-    fi
+    readarray -t CHECK_HOSTS < <(collect_probe_hosts)
 
     if [ ${#CHECK_HOSTS[@]} -eq 0 ]; then
         log_info "No deployed host found to probe — skipping Traefik resync check"
     else
-        # De-duplicate while preserving order
-        readarray -t CHECK_HOSTS < <(printf '%s\n' "${CHECK_HOSTS[@]}" | awk 'NF && !seen[$0]++')
-
         NEEDS_TRAEFIK_RESYNC=false
         BAD_GATEWAY_HOST=""
 
@@ -846,6 +903,31 @@ if [ "$STACK_NAME" != "privatenetwork" ] && docker service inspect privatenetwor
         else
             log_info "No Bad Gateway detected — leaving privatenetwork_traefik untouched"
         fi
+    fi
+fi
+
+# ============================================================================
+# Step 8c: Optional HTTP health check through Traefik
+# ============================================================================
+# Enabled by DEPLOY_HEALTHCHECK_URL (full URL) or DEPLOY_HEALTHCHECK_PATH (e.g.
+# /health, probed on TRAEFIK_HOST, or else on the first Host() rule of the
+# compose file). Runs after the Traefik resync above so a stale route does not
+# fail it.
+if [ "${DEPLOY_VERIFY:-true}" != "false" ] && [ -f "$VERIFY_SCRIPT" ]; then
+    HEALTH_URL="${DEPLOY_HEALTHCHECK_URL:-}"
+    if [ -z "$HEALTH_URL" ] && [ -n "${DEPLOY_HEALTHCHECK_PATH:-}" ]; then
+        HEALTH_HOST=$(collect_probe_hosts | head -n 1)
+        if [ -n "$HEALTH_HOST" ]; then
+            HEALTH_PATH="$DEPLOY_HEALTHCHECK_PATH"
+            [[ "$HEALTH_PATH" == /* ]] || HEALTH_PATH="/$HEALTH_PATH"
+            HEALTH_URL="https://${HEALTH_HOST}${HEALTH_PATH}"
+        else
+            log_warning "DEPLOY_HEALTHCHECK_PATH is set but no TRAEFIK_HOST / Host() rule was found — skipping health check"
+        fi
+    fi
+    if [ -n "$HEALTH_URL" ]; then
+        bash "$VERIFY_SCRIPT" health "$HEALTH_URL" \
+            || fail_verification "health" "$HEALTH_URL is not healthy after deploying version $VERSION"
     fi
 fi
 
