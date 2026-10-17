@@ -508,6 +508,10 @@ How deliveries are handled:
   server error is forgotten, so it can be redelivered; and a commit that was
   already handled is never rebuilt, whatever the delivery id. The poller
   catches anything a lost delivery missed.
+- GitHub can deliver a push before its REST API lists the commit. The build
+  waits (up to about 30 s) until the branch listing shows the pushed commit as
+  its head; if it never does, or GitHub errors, the commit is handed back to
+  the poller, which keeps re-reading the repository for 10 minutes.
 - A push that arrives while the repository is already building answers
   `{"status": "deferred"}`; the poller builds it once the running pipeline ends.
 - The poller keeps running as a fallback, every

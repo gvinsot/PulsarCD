@@ -4417,12 +4417,62 @@ _webhook_deliveries = DeliveryCache()
 _webhook_tasks: set = set()
 
 
+# Pause before each read of the branch listing.  GitHub can deliver a push
+# before its REST API lists the commit; reading the tag state from that stale
+# listing would build the previous release under the new commit's name.
+_WEBHOOK_LISTING_RETRY_DELAYS = (0, 1, 2, 4, 8, 15)
+# How long the poller keeps re-reading a repo after the webhook handed a
+# commit back to it, even though the repo's pushed_at no longer changes.
+_WEBHOOK_HANDBACK_RECHECK_SECONDS = 600
+
+
+class _StaleListing(Exception):
+    """GitHub's commit listing did not show the pushed commit as the head."""
+
+
+def _request_recheck(state: dict, seconds: float = _WEBHOOK_HANDBACK_RECHECK_SECONDS):
+    """Make the poller re-read this repo on every cycle for ``seconds``."""
+    state["recheck_until"] = max(state.get("recheck_until", 0.0),
+                                 time.monotonic() + seconds)
+
+
+async def _read_pushed_head(owner: str, name: str, sha: str) -> Optional[dict]:
+    """Read the tag state once GitHub's listing shows ``sha`` as the head.
+
+    Returns None when a newer commit superseded ``sha`` meanwhile (its own
+    delivery or the poller deals with it).  Raises _StaleListing when the
+    listing never caught up.
+    """
+    seen_head = None
+    for delay in _WEBHOOK_LISTING_RETRY_DELAYS:
+        if delay:
+            await asyncio.sleep(delay)
+        if (_auto_build_state.get(name) or {}).get("last_sha") != sha:
+            return None
+        github_service.invalidate_repo_cache(owner, name)
+        # Same arguments (and so the same cache entry) as the commit read
+        # inside get_untagged_commits, so both describe one listing.
+        commits_data = await github_service.get_repo_commits(owner, name, per_page=20)
+        commits = commits_data.get("commits") or []
+        seen_head = commits[0].get("sha") if commits else None
+        if seen_head != sha:
+            continue
+        untagged_data = await github_service.get_untagged_commits(owner, name, limit=20)
+        untagged = untagged_data.get("untagged_commits") or []
+        if untagged and untagged[0].get("sha") != sha:
+            continue
+        return untagged_data
+    raise _StaleListing(f"listing head is {(seen_head or 'unknown')[:7]}, not {sha[:7]}")
+
+
 async def _run_webhook_build(owner: str, name: str, ssh_url: str, sha: str,
                              old_sha: Optional[str]):
     """Background half of a webhook push: read the tag state, then build."""
     try:
-        github_service.invalidate_repo_cache(owner, name)
-        untagged_data = await github_service.get_untagged_commits(owner, name, limit=20)
+        untagged_data = await _read_pushed_head(owner, name, sha)
+        if untagged_data is None:
+            logger.info("Webhook push superseded by a newer commit", repo=name, sha=sha[:7])
+            return
         await _auto_build_commit(owner, name, ssh_url, sha, untagged_data,
                                  old_sha=old_sha, source="webhook")
     except Exception as e:
@@ -4436,6 +4486,8 @@ async def _run_webhook_build(owner: str, name: str, ssh_url: str, sha: str,
                     state["seen_shas"].remove(old_sha)
             else:
                 state.pop("last_sha", None)
+            # The poller may already have consumed this push's pushed_at.
+            _request_recheck(state)
 
 
 async def _handle_github_push(push: PushEvent) -> dict:
@@ -4477,10 +4529,15 @@ async def _handle_github_push(push: PushEvent) -> dict:
         if "last_sha" not in state and push.before and push.before != _ZERO_SHA:
             state["last_sha"] = push.before
         state["recheck"] = True
+        # Also past a stale listing that still shows the pre-push head.
+        _request_recheck(state)
         return {"status": "deferred", "repo": name, "sha": push.after,
                 "reason": "a pipeline is already running for this repository"}
 
-    old_sha = state.get("last_sha")
+    # Baseline handed back to the poller if the build cannot start: without
+    # one, the poller's first look would only record the pushed commit.
+    old_sha = state.get("last_sha") or (
+        push.before if push.before and push.before != _ZERO_SHA else None)
     _advance_last_sha(state, push.after)
     task = asyncio.create_task(_run_webhook_build(owner, name, ssh_url, push.after, old_sha))
     _webhook_tasks.add(task)
@@ -4634,7 +4691,9 @@ async def auto_build_poller():
                     name = repo["name"]
                     pushed_at = repo.get("pushed_at", "")
                     prev = _pushed_at_cache.get(name)
-                    recheck = (_auto_build_state.get(name) or {}).get("recheck")
+                    _st = _auto_build_state.get(name) or {}
+                    recheck = (_st.get("recheck")
+                               or _st.get("recheck_until", 0.0) > time.monotonic())
                     if prev is not None and prev == pushed_at and not recheck:
                         # No push since last poll – skip expensive per-repo calls
                         continue

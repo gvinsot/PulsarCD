@@ -196,6 +196,8 @@ def webhook(client, monkeypatch):
         "name": "app", "full_name": "octo/app", "owner": "octo",
         "ssh_url": "git@github.com:octo/app.git", "pushed_at": "",
     }])
+    # GitHub's listing already shows the pushed commit as the head.
+    gh.get_repo_commits = AsyncMock(return_value={"commits": [{"sha": NEW_SHA}]})
     gh.get_untagged_commits = AsyncMock(return_value={
         "untagged_commits": [], "latest_tag": {"name": "v1.2.3"}})
     gh.get_next_version = AsyncMock(return_value="1.2.4")
@@ -212,6 +214,8 @@ def webhook(client, monkeypatch):
 
     state = {}
     monkeypatch.setattr(api, "_auto_build_state", state)
+    # Retry the listing immediately instead of waiting for GitHub to catch up.
+    monkeypatch.setattr(api, "_WEBHOOK_LISTING_RETRY_DELAYS", (0, 0, 0))
     monkeypatch.setattr(api, "_webhook_deliveries", DeliveryCache())
 
     return {"api": api, "gh": gh, "trigger": trigger, "state": state,
@@ -419,6 +423,69 @@ class TestDeduplication:
         assert not api._sha_already_handled(webhook["state"]["app"], NEW_SHA)
 
 
+    def test_stale_listing_does_not_build_previous_release(self, webhook, client):
+        """GitHub delivered the push before its REST listing shows the commit.
+
+        The listing still has the previous (tagged) head: building now would
+        ship the previous release and mark the new commit as built.
+        """
+        webhook["gh"].get_repo_commits.return_value = {"commits": [{"sha": OLD_SHA}]}
+        webhook["state"]["app"] = {"last_sha": OLD_SHA, "building": False}
+        resp = _post(client, _push_payload())
+        assert resp.status_code == 202
+        state = webhook["state"]["app"]
+        assert _wait_for(lambda: state["last_sha"] == OLD_SHA and "recheck_until" in state)
+        webhook["trigger"].assert_not_awaited()
+        assert webhook["gh"].get_repo_commits.await_count == 3  # one per retry
+        # Handed back: the poller re-reads the repo until it builds the commit.
+        assert state["recheck_until"] > time.monotonic()
+        assert not webhook["api"]._sha_already_handled(state, NEW_SHA)
+
+    def test_listing_catching_up_builds_pushed_commit(self, webhook, client):
+        webhook["gh"].get_repo_commits.side_effect = [
+            {"commits": [{"sha": OLD_SHA}]}, {"commits": [{"sha": NEW_SHA}]}]
+        webhook["gh"].get_untagged_commits.return_value = {
+            "untagged_commits": [{"sha": NEW_SHA}], "latest_tag": {"name": "v1.2.3"}}
+        webhook["state"]["app"] = {"last_sha": OLD_SHA, "building": False}
+        _post(client, _push_payload())
+        assert _wait_for(lambda: webhook["trigger"].await_count == 1)
+        webhook["gh"].create_tag.assert_awaited_once_with("octo", "app", "v1.2.4", NEW_SHA)
+
+    def test_listing_error_does_not_build_previous_release(self, webhook, client):
+        # get_repo_commits reports API errors as an empty listing.
+        webhook["gh"].get_repo_commits.return_value = {"commits": [], "error": "Rate limited"}
+        webhook["state"]["app"] = {"last_sha": OLD_SHA, "building": False}
+        _post(client, _push_payload())
+        state = webhook["state"]["app"]
+        assert _wait_for(lambda: state["last_sha"] == OLD_SHA and "recheck_until" in state)
+        webhook["trigger"].assert_not_awaited()
+
+    def test_superseded_push_stops_quietly(self, webhook, client):
+        api = webhook["api"]
+        state = {"last_sha": OLD_SHA, "building": False}
+        webhook["state"]["app"] = state
+
+        async def newer_push_lands(*a, **k):
+            api._advance_last_sha(state, "c" * 40)  # a newer delivery claimed C
+            return {"commits": [{"sha": OLD_SHA}]}
+        webhook["gh"].get_repo_commits.side_effect = newer_push_lands
+        _post(client, _push_payload())
+        assert _wait_for(lambda: webhook["gh"].get_repo_commits.await_count >= 1)
+        time.sleep(0.05)
+        assert webhook["gh"].get_repo_commits.await_count == 1
+        assert state["last_sha"] == "c" * 40  # not handed back over the newer commit
+        webhook["trigger"].assert_not_awaited()
+
+    def test_handback_for_unobserved_repo_keeps_pre_push_baseline(self, webhook, client):
+        # The poller has not looked at the repo yet: handing back by dropping
+        # last_sha would make its first look record the commit without a build.
+        webhook["gh"].get_repo_commits.return_value = {"commits": []}
+        _post(client, _push_payload())
+        assert _wait_for(lambda: "recheck_until" in webhook["state"].get("app", {}))
+        assert webhook["state"]["app"]["last_sha"] == OLD_SHA
+        webhook["trigger"].assert_not_awaited()
+
+
 class TestPollerBookkeeping:
     def test_advance_remembers_previous_heads(self):
         from backend.api import _advance_last_sha, _sha_already_handled
@@ -510,3 +577,35 @@ class TestPollerBookkeeping:
         # pushed_at never changed between the cycles, yet the commit was built.
         assert webhook["trigger"].await_count == 1
         assert "recheck" not in api._auto_build_state["app"]
+
+    def test_poller_rechecks_after_handback_past_stale_listing(self, webhook):
+        """After a hand-back the poller keeps reading the repo even when its
+        first read is still stale and pushed_at never changes again."""
+        api = webhook["api"]
+        gh = webhook["gh"]
+        api._auto_build_state["app"] = {"last_sha": OLD_SHA, "building": False}
+        api._request_recheck(api._auto_build_state["app"])
+        gh.get_starred_repos.return_value = [{
+            "name": "app", "full_name": "octo/app", "owner": "octo",
+            "ssh_url": "git@github.com:octo/app.git", "pushed_at": "t1"}]
+        gh.get_repo_commits = AsyncMock(side_effect=[
+            {"commits": [{"sha": OLD_SHA}]},  # stale on the first cycle
+            {"commits": [{"sha": NEW_SHA}]},
+        ])
+
+        cycles = []
+
+        async def fake_sleep(_):
+            cycles.append(1)
+            if len(cycles) > 2:
+                raise asyncio.CancelledError
+
+        orig = api.asyncio.sleep
+        api.asyncio.sleep = fake_sleep
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                asyncio.run(api.auto_build_poller())
+        finally:
+            api.asyncio.sleep = orig
+        assert webhook["trigger"].await_count == 1
+        assert api._auto_build_state["app"]["last_sha"] == NEW_SHA
