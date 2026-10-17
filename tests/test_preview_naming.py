@@ -40,6 +40,16 @@ class TestBranchSlug:
         slugs = [branch_slug(b) for b in branches]
         assert len(set(slugs)) == len(slugs), slugs
 
+    def test_branch_named_like_a_hashed_slug_does_not_collide(self):
+        # "feature-x-<hash>" is a legal branch name equal to the hashed slug of
+        # "feature/x": it must not be used verbatim.
+        hashed = branch_slug("feature/x")
+        assert branch_slug(hashed) != hashed
+        assert branch_slug("b-abc123") != "b-abc123"
+        # Ordinary branches ending in a non-hash suffix stay verbatim.
+        assert branch_slug("release-v2024") == "release-v2024"
+        assert branch_slug("fix-12345") == "fix-12345"
+
     def test_upper_case_is_hashed_not_merged(self):
         assert branch_slug("Fix") != branch_slug("fix")
 

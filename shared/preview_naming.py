@@ -65,6 +65,10 @@ RESERVED_SLUGS = frozenset({
 _BRANCH_RE = re.compile(r"\A[A-Za-z0-9._/+-]{1,200}\Z")
 _SLUG_RE = re.compile(r"\A[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\Z")
 _STACK_RE = re.compile(r"\A[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\Z")
+# Shape of the suffix a hashed slug ends with. A branch already ending like
+# this is hashed too, otherwise branch "feature-x-217d2b" would reuse the slug
+# of "feature/x" ("feature-x-217d2b") verbatim.
+_HASHED_SUFFIX_RE = re.compile(r"-[0-9a-f]{%d}\Z" % HASH_LEN)
 
 
 class PreviewNames(NamedTuple):
@@ -108,14 +112,17 @@ def branch_slug(branch: str, max_len: int = MAX_SLUG_LEN) -> str:
 
     The slug is the lower-cased branch with every run of other characters
     turned into ``-``. When that is not exactly the branch name (or is too
-    long, empty or reserved), ``-<hash>`` of the original name is appended
-    after truncation, so two different branches never share a slug.
+    long, empty, reserved, or itself ends like a hashed slug), ``-<hash>`` of
+    the original name is appended after truncation. Verbatim slugs therefore
+    never end in ``-<6 hex>`` and hashed ones always do, so two different
+    branches never share a slug (short of a hash collision).
     """
     validate_branch(branch)
     if max_len < MIN_SLUG_LEN:
         raise ValueError(f"Slug length budget too small: {max_len} < {MIN_SLUG_LEN}")
     base = re.sub(r"[^a-z0-9]+", "-", branch.lower()).strip("-")
-    if base == branch and len(base) <= max_len and base not in RESERVED_SLUGS:
+    if (base == branch and len(base) <= max_len and base not in RESERVED_SLUGS
+            and not _HASHED_SUFFIX_RE.search(base)):
         return base
     head = base[: max_len - HASH_LEN - 1].strip("-")
     digest = _short_hash(branch)
