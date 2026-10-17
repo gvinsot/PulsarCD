@@ -6,6 +6,7 @@ data volume alongside settings.
 """
 
 import json
+import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -254,13 +255,19 @@ class PipelineStateManager:
             self._state = {}
 
     def _save(self):
+        # Write to a sibling file and rename it over the real one: a crash or
+        # full disk mid-write would otherwise leave a truncated file, which
+        # _load discards -- forgetting every pipeline and transition config,
+        # manual gates included.
+        tmp_path = self._path.with_name(self._path.name + ".tmp")
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             payload = {repo: entry.to_dict() for repo, entry in self._state.items()}
-            self._path.write_text(
+            tmp_path.write_text(
                 json.dumps(payload, indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
+            os.replace(tmp_path, self._path)
         except Exception as e:
             logger.error("Failed to save pipeline state", path=str(self._path), error=str(e))
 

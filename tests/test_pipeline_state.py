@@ -170,6 +170,29 @@ class TestPersistence:
         mgr.set_stage("repo", "build", "running", "1.0.0")  # must not raise
         assert mgr.get("repo").stages["build"].status == "running"
 
+    def test_interrupted_write_keeps_previous_state_loadable(self, mgr, data_dir, monkeypatch):
+        """A crash or full disk mid-write must not wipe every pipeline.
+
+        A truncated file is unreadable, so the next start would begin from an
+        empty state and forget every transition config -- including manual
+        gates that hold production deploys back.
+        """
+        from pathlib import Path
+
+        mgr.set_transition_config("repo", "test_to_deploy", {"mode": "manual"})
+        real_write_text = Path.write_text
+
+        def _partial_write(self, data, *args, **kwargs):
+            real_write_text(self, data[: len(data) // 2], *args, **kwargs)
+            raise OSError("No space left on device")
+
+        monkeypatch.setattr(Path, "write_text", _partial_write)
+        mgr.set_stage("repo", "build", "running", "1.0.1")  # save fails half-way
+        monkeypatch.undo()
+
+        reloaded = _reload(data_dir)
+        assert reloaded.get_transition_config("repo", "test_to_deploy")["mode"] == "manual"
+
     def test_reset_clears_entry_and_persists(self, mgr, data_dir):
         mgr.set_pipeline("repo", "done", "success", "1.0.0")
         mgr.reset("repo")
