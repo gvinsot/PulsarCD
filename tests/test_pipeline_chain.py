@@ -828,6 +828,22 @@ class TestAutoBuildPoller:
         await poller.run(polls=3)
         assert poller.world.repo_calls == 1
 
+    @pytest.mark.parametrize("error", [
+        "GitHub API error 409: Git Repository is empty.",
+        "Permission denied: token lacks Contents: Read",
+    ])
+    async def test_persistent_api_errors_are_not_rechecked_every_poll(self, poller, error):
+        """GitHub answers 409 for an empty repo; such errors must not be polled every 10s."""
+        calls = []
+
+        async def failing(owner, name, per_page=1):
+            calls.append(name)
+            return {"commits": [], "has_more": False, "error": error}
+
+        poller.gh.get_repo_commits = AsyncMock(side_effect=failing)
+        await poller.run(polls=3)
+        assert len(calls) == 1
+
     async def test_rate_limited_commit_listing_is_retried(self, poller):
         calls = []
 

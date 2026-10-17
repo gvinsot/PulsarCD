@@ -4328,8 +4328,11 @@ async def auto_build_poller():
 
         commits = commits_data.get("commits", [])
         if not commits:
-            # An empty repo is settled; a failed or rate-limited fetch is not
-            return "error" not in commits_data
+            # Only a rate-limited fetch is retried on the next poll. Other API
+            # errors are persistent (GitHub answers 409 for an empty repo,
+            # 403/404 for missing permissions): retrying them every poll
+            # would burn the API quota until the next push.
+            return "rate limit" not in str(commits_data.get("error", "")).lower()
 
         latest_sha = commits[0]["sha"]
         untagged_count = len(untagged_data.get("untagged_commits", []))
