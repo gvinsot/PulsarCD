@@ -292,7 +292,7 @@ python -m backend.main
 ### Tests and Static Checks
 
 ```bash
-pip install pytest pytest-asyncio "httpx>=0.23.0,<0.28.0" ruff mypy pip-audit
+pip install pytest pytest-asyncio "httpx>=0.23.0,<0.28.0" "ruff==0.17.1" "mypy==2.4.0" "pip-audit==2.10.1"  # same pins as the Dockerfile
 python -m pytest tests/ -q
 bash scripts/static-checks.sh   # ruff + mypy (blocking), pip-audit (warning only)
 ```

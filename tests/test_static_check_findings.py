@@ -27,13 +27,99 @@ def test_registry_cleanup_resolves_the_stack_name():
         deleted_calls.append((repo_name, tag))
         return True
 
+    own_digests = {"1.2.3": "sha256:old", "abcdef1": "sha256:old", "1.2.4": "sha256:new"}
     with mock.patch.object(cleaner, "_registry_list_repos",
                            mock.AsyncMock(return_value=["my-app/web", "my-app", "other/web"])), \
+            mock.patch.object(cleaner, "_registry_tag_digests",
+                              mock.AsyncMock(return_value=own_digests)), \
             mock.patch.object(cleaner, "_delete_registry_tag", side_effect=fake_delete):
         deleted = asyncio.run(cleaner._delete_registry_images("My_App", "1.2.3", "abcdef123"))
 
     assert deleted == ["my-app/web:1.2.3", "my-app/web:abcdef1", "my-app:1.2.3", "my-app:abcdef1"]
     assert ("other/web", "1.2.3") not in deleted_calls
+
+
+def _registry_cleaner(digests):
+    cleaner = TagCleaner(TagCleanupConfig(), github_service=None, registry_url="registry.local")
+    delete = mock.AsyncMock(return_value=True)
+    patches = (
+        mock.patch.object(cleaner, "_registry_list_repos", mock.AsyncMock(return_value=["my-app/web"])),
+        mock.patch.object(cleaner, "_registry_tag_digests", mock.AsyncMock(return_value=digests)),
+        mock.patch.object(cleaner, "_delete_registry_tag", delete),
+    )
+    return cleaner, delete, patches
+
+
+def test_registry_cleanup_keeps_a_digest_shared_with_a_kept_tag():
+    """Deleting by digest removes every tag on it: an unchanged service keeps
+    its digest across versions, so the old tag shares it with :latest."""
+    digests = {"1.2.3": "sha256:same", "abcdef1": "sha256:same",
+               "1.2.9": "sha256:same", "latest": "sha256:same"}
+    cleaner, delete, patches = _registry_cleaner(digests)
+    with patches[0], patches[1], patches[2]:
+        deleted = asyncio.run(cleaner._delete_registry_images("my-app", "1.2.3", "abcdef123"))
+
+    assert deleted == []
+    delete.assert_not_awaited()
+
+
+def test_registry_cleanup_deletes_nothing_when_tags_cannot_be_resolved():
+    cleaner, delete, patches = _registry_cleaner(None)
+    with patches[0], patches[1], patches[2]:
+        deleted = asyncio.run(cleaner._delete_registry_images("my-app", "1.2.3", "abcdef123"))
+
+    assert deleted == []
+    delete.assert_not_awaited()
+
+
+class _FakeResponse:
+    def __init__(self, status, headers=None, body=None):
+        self.status, self.headers, self._body = status, headers or {}, body
+
+    async def json(self):
+        return self._body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakeSession:
+    def __init__(self, tags, digests):
+        self._tags, self._digests = tags, digests
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def get(self, url, **kwargs):
+        return _FakeResponse(200, body={"tags": self._tags})
+
+    def head(self, url, headers=None, **kwargs):
+        assert "manifest.list.v2" in headers["Accept"]  # multi-arch digests too
+        digest = self._digests.get(url.rsplit("/", 1)[1])
+        if digest is None:
+            return _FakeResponse(500)
+        return _FakeResponse(200, headers={"Docker-Content-Digest": digest})
+
+
+def test_registry_tag_digests_maps_tags_and_fails_closed():
+    cleaner = TagCleaner(TagCleanupConfig(), github_service=None, registry_url="registry.local")
+    tags = ["1.0.1", "latest"]
+
+    def session_factory(digests):
+        return lambda *args, **kwargs: _FakeSession(tags, digests)
+
+    full = {"1.0.1": "sha256:a", "latest": "sha256:b"}
+    with mock.patch("backend.tag_cleanup.aiohttp.ClientSession", session_factory(full)):
+        assert asyncio.run(cleaner._registry_tag_digests("my-app/web")) == full
+
+    with mock.patch("backend.tag_cleanup.aiohttp.ClientSession", session_factory({"1.0.1": "sha256:a"})):
+        assert asyncio.run(cleaner._registry_tag_digests("my-app/web")) is None
 
 
 def _swarm_collector(manager_client, exec_client):
