@@ -31,6 +31,13 @@ set -e
 # ============================================================================
 DEVOPS_FOLDER="devops"
 COMPOSE_FILE="docker-compose.swarm.yml"
+# Registry host the images are pushed to / pulled from (no scheme). PulsarCD
+# passes its configured registry (PULSARCD_GITHUB__REGISTRY_URL) as REGISTRY;
+# the default keeps standalone runs working as before.
+REGISTRY="${REGISTRY:-registry.methodinfo.fr}"
+REGISTRY="${REGISTRY#http://}"
+REGISTRY="${REGISTRY#https://}"
+REGISTRY="${REGISTRY%/}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -318,7 +325,8 @@ elif [ -f "$REPO_PATH/.env" ]; then
 fi
 
 # Export common variables
-export REGISTRY_URL="${REGISTRY_URL:-registry.methodinfo.fr}"
+export REGISTRY_URL="${REGISTRY_URL:-$REGISTRY}"
+export REGISTRY
 export DOCKER_REGISTRY_URL="${DOCKER_REGISTRY_URL:-$REGISTRY_URL}"
 export REPO_NAME="${REPO_NAME:-$(basename "$REPO_PATH")}"
 

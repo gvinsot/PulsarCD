@@ -140,7 +140,9 @@ services:
       - PULSARCD_GITHUB__SSH_USER=${PULSARCD_GITHUB__SSH_USER:-user}
       # Which repos to show in Stacks: "all" (default) or "starred"
       - PULSARCD_GITHUB__REPOS_MODE=${PULSARCD_GITHUB__REPOS_MODE:-all}
-      # Docker registry for build/push operations
+      # Docker registry for build/push operations. Also exported as REGISTRY
+      # to build-push.sh / deploy-service.sh / test.sh (scripts default to
+      # registry.methodinfo.fr when this is empty).
       - PULSARCD_GITHUB__REGISTRY_URL=${DOCKER_REGISTRY_URL}
       - PULSARCD_GITHUB__REGISTRY_USERNAME=${DOCKER_REGISTRY_USERNAME}
       - PULSARCD_GITHUB__REGISTRY_PASSWORD=${DOCKER_REGISTRY_PASSWORD}

@@ -2,7 +2,8 @@
 #
 # Build and Push Docker Images
 # ============================
-# Builds Docker images from other repositories and pushes to registry.methodinfo.fr
+# Builds Docker images from other repositories and pushes them to the registry
+# named by $REGISTRY (default: registry.methodinfo.fr)
 #
 # Usage:
 #   ./build-push.sh <folder> <version> [branch] [commit]
@@ -32,7 +33,13 @@ set -e
 # ============================================================================
 # Configuration
 # ============================================================================
-REGISTRY="registry.methodinfo.fr"
+# Registry host the images are pushed to / pulled from (no scheme). PulsarCD
+# passes its configured registry (PULSARCD_GITHUB__REGISTRY_URL) as REGISTRY;
+# the default keeps standalone runs working as before.
+REGISTRY="${REGISTRY:-registry.methodinfo.fr}"
+REGISTRY="${REGISTRY#http://}"
+REGISTRY="${REGISTRY#https://}"
+REGISTRY="${REGISTRY%/}"
 DEVOPS_FOLDER="devops"
 COMPOSE_FILE="docker-compose.swarm.yml"
 
