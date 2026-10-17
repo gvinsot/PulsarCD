@@ -138,9 +138,14 @@ async def deploy_preview(
         raise _http(e)
 
     action_id = str(uuid.uuid4())[:8]
+    try:
+        # Re-checked without awaiting: a concurrent request may have reserved
+        # the stack (or the last slot) while this one awaited Docker above.
+        manager.begin(repo_name, ssh_url, names, ttl_hours, action_id)
+    except PreviewError as e:
+        raise _http(e)
     action = api.BackgroundAction(action_id, "preview-deploy", repo_name)
     api._background_actions[action_id] = action
-    manager.begin(repo_name, ssh_url, names, ttl_hours, action_id)
 
     async def _run():
         try:

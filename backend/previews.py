@@ -25,6 +25,8 @@ Safety: a preview can never overwrite or remove a production or QA stack.
   preview of the same repository and branch (e.g. a production repository
   that happens to be called ``pv-...``).
 * A teardown only accepts a stack recorded in the store, and re-checks it.
+* A running stack is only redeployed or removed while it runs the preview's
+  image tag, so a production stack that took over a ``pv-`` name is safe.
 * The deploy script refuses any preview stack name not starting with ``pv-``.
 """
 
@@ -171,6 +173,48 @@ class PreviewManager:
         return [line.strip() for line in output.splitlines()
                 if line.strip().startswith(PREVIEW_STACK_PREFIX)]
 
+    @staticmethod
+    def _image_has_tag(image: str, image_tag: str) -> bool:
+        """True when ``image`` (``repo[:tag][@digest]``) carries the preview tag.
+
+        Variant images are published as ``<variant>-<tag>`` by build-push.sh.
+        """
+        ref = image.split("@", 1)[0]
+        name = ref.rsplit("/", 1)[-1]
+        if ":" not in name:
+            return False
+        tag = name.rsplit(":", 1)[1]
+        return tag == image_tag or tag.endswith(f"-{image_tag}")
+
+    async def check_stack_is_preview(self, stack: str, image_tag: str) -> None:
+        """Refuse to touch a running stack that does not run the preview image.
+
+        The stack name alone cannot prove ownership: a production repository
+        may literally be called ``pv-<x>-<repo>`` and be deployed over a
+        recorded preview after the fact. A running preview always runs at
+        least one image tagged with its preview tag; a stack that runs none is
+        not (or no longer) the preview and is never redeployed or removed.
+
+        Raises:
+            PreviewError: 409 when the stack runs no preview image, 503 when
+                its services cannot be listed.
+        """
+        deployer = self._deployer_factory()
+        ok, output = await deployer._run_command(
+            "docker service ls --filter "
+            f"{shlex.quote('label=com.docker.stack.namespace=' + stack)} "
+            "--format '{{.Image}}'"
+        )
+        if not ok:
+            raise PreviewError(
+                f"Cannot inspect the services of {stack}; refusing to touch it", 503)
+        images = [line.strip() for line in (output or "").splitlines() if line.strip()]
+        if images and not any(self._image_has_tag(img, image_tag) for img in images):
+            raise PreviewError(
+                f"Stack {stack} runs no image tagged {image_tag}: it is not the "
+                "preview PulsarCD deployed (a production stack may use this name); "
+                "refusing to touch it", 409)
+
     async def check_can_deploy(self, repo_name: str, names: PreviewNames) -> None:
         """Refuse a deploy that could touch anything but this exact preview.
 
@@ -203,6 +247,8 @@ class PreviewManager:
             raise PreviewError(
                 f"Stack {names.stack} is running but is not a preview PulsarCD deployed; "
                 "refusing to overwrite it", 409)
+        if names.stack in live and record:
+            await self.check_stack_is_preview(names.stack, names.image_tag)
 
     # ------------------------------------------------------------------
     # Deploy
@@ -210,9 +256,26 @@ class PreviewManager:
 
     def begin(self, repo_name: str, ssh_url: str, names: PreviewNames,
               ttl_hours: Optional[int], action_id: str) -> Dict[str, Any]:
-        """Reserve the stack and record the preview as building."""
-        self._busy.add(names.stack)
+        """Reserve the stack and record the preview as building.
+
+        Re-checks the busy set, the owner and the limit without awaiting, so
+        two requests that both passed :meth:`check_can_deploy` concurrently
+        cannot both reserve the stack or exceed ``max_active``.
+
+        Raises:
+            PreviewError: 409 as in :meth:`check_can_deploy`.
+        """
+        if names.stack in self._busy:
+            raise PreviewError(f"Preview {names.stack} is already being deployed or removed", 409)
         existing = self.store.get(names.stack) or {}
+        if existing and (existing.get("repo") != repo_name or existing.get("branch") != names.branch):
+            raise PreviewError(
+                f"Stack {names.stack} already belongs to the preview of "
+                f"{existing.get('repo')}@{existing.get('branch')}", 409)
+        if not existing and len(self.store.all()) >= self.config.max_active:
+            raise PreviewError(
+                f"Preview limit reached ({self.config.max_active}); tear one down first", 409)
+        self._busy.add(names.stack)
         now = _now().isoformat()
         return self.store.upsert(
             names.stack,
@@ -332,6 +395,7 @@ class PreviewManager:
 
         self._busy.add(stack)
         try:
+            await self.check_stack_is_preview(stack, record.get("image_tag") or "")
             self.store.upsert(stack, status="removing", updated_at=_now().isoformat())
             deployer = self._deployer_factory()
             ok, output = await deployer._run_command(f"docker stack rm {shlex.quote(stack)}")

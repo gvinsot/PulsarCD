@@ -27,11 +27,17 @@ class FakeDeployer:
         self.builds = []
         self.deploys = []
         self.commands = []
+        # stack -> images its services run (docker service ls); none by default
+        self.images = {}
+        self.service_ls_ok = True
 
     async def _run_command(self, command, output_callback=None, cancel_event=None):
         self.commands.append(command)
         if command.startswith("docker stack ls"):
             return (self.ls_ok, "\n".join(self.stacks) if self.ls_ok else "error")
+        if command.startswith("docker service ls --filter"):
+            stack = command.split("com.docker.stack.namespace=", 1)[1].split()[0].strip("'")
+            return (self.service_ls_ok, "\n".join(self.images.get(stack, [])))
         if command.startswith("docker stack rm"):
             return (self.rm_ok, "Removing service" if self.rm_ok else "permission denied")
         return (False, "unexpected command")
@@ -131,6 +137,34 @@ class TestDeploy:
             await manager.check_can_deploy("shop", manager.plan("shop", "two"))
         assert exc.value.status_code == 409
 
+    async def test_begin_rechecks_busy_and_limit(self, tmp_path):
+        """Two requests that both passed check_can_deploy cannot both reserve."""
+        manager, _ = make_manager(tmp_path, max_active=1)
+        names = manager.plan("shop", "main")
+        other = manager.plan("shop", "other")
+        await manager.check_can_deploy("shop", names)
+        await manager.check_can_deploy("shop", other)
+        manager.begin("shop", SSH_URL, names, None, "a")
+        with pytest.raises(PreviewError) as exc:
+            manager.begin("shop", SSH_URL, names, None, "b")
+        assert exc.value.status_code == 409
+        with pytest.raises(PreviewError) as exc:
+            manager.begin("shop", SSH_URL, other, None, "c")
+        assert exc.value.status_code == 409
+
+    async def test_recorded_stack_taken_over_by_production_is_not_redeployed(self, tmp_path):
+        manager, deployer = make_manager(tmp_path)
+        names, _ = await deploy(manager, branch="main")
+        deployer.stacks.append(names.stack)
+        # A production repo literally named like the preview now runs there.
+        deployer.images[names.stack] = ["registry.example.com/pv-main-shop/web:1.2.3@sha256:abc"]
+        with pytest.raises(PreviewError) as exc:
+            await manager.check_can_deploy("shop", names)
+        assert exc.value.status_code == 409
+        deployer.images[names.stack] = [f"registry.example.com/shop/web:{names.image_tag}@sha256:abc",
+                                        "postgres:16"]
+        await manager.check_can_deploy("shop", names)
+
     @pytest.mark.parametrize("repo,branch", [
         ("../etc", "main"), ("-x", "main"), ("shop", "$(reboot)"), ("shop", "-f"), ("shop", ""),
     ])
@@ -170,6 +204,34 @@ class TestTeardown:
         manager.store.upsert("pv-main-shop", repo="billing", branch="main")
         with pytest.raises(PreviewError):
             await manager.teardown("pv-main-shop")
+        assert not any(c.startswith("docker stack rm") for c in deployer.commands)
+
+    async def test_stack_not_running_the_preview_image_is_never_removed(self, tmp_path):
+        manager, deployer = make_manager(tmp_path)
+        names, _ = await deploy(manager)
+        deployer.images[names.stack] = ["registry.example.com/other/web:2.0.1"]
+        with pytest.raises(PreviewError) as exc:
+            await manager.teardown(names.stack)
+        assert exc.value.status_code == 409
+        assert not any(c.startswith("docker stack rm") for c in deployer.commands)
+        assert manager.store.get(names.stack)
+        # Expiry skips it as well
+        assert await manager.cleanup_expired(datetime.now(timezone.utc) + timedelta(days=3650)) == []
+        assert not any(c.startswith("docker stack rm") for c in deployer.commands)
+
+    async def test_variant_image_tag_counts_as_the_preview(self, tmp_path):
+        manager, deployer = make_manager(tmp_path)
+        names, _ = await deploy(manager)
+        deployer.images[names.stack] = [f"registry.example.com/shop/speech:rocm-{names.image_tag}"]
+        assert (await manager.teardown(names.stack))["success"]
+
+    async def test_unlistable_services_refuse_teardown(self, tmp_path):
+        manager, deployer = make_manager(tmp_path)
+        names, _ = await deploy(manager)
+        deployer.service_ls_ok = False
+        with pytest.raises(PreviewError) as exc:
+            await manager.teardown(names.stack)
+        assert exc.value.status_code == 503
         assert not any(c.startswith("docker stack rm") for c in deployer.commands)
 
     async def test_docker_failure_keeps_the_record(self, tmp_path):
