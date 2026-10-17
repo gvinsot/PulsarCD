@@ -44,6 +44,7 @@ from .opensearch_client import OpenSearchClient
 from .github_service import GitHubService, StackDeployer, close_shared_ssh_clients
 from .actions_queue import actions_queue, ActionType, ActionStatus
 from .pipeline_state import PipelineStateManager, _UNSET
+from .deploy_rollback import deploy_stage_with_rollback
 try:
     from .mcp_server import mcp_read, mcp_actions, get_mcp_read_app, get_mcp_actions_app
     from .mcp_auth import MCPAuthMiddleware
@@ -3345,8 +3346,9 @@ async def deploy_stack(
 
     async def _run_deploy():
         try:
-            result = await deployer.deploy(
-                repo_name, ssh_url, version, tag=tag, qa=qa,
+            # Rolls back to the last good version if post-deploy verification fails
+            result = await deploy_stage_with_rollback(
+                deployer, pipeline_state, repo_name, ssh_url, version=version, tag=tag, qa=qa,
                 output_callback=action.append_output,
                 cancel_event=action.cancel_event,
             )
@@ -4200,8 +4202,8 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                               build_id=build_id, test_id=test_id, qa_id=qa_id, deploy_id=None)
 
                 logger.info("Pipeline: starting QA deploy", repo=repo_name, action_id=qa_id, tag=deploy_tag)
-                qa_result = await deployer.deploy(
-                    repo_name, ssh_url, version=built_version,
+                qa_result = await deploy_stage_with_rollback(
+                    deployer, pipeline_state, repo_name, ssh_url, version=built_version,
                     tag=deploy_tag, qa=True,
                     output_callback=qa_action.append_output,
                     cancel_event=qa_action.cancel_event,
@@ -4260,8 +4262,8 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                           build_id=build_id, test_id=test_id, qa_id=qa_id, deploy_id=deploy_id)
 
             logger.info("Pipeline: starting deploy", repo=repo_name, action_id=deploy_id, tag=deploy_tag)
-            deploy_result = await deployer.deploy(
-                repo_name, ssh_url, version=built_version,
+            deploy_result = await deploy_stage_with_rollback(
+                deployer, pipeline_state, repo_name, ssh_url, version=built_version,
                 tag=deploy_tag,
                 output_callback=deploy_action.append_output,
                 cancel_event=deploy_action.cancel_event,

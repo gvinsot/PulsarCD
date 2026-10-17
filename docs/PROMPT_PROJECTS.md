@@ -487,6 +487,26 @@ services:
         - "traefik.http.routers.app.middlewares=global@file"
 ```
 
+### Vérification post-déploiement et rollback automatique
+
+Après `docker stack deploy`, `deploy-service.sh` attend que tous les services
+de la stack tournent sur la nouvelle image (180 s par défaut). Une tâche
+`Failed`/`Rejected` créée par le déploiement (crash loop) ou un timeout fait
+échouer le déploiement (code 3) et PulsarCD redéploie automatiquement la
+dernière version déployée avec succès. Variables optionnelles dans
+`devops/.env` :
+
+```bash
+DEPLOY_HEALTHCHECK_PATH=/health   # sondé sur https://$TRAEFIK_HOST/health (2xx/3xx attendu)
+DEPLOY_CONVERGE_TIMEOUT=300       # pour un service lent à démarrer
+# DEPLOY_VERIFY=false             # désactive la vérification (déconseillé)
+```
+
+Le rollback natif de Swarm (`deploy.update_config.failure_action: rollback`,
+avec un `healthcheck`) reste un choix du projet ; s'il se déclenche, PulsarCD
+considère le déploiement comme échoué. Détails : section « Post-deploy
+verification and rollback » du README.
+
 ### Application nécessitant un GPU
 
 Pour déployer un service sur un nœud avec GPU, vous devez :

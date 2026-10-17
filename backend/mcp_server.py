@@ -339,10 +339,14 @@ async def deploy_stack(
 
     async def _run_deploy():
         try:
-            result = await deployer.deploy(
+            from .deploy_rollback import deploy_stage_with_rollback
+            # Rolls back to the last good version if post-deploy verification fails
+            result = await deploy_stage_with_rollback(
+                deployer,
+                pipeline_state,
                 repo_name,
                 ssh_url,
-                version,
+                version=version,
                 tag=tag,
                 qa=qa,
                 output_callback=action.append_output,

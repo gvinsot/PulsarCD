@@ -169,6 +169,10 @@ class GitHubConfig(BaseModel):
     registry_password: Optional[str] = None
     # Which repos to show in Stacks: "all" (default) or "starred"
     repos_mode: str = "all"
+    # Redeploy the last successfully deployed version when a deploy fails
+    # post-deploy verification (services not converging, health check failing).
+    # See backend/deploy_rollback.py.
+    auto_rollback: bool = True
 
 
 class AuthConfig(BaseModel):

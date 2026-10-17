@@ -136,6 +136,9 @@ class PipelineEntry:
         # Per-project transition configs: {"build_to_test": {"mode": "...", ...}, "test_to_deploy": {...}}
         # mode: "auto" (no gate), "auto_with_success" (auto if prev succeeded), "agent" (LLM gate), "manual"
         self.transition_configs: Dict[str, Dict[str, Any]] = {}
+        # Last automatic rollback after a deploy failed post-deploy
+        # verification (see deploy_rollback.py), or None.
+        self.last_rollback: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> dict:
         return {
@@ -148,6 +151,7 @@ class PipelineEntry:
             "gates": [g.to_dict() for g in self.gates],
             "last_deployed_at": self.last_deployed_at,
             "transition_configs": self.transition_configs,
+            "last_rollback": self.last_rollback,
         }
 
     @classmethod
@@ -167,6 +171,7 @@ class PipelineEntry:
         ]
         entry.last_deployed_at = data.get("last_deployed_at")
         entry.transition_configs = data.get("transition_configs", {})
+        entry.last_rollback = data.get("last_rollback")
         return entry
 
     # ── Convenience for backward-compatible API response ──
@@ -200,6 +205,7 @@ class PipelineEntry:
             "gates": [g.to_dict() for g in self.gates],
             "last_deployed_at": self.last_deployed_at,
             "transition_configs": self.transition_configs,
+            "last_rollback": self.last_rollback,
             # Enriched per-stage data. ``last_log`` is deliberately left out:
             # the UI polls this every couple of seconds and only reads statuses
             # and versions, while the log tail would make the payload change on
@@ -376,6 +382,25 @@ class PipelineStateManager:
         entry.overall_status = status
 
         self._save()
+
+    def record_rollback(self, repo_name: str, stage: str, rollback: Dict[str, Any]):
+        """Record the outcome of an automatic rollback (see deploy_rollback.py).
+
+        The failed stage keeps its "failed" status: the requested version did
+        not deploy. After a successful rollback the stage's current_version is
+        the version that was restored, so the UI shows what actually runs.
+        """
+        if stage not in ("deploy", "qa"):
+            return
+        entry = self.get_or_create(repo_name)
+        entry.last_rollback = {**rollback, "stage": stage}
+        if rollback.get("attempted") and rollback.get("success") and rollback.get("to_version"):
+            entry.stages[stage].current_version = rollback["to_version"]
+        self._save()
+        logger.info("Pipeline rollback recorded", repo=repo_name, stage=stage,
+                    from_version=rollback.get("from_version"),
+                    to_version=rollback.get("to_version"),
+                    attempted=rollback.get("attempted"), success=rollback.get("success"))
 
     def update_log(self, repo_name: str, stage: str, log_lines: List[str]):
         """Append/replace last log for a stage."""
