@@ -9,6 +9,7 @@
          elements xterm creates, the only inline styles the CSP accepts. -->
     <meta name="csp-nonce" nonce="__CSP_NONCE__">
     <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/previews.css">
     <!-- Third-party files are pinned by hash: a CDN serving anything else is refused. -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
             integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4"
@@ -937,6 +938,18 @@
                 </header>
                 
                 <div class="stacks-content">
+                    <!-- Per-branch preview environments (frontend/static/js/previews.js) -->
+                    <details id="previews-panel" class="previews-panel">
+                        <summary>Preview environments <span id="previews-summary-count" class="previews-count"></span></summary>
+                        <div class="previews-form">
+                            <select id="preview-repo" class="form-select" aria-label="Repository"><option value="">Loading...</option></select>
+                            <input id="preview-branch" class="form-input" type="text" placeholder="branch (e.g. feature/login)" aria-label="Branch">
+                            <input id="preview-ttl" class="form-input previews-ttl" type="number" min="0" placeholder="TTL h" title="Hours without redeploy before automatic removal (0 = never, empty = default)" aria-label="TTL in hours">
+                            <button class="btn btn-primary btn-sm" data-preview-action="submit">Deploy preview</button>
+                            <button class="btn btn-secondary btn-sm" data-preview-action="refresh">Refresh</button>
+                        </div>
+                        <div id="previews-list" class="previews-list"><div class="loading-placeholder">Loading previews...</div></div>
+                    </details>
                     <!-- Repos list -->
                     <div id="stacks-list" class="stacks-list">
                         <!-- Populated by JavaScript -->
@@ -1894,5 +1907,6 @@
     <script src="/static/js/test-log-model.js"></script>
     <script src="/static/js/test-log-viewer.js"></script>
     <script src="/static/js/app.js"></script>
+    <script src="/static/js/previews.js"></script>
 </body>
 </html>
