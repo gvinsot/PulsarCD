@@ -135,6 +135,22 @@ class CollectorConfig(BaseModel):
     agents_only: bool = False
 
 
+class RunHistoryConfig(BaseModel):
+    """Pipeline run history (backend/run_history.py).
+
+    Every build / test / qa / deploy run and its full log are kept in
+    OpenSearch for ``retention_days``, independently of the container log
+    retention (collector.retention_days), so deployments can be audited long
+    after their logs rotated out of pipeline_state.
+    """
+    enabled: bool = True
+    retention_days: int = 90
+    # Longest log stored per run; older lines of a longer log are dropped.
+    max_log_lines: int = 20000
+    # Lines per log document: the unit returned by a full-text log search.
+    log_chunk_lines: int = 200
+
+
 class AIConfig(BaseModel):
     """AI/vLLM configuration."""
     model: str = "txn545/Qwen3.5-122B-A10B-NVFP4"
@@ -266,6 +282,9 @@ class Settings(BaseSettings):
 
     # Collector
     collector: CollectorConfig = CollectorConfig()
+
+    # Pipeline run history
+    run_history: RunHistoryConfig = RunHistoryConfig()
 
     # AI
     ai: AIConfig = AIConfig()
@@ -429,6 +448,14 @@ def load_config() -> Settings:
     agents_only_env = os.environ.get("PULSARCD_COLLECTOR__AGENTS_ONLY", "").lower()
     if agents_only_env in ("true", "1", "yes"):
         settings.collector.agents_only = True
+
+    # Pipeline run history settings
+    run_history_enabled_env = os.environ.get("PULSARCD_RUN_HISTORY__ENABLED", "").lower()
+    if run_history_enabled_env in ("false", "0", "no"):
+        settings.run_history.enabled = False
+    load_env(settings.run_history, "retention_days", "PULSARCD_RUN_HISTORY__RETENTION_DAYS", int)
+    load_env(settings.run_history, "max_log_lines", "PULSARCD_RUN_HISTORY__MAX_LOG_LINES", int)
+    load_env(settings.run_history, "log_chunk_lines", "PULSARCD_RUN_HISTORY__LOG_CHUNK_LINES", int)
 
     # AI settings
     load_env(settings.ai, "model", "PULSARCD_AI__MODEL")

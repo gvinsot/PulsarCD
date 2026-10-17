@@ -44,6 +44,8 @@ from .opensearch_client import OpenSearchClient
 from .github_service import GitHubService, StackDeployer, close_shared_ssh_clients
 from .actions_queue import actions_queue, ActionType, ActionStatus
 from .pipeline_state import PipelineStateManager, _UNSET
+from . import run_history
+from .run_history_api import router as run_history_router
 try:
     from .mcp_server import mcp_read, mcp_actions, get_mcp_read_app, get_mcp_actions_app
     from .mcp_auth import MCPAuthMiddleware
@@ -208,6 +210,8 @@ async def lifespan(app: FastAPI):
     
     collector = Collector(settings, opensearch)
     await collector.start()
+
+    await run_history.recorder.attach(opensearch, settings, log_source=_run_history_log_source)
 
     if settings.autoban.enabled and settings.auth.edge_key:
         auto_ban_worker = AutoBanWorker(
@@ -419,6 +423,8 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
 #                    container_action, update_service_image, remove_service,
 #                    remove_stack). Every tool added here must also be listed in
 #                    config_file.DANGEROUS_TOOL_NAMES.
+app.include_router(run_history_router)
+
 if _mcp_available:
     app.mount("/ai/actions", MCPAuthMiddleware(get_mcp_actions_app(), require_admin=True))
     app.mount("/ai", MCPAuthMiddleware(get_mcp_read_app(), require_admin=False))
@@ -860,6 +866,7 @@ async def auth_middleware(request: Request, call_next):
 
     request.state.user = payload.get("sub", "")
     request.state.role = payload.get("role", "viewer")
+    run_history.set_actor(request.state.user)
     request.state.auth_source = payload.get("auth", AUTH_SOURCE_LOCAL)
 
     # Admin-only paths
@@ -3205,6 +3212,21 @@ def _set_pipeline(
     )
     if log_lines and stage in ("build", "test", "qa", "deploy"):
         pipeline_state.update_log(repo_name, stage, log_lines)
+    run_history.recorder.observe_pipeline(
+        repo_name, stage, status, version,
+        action_ids={"build": build_id, "test": test_id, "qa": qa_id, "deploy": deploy_id},
+        log_lines=log_lines,
+    )
+
+
+def _run_history_log_source(repo_name: str, stage: str, action_id: Optional[str]) -> Optional[List[str]]:
+    """Log lines of a run that closed without passing them (pipeline exception path)."""
+    if not action_id and pipeline_state is not None:
+        entry = pipeline_state.get(repo_name)
+        if entry and stage in entry.stages:
+            action_id = entry.stages[stage].action_id
+    action = _background_actions.get(action_id) if action_id else None
+    return list(action.output_lines) if action else None
 
 
 def _get_deployer_and_host():
@@ -3974,6 +3996,7 @@ async def trigger_pipeline_endpoint(
             )
 
         logger.info("Auto-tagged commit for pipeline", repo=repo_name, tag=new_tag, commit=commit[:7])
+        run_history.set_commit(commit)
         started = await _trigger_pipeline(repo_name, ssh_url, version=next_version, tag=new_tag)
         if not started:
             raise HTTPException(
@@ -4019,6 +4042,7 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
         logger.warning("Pipeline already running, skipping duplicate trigger",
                        repo=repo_name, version=version, tag=tag)
         return False
+    run_history.begin_pipeline()
 
     try:
         deployer, host_name = _get_deployer_and_host()
@@ -4094,6 +4118,8 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                 pipeline_state.update_log(repo_name, "build", build_action.output_lines)
                 # Mark build stage as success with current_version
                 pipeline_state.set_stage(repo_name, "build", "success", built_version, action_id=build_id, log_lines=build_action.output_lines)
+                run_history.recorder.observe(repo_name, "build", "success", built_version,
+                                             action_id=build_id, log_lines=build_action.output_lines)
                 logger.info("Pipeline: build succeeded", repo=repo_name, version=built_version)
 
                 # ── Gate: Build → Test ──
@@ -4297,6 +4323,7 @@ async def auto_build_poller():
     - Uses `pushed_at` from the starred-repos list to skip unchanged repos (0 extra API calls).
     - Checks remaining repos concurrently via asyncio.gather.
     """
+    run_history.set_trigger("auto", actor="auto-build")
     await asyncio.sleep(10)
 
     # Track last known pushed_at per repo to cheaply skip unchanged ones
