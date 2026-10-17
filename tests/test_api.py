@@ -46,7 +46,7 @@ class TestHealth:
     def test_health_payload_is_minimal(self, client):
         """The only public endpoint must not disclose the deployment."""
         data = client.get("/api/health").json()
-        assert set(data) <= {"status", "service", "opensearch"}
+        assert set(data) <= {"status", "service", "opensearch", "indices"}
         assert data["service"] == "pulsarcd"
         # No version strings and no per-index document counts
         assert not [k for k in data if "version" in k or k.endswith("_docs")]

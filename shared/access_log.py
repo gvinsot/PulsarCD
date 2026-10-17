@@ -27,8 +27,8 @@ EVENT_WAF_BLOCK = "waf_block"
 ACCESS_INDEX_MAPPING = {
     "mappings": {
         # Unknown fields are kept in _source but never mapped: a dynamically
-        # mapped field would later fail _verify_mapping, which recreates the
-        # index (and drops its data) on any type mismatch.
+        # mapped field could later conflict with the declared mapping and
+        # force a full reindex (see shared/index_aliases.py).
         "dynamic": False,
         "properties": {
             "timestamp": {"type": "date"},

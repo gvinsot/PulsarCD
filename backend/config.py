@@ -122,6 +122,15 @@ class OpenSearchConfig(BaseModel):
     index_prefix: str = "pulsarcd"
     username: Optional[str] = None
     password: Optional[str] = None
+    # On a field type mismatch, reindex into a new versioned index and swap
+    # the alias in the background. When False, the mismatch is only reported
+    # (logs, /api/health) and the existing index is left untouched.
+    auto_migrate_mappings: bool = True
+    # Also move pre-alias deployments (plain "pulsarcd-logs" indices with a
+    # correct mapping) to the versioned/alias layout at startup.
+    migrate_legacy_indices: bool = False
+    # Catch-up window copied again, under a write block, after the bulk copy.
+    migration_catchup_seconds: int = 900
 
 
 class CollectorConfig(BaseModel):
@@ -350,6 +359,9 @@ def load_config() -> Settings:
     - PULSARCD_OPENSEARCH__INDEX_PREFIX: Index prefix
     - PULSARCD_OPENSEARCH__USERNAME: OpenSearch username
     - PULSARCD_OPENSEARCH__PASSWORD: OpenSearch password
+    - PULSARCD_OPENSEARCH__AUTO_MIGRATE_MAPPINGS: bool (default true)
+    - PULSARCD_OPENSEARCH__MIGRATE_LEGACY_INDICES: bool (default false)
+    - PULSARCD_OPENSEARCH__MIGRATION_CATCHUP_SECONDS: integer
     - PULSARCD_COLLECTOR__LOG_INTERVAL_SECONDS: integer
     - PULSARCD_COLLECTOR__METRICS_INTERVAL_SECONDS: integer
     - PULSARCD_COLLECTOR__LOG_LINES_PER_FETCH: integer
@@ -415,10 +427,19 @@ def load_config() -> Settings:
             except (ValueError, TypeError) as e:
                 print(f"Warning: Failed to parse {env_var}: {e}")
 
+    def _as_bool(value: str) -> bool:
+        return value.strip().lower() in ("true", "1", "yes")
+
     # OpenSearch settings
     load_env(settings.opensearch, "index_prefix", "PULSARCD_OPENSEARCH__INDEX_PREFIX")
     load_env(settings.opensearch, "username", "PULSARCD_OPENSEARCH__USERNAME")
     load_env(settings.opensearch, "password", "PULSARCD_OPENSEARCH__PASSWORD")
+    load_env(settings.opensearch, "auto_migrate_mappings",
+             "PULSARCD_OPENSEARCH__AUTO_MIGRATE_MAPPINGS", _as_bool)
+    load_env(settings.opensearch, "migrate_legacy_indices",
+             "PULSARCD_OPENSEARCH__MIGRATE_LEGACY_INDICES", _as_bool)
+    load_env(settings.opensearch, "migration_catchup_seconds",
+             "PULSARCD_OPENSEARCH__MIGRATION_CATCHUP_SECONDS", int)
 
     # Collector settings
     load_env(settings.collector, "log_interval_seconds", "PULSARCD_COLLECTOR__LOG_INTERVAL_SECONDS", int)

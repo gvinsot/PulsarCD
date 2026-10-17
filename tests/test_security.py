@@ -482,9 +482,11 @@ class TestH2HealthDisclosure:
 
     def test_health_discloses_no_volumetry_or_version(self, client):
         data = client.get("/api/health").json()
-        assert set(data) <= {"status", "service", "opensearch"}
+        # "indices" is a coarse migration state, never index names or counts.
+        assert set(data) <= {"status", "service", "opensearch", "indices"}
         assert not [k for k in data if "version" in k or k.endswith("_docs")]
         assert data["opensearch"] in ("connected", "error", "not_configured")
+        assert data.get("indices", "ok") in ("ok", "migrating", "degraded")
 
     def test_health_hides_the_opensearch_error_message(self, client):
         """A connection error can carry host names and credentials."""

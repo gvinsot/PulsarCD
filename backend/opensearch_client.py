@@ -9,6 +9,7 @@ import structlog
 from opensearchpy import AsyncOpenSearch, ConflictError, helpers
 
 from shared.access_log import ACCESS_INDEX_MAPPING
+from shared.index_aliases import IndexManager
 
 from . import security_analytics as security
 from . import usage_analytics as usage
@@ -186,88 +187,31 @@ class OpenSearchClient:
             verify_certs=False,
             ssl_show_warn=False,
         )
+        # Only the backend migrates indices; agents just report mismatches.
+        self.index_manager = IndexManager(
+            self._client,
+            allow_migration=config.auto_migrate_mappings,
+            migrate_legacy=config.migrate_legacy_indices,
+            catchup_margin_seconds=config.migration_catchup_seconds,
+        )
     
     async def _ensure_index(self, index_name: str, mapping: dict):
-        """Create an index if it doesn't exist, handling opensearch-py 2.x/3.x differences.
+        """Create ``index_name`` (an alias over a versioned index) if needed.
 
-        Uses direct creation with error handling instead of exists() check,
-        because opensearch-py 3.x changed the return type of indices.exists()
-        from bool to HeadApiResponse which can break boolean checks.
-
-        Also verifies the mapping of existing indices — if key fields have
-        wrong types (e.g. 'text' instead of 'keyword' from auto-mapping),
-        the index is deleted and recreated with the correct mapping.
+        Existing indices are verified but never deleted: a field type mismatch
+        schedules a background migration (reindex into ``<name>-v<N+1>`` and
+        atomic alias swap) that keeps the old index until the copy succeeded.
+        See shared/index_aliases.py.
         """
-        try:
-            await self._client.indices.create(index=index_name, body=mapping)
-            logger.warning("Created index", index=index_name)
-        except Exception as e:
-            error_str = str(e).lower()
-            if "resource_already_exists" in error_str or "already exists" in error_str:
-                logger.info("Index already exists, verifying mapping...",
-                            index=index_name)
-                await self._verify_mapping(index_name, mapping)
-            else:
-                logger.error("Failed to create index", index=index_name,
-                             error=str(e), error_type=type(e).__name__)
-                raise
+        await self.index_manager.ensure(index_name, mapping)
 
-    async def _verify_mapping(self, index_name: str, expected_mapping: dict):
-        """Check if existing index has the correct field types.
+    def index_health(self) -> str:
+        """Coarse index state ("ok", "migrating" or "degraded")."""
+        return self.index_manager.health()
 
-        If key fields have wrong types (e.g. auto-mapped 'text' instead of
-        'keyword'), delete and recreate the index. OpenSearch does not support
-        changing field types in-place.
-        """
-        try:
-            raw = await self._client.indices.get_mapping(index=index_name)
-            # opensearch-py 3.x wraps response in ApiResponse object
-            resp_dict = getattr(raw, "body", raw)
-            if not isinstance(resp_dict, dict):
-                try:
-                    resp_dict = dict(resp_dict)
-                except Exception:
-                    logger.error("Cannot parse get_mapping response",
-                                 index=index_name, resp_type=type(raw).__name__)
-                    return
-
-            actual_props = {}
-            if index_name in resp_dict:
-                actual_props = resp_dict[index_name].get(
-                    "mappings", {}).get("properties", {})
-
-            expected_props = expected_mapping.get(
-                "mappings", {}).get("properties", {})
-
-            logger.warning("Mapping check",
-                           index=index_name,
-                           actual_count=len(actual_props),
-                           expected_count=len(expected_props))
-
-            mismatches = []
-            for field, expected_def in expected_props.items():
-                expected_type = expected_def.get("type")
-                actual_def = actual_props.get(field, {})
-                actual_type = actual_def.get("type")
-                if actual_type and expected_type and actual_type != expected_type:
-                    mismatches.append(
-                        f"{field}: {actual_type} -> {expected_type}")
-
-            if mismatches:
-                logger.warning("Wrong field types found, recreating index",
-                               index=index_name, mismatches=mismatches)
-                await self._client.indices.delete(index=index_name)
-                logger.warning("Deleted index with bad mapping",
-                               index=index_name)
-                await self._client.indices.create(
-                    index=index_name, body=expected_mapping)
-                logger.warning("Recreated index with correct mapping",
-                               index=index_name)
-            else:
-                logger.info("Index mapping OK", index=index_name)
-        except Exception as e:
-            logger.error("Mapping verification failed", index=index_name,
-                         error=str(e), error_type=type(e).__name__)
+    def index_status(self) -> Dict[str, Dict[str, Any]]:
+        """Per-index layout / migration state for the admin diagnostics."""
+        return {name: dict(state) for name, state in self.index_manager.status.items()}
 
     async def recreate_index(self, index_name: str):
         """Force delete and recreate an index with correct mapping."""
@@ -279,8 +223,10 @@ class OpenSearchClient:
         if index_name not in mapping_methods:
             raise ValueError(f"Unknown index: {index_name}")
         try:
-            await self._client.indices.delete(index=index_name)
-            logger.warning("Deleted index for recreation", index=index_name)
+            # index_name is usually an alias: delete the concrete indices.
+            deleted = await self.index_manager.drop(index_name)
+            logger.warning("Deleted index for recreation", index=index_name,
+                           concrete=deleted)
         except Exception as e:
             logger.warning("Index delete failed", index=index_name,
                            error=str(e))
@@ -409,6 +355,7 @@ class OpenSearchClient:
     
     async def close(self):
         """Close the client."""
+        await self.index_manager.close()
         await self._client.close()
     
     def _generate_log_id(self, entry: LogEntry) -> str:

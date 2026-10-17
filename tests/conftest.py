@@ -50,6 +50,8 @@ def _mock_opensearch():
     m.get_latest_container_stats = AsyncMock(return_value={})
     m.search_logs = AsyncMock(return_value={"hits": [], "total": 0})
     m.close = AsyncMock()
+    m.index_health = MagicMock(return_value="ok")
+    m.index_status = MagicMock(return_value={})
     return m
 
 
