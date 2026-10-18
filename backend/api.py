@@ -3207,8 +3207,10 @@ def _set_pipeline(
         repo_name, stage, status, version,
         build_id=build_id, test_id=test_id, qa_id=qa_id, deploy_id=deploy_id,
     )
-    if log_lines and stage in ("build", "test", "qa", "deploy"):
-        pipeline_state.update_log(repo_name, stage, log_lines)
+    # "done" is how a successful deploy is recorded; its log is the deploy's.
+    log_stage = "deploy" if stage == "done" else stage
+    if log_lines and log_stage in ("build", "test", "qa", "deploy"):
+        pipeline_state.update_log(repo_name, log_stage, log_lines)
 
 
 def _get_deployer_and_host():
@@ -3658,9 +3660,13 @@ async def cancel_action(action_id: str) -> Dict[str, Any]:
         kwargs["test_id"] = action_id
     elif action.action_type == "deploy":
         kwargs["deploy_id"] = action_id
+    elif action.action_type == "qa-deploy":
+        kwargs["qa_id"] = action_id
+    # A QA deploy action runs the pipeline's "qa" stage
+    stage = "qa" if action.action_type == "qa-deploy" else action.action_type
     _set_pipeline(
         action.repo_name,
-        action.action_type,
+        stage,
         "failed",
         pipeline_state.get_legacy(action.repo_name).get("version", ""),
         log_lines=action.output_lines,
@@ -4307,12 +4313,13 @@ async def auto_build_poller():
     _pushed_at_cache: dict[str, str] = {}
     _repo_sem = asyncio.Semaphore(3)
 
-    async def _check_repo(repo: dict):
+    async def _check_repo(repo: dict) -> bool:
         """Check a single repo for new commits. Designed to run concurrently."""
         async with _repo_sem:
-            await _check_repo_inner(repo)
+            return await _check_repo_inner(repo)
 
-    async def _check_repo_inner(repo: dict):
+    async def _check_repo_inner(repo: dict) -> bool:
+        """Return False when the repo must be checked again on the next poll."""
         owner, name, ssh_url = repo["owner"], repo["name"], repo["ssh_url"]
 
         try:
@@ -4321,11 +4328,15 @@ async def auto_build_poller():
             commits_data, untagged_data = await asyncio.gather(commits_task, untagged_task)
         except Exception as e:
             logger.warning("Failed to fetch commit data for repo", repo=name, error=str(e))
-            return
+            return False
 
         commits = commits_data.get("commits", [])
         if not commits:
-            return
+            # Only a rate-limited fetch is retried on the next poll. Other API
+            # errors are persistent (GitHub answers 409 for an empty repo,
+            # 403/404 for missing permissions): retrying them every poll
+            # would burn the API quota until the next push.
+            return "rate limit" not in str(commits_data.get("error", "")).lower()
 
         latest_sha = commits[0]["sha"]
         untagged_count = len(untagged_data.get("untagged_commits", []))
@@ -4346,10 +4357,16 @@ async def auto_build_poller():
             if untagged_count > 0:
                 logger.info("Repo initialized with untagged commits",
                             repo=name, untagged=untagged_count)
-            return
+            return True
 
         # Always update untagged count
         state["untagged_commits"] = untagged_count
+
+        if latest_sha != state["last_sha"] and state.get("building"):
+            # Come back to this commit once the running build has finished:
+            # the pushed_at fast-filter would otherwise skip the repo until
+            # the next push, and the commit would never be built.
+            return False
 
         if latest_sha != state["last_sha"] and not state.get("building"):
             # Check version_to_build transition config — skip if manual
@@ -4358,7 +4375,7 @@ async def auto_build_poller():
             if _vb_mode == "manual":
                 logger.info("Auto-build skipped (version→build set to manual)", repo=name)
                 state["last_sha"] = latest_sha
-                return
+                return True
 
             logger.info("New commit detected, triggering pipeline",
                         repo=name,
@@ -4388,6 +4405,7 @@ async def auto_build_poller():
                 await _trigger_pipeline(name, ssh_url, version=version, tag=tag_name)
             else:
                 await _trigger_pipeline(name, ssh_url)
+        return True
 
     while True:
         try:
@@ -4403,14 +4421,19 @@ async def auto_build_poller():
                     if prev is not None and prev == pushed_at:
                         # No push since last poll – skip expensive per-repo calls
                         continue
-                    _pushed_at_cache[name] = pushed_at
                     repos_to_check.append(repo)
 
                 if repos_to_check:
                     logger.info("Checking repos for changes",
                                 total=len(repos), checking=len(repos_to_check))
                     # Check all changed repos concurrently (batch)
-                    await asyncio.gather(*[_check_repo(r) for r in repos_to_check])
+                    settled = await asyncio.gather(*[_check_repo(r) for r in repos_to_check])
+                    # Only remember pushed_at once a repo's latest commit has
+                    # been handled, so a failed fetch or a commit that landed
+                    # during a build is retried on the next poll.
+                    for repo, done in zip(repos_to_check, settled):
+                        if done:
+                            _pushed_at_cache[repo["name"]] = repo.get("pushed_at", "")
 
         except Exception as e:
             logger.error("Auto-build poller error", error=str(e))
