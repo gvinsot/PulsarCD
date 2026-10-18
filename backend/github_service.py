@@ -140,6 +140,38 @@ COMMITS_CACHE_TTL = timedelta(seconds=30)
 COMMIT_DIFF_CACHE_TTL = timedelta(minutes=10)
 TAGS_CACHE_TTL = timedelta(minutes=2)
 
+# Versioning reads every tag, 100 per page, up to this many pages.
+VERSION_TAGS_PER_PAGE = 100
+VERSION_TAGS_MAX_PAGES = 10
+
+# A release tag: X.Y.Z with an optional "v" prefix. Pre-release and build
+# suffixes ("1.3.0-rc1", "1.3.0+meta") and anything else ("latest", "v1.2",
+# "release-3") are not releases and never drive the next version.
+_RELEASE_TAG_RE = re.compile(r'^v?(\d+)\.(\d+)\.(\d+)$')
+
+
+def _release_version(tag_name: str) -> Optional[Tuple[int, int, int]]:
+    """Return (major, minor, patch) of a release tag, or None for any other tag."""
+    m = _RELEASE_TAG_RE.match(tag_name or "")
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2)), int(m.group(3))
+
+
+def _highest_release_tag(tags: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Pick the tag with the highest release version.
+
+    GitHub's /tags endpoint does not order tags by version, so the first tag it
+    returns is not necessarily the latest release.
+    """
+    best: Optional[Dict[str, Any]] = None
+    best_version: Optional[Tuple[int, int, int]] = None
+    for tag in tags:
+        version = _release_version(tag.get("name", ""))
+        if version is not None and (best_version is None or version > best_version):
+            best, best_version = tag, version
+    return best
+
 # File path for persistent tag date cache.
 # It lives on the data volume, not next to the code: /app belongs to the image's
 # non-root user, so the container (which runs as root with "cap_drop: ALL", hence
@@ -649,11 +681,65 @@ class GitHubService:
         Returns:
             Tag name string or None
         """
-        tags_data = await self.get_repo_tags(owner, repo, limit=1)
-        tags = tags_data.get("tags", [])
+        tags = await self._get_all_tag_names(owner, repo)
+        latest = _highest_release_tag(tags)
+        if latest:
+            return latest["name"]
+        # No release tag at all: fall back to whatever tag GitHub lists first.
         if tags:
             return tags[0]["name"]
         return None
+
+    async def _get_all_tag_names(self, owner: str, repo: str) -> List[Dict[str, Any]]:
+        """List every tag of a repository (name and sha only), for versioning.
+
+        Paginates /tags (VERSION_TAGS_PER_PAGE per page, at most
+        VERSION_TAGS_MAX_PAGES pages) without the per-tag commit-date and branch
+        lookups get_repo_tags does. Cached under "owner/repo/all" in the tags
+        cache, so create_tag and invalidate_repo_cache drop it too; when rate
+        limited or on an API error, the stale listing is served if there is one.
+        """
+        cache_key = f"{owner}/{repo}/all"
+        cached = self._get_cached(self._tags_cache, cache_key, TAGS_CACHE_TTL)
+        if cached is not None:
+            return cached["tags"]
+
+        def _stale() -> List[Dict[str, Any]]:
+            stale = self._tags_cache.get(cache_key)
+            return stale[0]["tags"] if stale else []
+
+        if not self.config.token:
+            logger.warning("GitHub token not configured")
+            return []
+        if self._is_rate_limited():
+            logger.info("Rate limited, returning stale tag listing", repo=f"{owner}/{repo}")
+            return _stale()
+
+        session = await self._get_session()
+        tags_url = f"https://api.github.com/repos/{owner}/{repo}/tags"
+        tags: List[Dict[str, Any]] = []
+        try:
+            for page in range(1, VERSION_TAGS_MAX_PAGES + 1):
+                params = {"per_page": VERSION_TAGS_PER_PAGE, "page": page}
+                async with session.get(tags_url, params=params) as response:
+                    self._handle_rate_limit(response.headers, response.status)
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error("GitHub API error listing tags", repo=f"{owner}/{repo}",
+                                     status=response.status, error=error_text)
+                        return _stale()
+                    data = await response.json()
+                tags.extend({"name": t["name"], "sha": t["commit"]["sha"]} for t in data)
+                if len(data) < VERSION_TAGS_PER_PAGE:
+                    break
+            else:
+                logger.warning("Tag listing truncated", repo=f"{owner}/{repo}", count=len(tags))
+        except Exception as e:
+            logger.error("Failed to list tags", repo=f"{owner}/{repo}", error=str(e))
+            return _stale()
+
+        self._set_cached(self._tags_cache, cache_key, {"tags": tags})
+        return tags
 
     async def create_tag(self, owner: str, repo: str, tag_name: str, commit_sha: str) -> Dict[str, Any]:
         """Create a lightweight tag on a commit via GitHub API.
@@ -729,7 +815,7 @@ class GitHubService:
                 # Stop at the first tagged commit - everything before it is "new"
                 break
 
-        latest_tag = tags[0] if tags else None
+        latest_tag = _highest_release_tag(tags) or (tags[0] if tags else None)
 
         return {
             "untagged_commits": untagged,
@@ -738,21 +824,19 @@ class GitHubService:
         }
 
     async def get_next_version(self, owner: str, repo: str) -> str:
-        """Compute the next patch version based on the latest tag.
+        """Compute the next patch version based on the highest release tag.
 
-        E.g., if latest tag is v1.0.5, returns "1.0.6".
-        If no tags exist, returns "1.0.0".
+        All tags are read (GitHub does not list them in version order) and the
+        highest X.Y.Z / vX.Y.Z one wins: if it is v1.0.5, returns "1.0.6".
+        Pre-release ("1.3.0-rc1") and non-version tags ("latest") are ignored.
+        If no release tag exists, returns "1.0.0".
         """
-        tags_data = await self.get_repo_tags(owner, repo, limit=1)
-        tags = tags_data.get("tags", [])
-        if not tags:
+        latest = _highest_release_tag(await self._get_all_tag_names(owner, repo))
+        version = _release_version(latest["name"]) if latest else None
+        if version is None:
             return "1.0.0"
-
-        m = re.match(r'^v?(\d+)\.(\d+)\.(\d+)$', tags[0]["name"])
-        if m:
-            major, minor, patch = int(m.group(1)), int(m.group(2)), int(m.group(3))
-            return f"{major}.{minor}.{patch + 1}"
-        return "1.0.0"
+        major, minor, patch = version
+        return f"{major}.{minor}.{patch + 1}"
 
     async def get_repo_commits(self, owner: str, repo: str, branch: str = None, per_page: int = 50, page: int = 1) -> Dict[str, Any]:
         """Get commit history for a repository branch.
