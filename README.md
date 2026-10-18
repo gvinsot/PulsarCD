@@ -68,6 +68,7 @@ For production? Not yet. But the gap is closing fast. And when it does, PulsarCD
 - **Environment Management**: Configure environment variables per stack
 - **Tag Selection**: Deploy specific versions or latest builds
 - **Verified Deploys & Auto-Rollback**: A deploy only succeeds once every service runs the new version (and an optional health URL answers); otherwise the previous version is redeployed automatically — see [Post-deploy verification and rollback](#post-deploy-verification-and-rollback)
+- **Run History**: Every build, test, QA and deploy run is kept in OpenSearch with its full, searchable log (who/what triggered it, version, commit, duration, error excerpt) - Stacks > History
 
 ### Monitoring & Logs
 - **Centralized Log Collection**: Agents collect logs from all containers across all hosts
@@ -423,6 +424,9 @@ pulsarcd/
 | `/api/stacks/{repo_name}/env` | PUT | Update stack environment config |
 | `/api/stacks/deployed-tags` | GET | Get deployed image tags |
 | `/api/webhooks/github` | POST | GitHub push webhook (HMAC-signed, no session; see "Instant builds on push") |
+| `/api/pipeline/runs` | GET | Pipeline run history; filters `repo`, `stage`, `status`, `trigger`, `since`/`until`/`hours`, full-text `q` (logs, error excerpt, version, commit), `page`/`page_size` |
+| `/api/pipeline/runs/repos` | GET | Repositories with recorded runs |
+| `/api/pipeline/runs/{run_id}` | GET | One run with a window of its stored log (`log_offset`, negative = from the end; `log_limit`) |
 
 #### Search Query Parameters
 
@@ -651,6 +655,10 @@ restricts sources, allow those ranges for `/api/webhooks/github`.
 | `PULSARCD_COLLECTOR__METRICS_INTERVAL_SECONDS` | Metrics collection interval | `15` |
 | `PULSARCD_COLLECTOR__LOG_LINES_PER_FETCH` | Lines per container per fetch | `500` |
 | `PULSARCD_COLLECTOR__RETENTION_DAYS` | Data retention period | `7` |
+| `PULSARCD_RUN_HISTORY__ENABLED` | Record pipeline runs and their logs (`<prefix>-pipeline-runs`, `<prefix>-pipeline-run-logs`) | `true` |
+| `PULSARCD_RUN_HISTORY__RETENTION_DAYS` | Pipeline run history retention, independent of the log retention | `90` |
+| `PULSARCD_RUN_HISTORY__MAX_LOG_LINES` | Longest log stored per run (the tail is kept) | `20000` |
+| `PULSARCD_RUN_HISTORY__LOG_CHUNK_LINES` | Log lines per stored (searchable) document | `200` |
 
 ### Agent Settings
 

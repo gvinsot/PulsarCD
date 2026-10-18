@@ -927,6 +927,7 @@
                 <header class="view-header">
                     <h1>Stacks</h1>
                     <div class="header-actions">
+                        <button class="btn btn-sm btn-secondary" data-run-history="open" title="Pipeline run history">History</button>
                         <button class="btn btn-icon btn-secondary" data-click="refreshStacks" title="Refresh">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                                 <polyline points="23 4 23 10 17 10"/>
@@ -961,6 +962,66 @@
                     </div>
                 </div>
                 
+                <!-- Pipeline run history modal (driven by run-history.js) -->
+                <div id="run-history-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="run-history-title">
+                    <div class="modal-content modal-lg">
+                        <div class="modal-header">
+                            <h2 id="run-history-title">Pipeline History</h2>
+                            <button class="modal-close" data-run-history="close" aria-label="Close">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <section data-rh-pane="list">
+                                <form class="filters-row run-history-filters" data-rh-filters autocomplete="off">
+                                    <div class="filter-group">
+                                        <label for="rh-repo">Repo</label>
+                                        <select id="rh-repo" name="repo"><option value="">All repos</option></select>
+                                    </div>
+                                    <div class="filter-group">
+                                        <label for="rh-stage">Stage</label>
+                                        <select id="rh-stage" name="stage">
+                                            <option value="">All</option><option value="build">Build</option><option value="test">Test</option><option value="qa">QA</option><option value="deploy">Deploy</option>
+                                        </select>
+                                    </div>
+                                    <div class="filter-group">
+                                        <label for="rh-status">Status</label>
+                                        <select id="rh-status" name="status">
+                                            <option value="">All</option><option value="running">Running</option><option value="success">Success</option><option value="failed">Failed</option><option value="gate_rejected">Gate rejected</option><option value="cancelled">Cancelled</option><option value="interrupted">Interrupted</option>
+                                        </select>
+                                    </div>
+                                    <div class="filter-group">
+                                        <label for="rh-q">Search</label>
+                                        <input id="rh-q" name="q" type="search" placeholder="Logs, version, commit…" maxlength="512" data-lpignore="true" data-1p-ignore>
+                                    </div>
+                                    <button type="submit" class="btn btn-sm btn-primary">Apply</button>
+                                </form>
+                                <div class="run-history-table-wrap">
+                                    <table class="logs-table run-history-table">
+                                        <thead><tr><th>Started</th><th>Repo</th><th>Stage</th><th>Version</th><th>Commit</th><th>Trigger</th><th>Duration</th><th>Status</th></tr></thead>
+                                        <tbody data-rh-rows></tbody>
+                                    </table>
+                                </div>
+                                <div class="run-history-pager">
+                                    <button class="btn btn-sm btn-secondary" data-run-history="prev">Previous</button>
+                                    <span data-rh-page role="status"></span>
+                                    <button class="btn btn-sm btn-secondary" data-run-history="next">Next</button>
+                                </div>
+                            </section>
+                            <section data-rh-pane="detail" class="start-hidden">
+                                <div class="run-history-detail-head">
+                                    <button class="btn btn-sm btn-secondary" data-run-history="back">&larr; Back</button>
+                                    <div data-rh-meta class="run-history-meta"></div>
+                                </div>
+                                <pre data-rh-error class="run-history-error start-hidden"></pre>
+                                <p data-rh-lognote class="run-history-note"></p>
+                                <div data-rh-log class="log-viewer action-log-viewer"></div>
+                            </section>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" data-run-history="close">Close</button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Action Logs modal (real-time build/deploy logs) -->
                 <div id="action-logs-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="action-logs-title">
                     <div class="modal-content modal-lg">
@@ -1893,6 +1954,7 @@
 
     <script src="/static/js/test-log-model.js"></script>
     <script src="/static/js/test-log-viewer.js"></script>
+    <script src="/static/js/run-history.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 </html>

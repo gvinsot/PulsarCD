@@ -15,6 +15,8 @@ from typing import Dict, List, Optional
 import structlog
 from mcp.server.fastmcp import FastMCP
 
+from . import run_history
+
 logger = structlog.get_logger()
 
 mcp_read = FastMCP(
@@ -39,7 +41,10 @@ mcp_read = FastMCP(
         "5. get_service_tasks(service) shows the Swarm task states, the "
         "docker service ps view: a deploy whose command returned successfully "
         "but never converged shows up here as failed or restarting tasks.\n"
-        "6. get_health_summary() after a deploy tells you whether it broke anything."
+        "6. get_health_summary() after a deploy tells you whether it broke anything.\n"
+        "7. get_pipeline_history() lists past build/test/qa/deploy runs (kept for "
+        "months, with their logs): start there to answer 'what changed before "
+        "the outage', then get_pipeline_run(run_id) for one run's log."
     ),
     stateless_http=True,
     json_response=True,
@@ -177,6 +182,7 @@ async def build_stack(
 ) -> str:
     """Build a stack image. Returns action_id for tracking."""
     from .api import github_service, _background_actions, BackgroundAction, _set_pipeline, _notify_agent_failure
+    run_history.set_trigger("mcp", actor="mcp", commit=commit)
 
     if not github_service or not github_service.is_configured():
         return json.dumps({"error": "GitHub integration not configured"})
@@ -284,6 +290,7 @@ async def deploy_stack(
 ) -> str:
     """Deploy a stack. Returns action_id for tracking."""
     from .api import github_service, _background_actions, BackgroundAction, _set_pipeline, _notify_agent_failure, pipeline_state
+    run_history.set_trigger("mcp", actor="mcp")
 
     if not github_service or not github_service.is_configured():
         return json.dumps({"error": "GitHub integration not configured"})
@@ -422,6 +429,7 @@ async def test_stack(
 ) -> str:
     """Run tests for a stack. Returns action_id for tracking."""
     from .api import github_service, _background_actions, BackgroundAction, _set_pipeline, _notify_agent_failure, pipeline_state
+    run_history.set_trigger("mcp", actor="mcp", commit=commit)
 
     if not github_service or not github_service.is_configured():
         return json.dumps({"error": "GitHub integration not configured"})
@@ -1088,6 +1096,78 @@ async def get_pipeline_status(repo_name: Optional[str] = None) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Tool 16b: get_pipeline_history / get_pipeline_run (persistent run history)
+# Names avoid the "deploy" keyword of config_file.DANGEROUS_TOOL_KEYWORDS so
+# the LLM agent can use these read-only tools under the default policy.
+# ---------------------------------------------------------------------------
+@mcp_read.tool(
+    description=(
+        "List past pipeline runs (build / test / qa / deploy), most recent "
+        "first, from the persistent run history: repo, stage, version, commit, "
+        "trigger (manual / auto / webhook / mcp), actor, start time, duration, "
+        "status and, for failures, an error excerpt. Unlike get_pipeline_status "
+        "(current state only) this covers months of history, so use it to "
+        "answer 'what was deployed before the outage': pass last_hours and "
+        "stage='deploy'. `query` full-text searches the stored logs and error "
+        "excerpts (e.g. 'OOMKilled', a version or a commit SHA). Read a run's "
+        "log with get_pipeline_run(run_id)."
+    )
+)
+async def get_pipeline_history(
+    repo_name: Optional[str] = None,
+    stage: Optional[str] = None,
+    status: Optional[str] = None,
+    last_hours: int = 72,
+    query: Optional[str] = None,
+    limit: int = 20,
+) -> str:
+    """Recorded pipeline runs, newest first."""
+    from datetime import timedelta, timezone
+
+    rec = run_history.recorder
+    if not rec.available:
+        return json.dumps({"error": "Pipeline run history is not available"})
+    if stage and run_history.normalize_stage(stage) is None:
+        return json.dumps({"error": f"Invalid stage '{stage}'. Valid: {', '.join(run_history.STAGES)}"})
+    if status and status not in run_history.ALL_STATUSES:
+        return json.dumps({"error": f"Invalid status '{status}'. Valid: {', '.join(run_history.ALL_STATUSES)}"})
+    try:
+        hours = max(1, min(int(last_hours), 24 * 3650))
+        limit = max(1, min(int(limit), run_history.MAX_PAGE_SIZE))
+    except (TypeError, ValueError):
+        return json.dumps({"error": "last_hours and limit must be integers"})
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    try:
+        data = await rec.list_runs(repo=repo_name, stage=stage, status=status,
+                                   since=since, q=query, page=1, page_size=limit)
+    except Exception as exc:
+        return _api_error(exc)
+    return json.dumps({**data, "last_hours": hours}, default=str)
+
+
+@mcp_read.tool(
+    description=(
+        "Return one recorded pipeline run (from get_pipeline_history) with a "
+        "window of its stored log. By default the last 200 lines, where a "
+        "failure usually is; pass log_offset >= 0 to read from the start."
+    )
+)
+async def get_pipeline_run(run_id: str, log_offset: int = -200, log_limit: int = 200) -> str:
+    """One recorded run and part of its log."""
+    rec = run_history.recorder
+    if not rec.available:
+        return json.dumps({"error": "Pipeline run history is not available"})
+    try:
+        limit = max(1, min(int(log_limit), 2000))
+        result = await rec.get_run(run_id, log_offset=int(log_offset), log_limit=limit)
+    except Exception as exc:
+        return _api_error(exc)
+    if result is None:
+        return json.dumps({"error": f"Run '{run_id}' not found"})
+    return json.dumps(result, default=str)
+
+
+# ---------------------------------------------------------------------------
 # Tool 17: get_transition_config
 # ---------------------------------------------------------------------------
 @mcp_read.tool(
@@ -1215,6 +1295,7 @@ async def trigger_pipeline(
 ) -> str:
     """Trigger the full build -> test -> deploy pipeline."""
     from .api import trigger_pipeline_endpoint
+    run_history.set_trigger("mcp", actor="mcp")
 
     if bool(tag) == bool(commit):
         return json.dumps(

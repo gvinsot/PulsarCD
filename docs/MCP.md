@@ -71,6 +71,8 @@ Both servers accept two token types:
 | `get_untagged_commits` | Commits not shipped yet |
 | `get_next_version` | The version a build would take |
 | `get_pipeline_status` | Current stage of the pipeline and the action id running it |
+| `get_pipeline_history` | Past build/test/QA/deploy runs from the persistent history (version, commit, trigger, actor, duration, status, error excerpt), filterable by repo, stage, status, `last_hours` and a full-text `query` over the stored logs |
+| `get_pipeline_run` | One recorded run with a window of its stored log (last 200 lines by default) |
 | `get_transition_config` | Which gates are automatic, agent-evaluated or manual |
 | `list_actions` | Recent background actions, newest first, filterable by status and repo |
 | `get_action_status` | Status of a background action by `action_id` (also on the actions server) |
@@ -192,3 +194,4 @@ rejected by some clients.
 1. `get_log_metadata()` to discover available services and hosts.
 2. `search_logs(github_project="myrepo", last_hours=24)`.
 3. `get_service_tasks(service)` when a service is restarting; `container_action(host, container_id, "restart")` to bounce one container.
+4. `get_pipeline_history(stage="deploy", last_hours=24)` answers "what changed before the outage"; `get_pipeline_run(run_id)` reads that run's log.
