@@ -28,6 +28,8 @@ from shared.access_log import is_internal_ip, normalize_ip
 from .auth import AUTH_SOURCE_GOOGLE, AUTH_SOURCE_LOCAL, create_token, decode_token
 from .allowlist import EmailAllowlist
 from .auto_ban import AutoBanWorker
+from . import notifier
+from .notifications_api import router as notifications_router
 from .ip_blocklist import (
     IpBlocklist,
     covers as ip_blocklist_covers,
@@ -219,6 +221,8 @@ async def lifespan(app: FastAPI):
     await collector.start()
 
     await run_history.recorder.attach(opensearch, settings, log_source=_run_history_log_source)
+    # Outbound notifications (ntfy / webhook / e-mail); a no-op when unset.
+    notifier.configure(getattr(settings, "notify", None))
 
     if settings.autoban.enabled and settings.auth.edge_key:
         auto_ban_worker = AutoBanWorker(
@@ -319,6 +323,7 @@ async def lifespan(app: FastAPI):
             await _auto_build_task
         except asyncio.CancelledError:
             pass
+    await notifier.get_notifier().close()
     await collector.stop()
     try:
         # Flush pending run-history writes before the client closes.
@@ -1242,6 +1247,12 @@ async def admin_delete_user(email: str):
         return {"deleted": True}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ============== Admin: Notifications ==============
+
+# GET /api/admin/notifications and POST /api/admin/notifications/test
+app.include_router(notifications_router)
 
 
 # ============== Admin: Configuration ==============
@@ -3259,6 +3270,12 @@ def _set_pipeline(
         action_ids={"build": build_id, "test": test_id, "qa": qa_id, "deploy": deploy_id},
         log_lines=log_lines,
     )
+    # Failures (any stage) and production deploys; fire-and-forget, deduplicated.
+    # A cancelled action is recorded as "failed" in pipeline state, but an
+    # operator cancelling it is not an incident: no notification then (the
+    # LLM-agent failure path skips cancellations the same way).
+    if not _involves_cancelled_action(build_id, test_id, qa_id, deploy_id):
+        notifier.notify_pipeline_stage(repo_name, stage, status, version)
 
 
 def _run_history_log_source(repo_name: str, stage: str, action_id: Optional[str]) -> Optional[List[str]]:
@@ -3269,6 +3286,17 @@ def _run_history_log_source(repo_name: str, stage: str, action_id: Optional[str]
             action_id = entry.stages[stage].action_id
     action = _background_actions.get(action_id) if action_id else None
     return list(action.output_lines) if action else None
+
+
+def _involves_cancelled_action(*action_ids) -> bool:
+    """True when one of the given background action ids was cancelled."""
+    for action_id in action_ids:
+        if action_id is _UNSET or not action_id:
+            continue
+        action = _background_actions.get(action_id)
+        if action is not None and (action.cancel_event.is_set() or action.status == "cancelled"):
+            return True
+    return False
 
 
 def _get_deployer_and_host():

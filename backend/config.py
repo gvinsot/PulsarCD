@@ -47,6 +47,9 @@ Environment variables:
   connection only (see GitHubConfig.ssh_known_hosts_path). Defaults to
   "accept-new"; set a file path to verify that host strictly, or "none" to skip
   verification entirely (not recommended).
+- PULSARCD_NOTIFY__*: outbound notifications (ntfy, Discord/Slack-style
+  webhook, SMTP e-mail), see NotifyConfig and backend/notifier.py. Every
+  channel is off until its target is set.
 - PULSARCD_TRUST_PROXY_HEADERS: "true" makes the login rate limiter read
   X-Forwarded-For / X-Real-IP. Only set it behind a proxy that overwrites those
   headers; otherwise a client picks its own rate-limit bucket.
@@ -278,6 +281,56 @@ class AutoBanConfig(BaseModel):
         return [str(ipaddress.ip_network(value, strict=False)) for value in values]
 
 
+class NotifyConfig(BaseModel):
+    """Outbound notifications (see backend/notifier.py).
+
+    Every channel is disabled until its target is configured, so the default
+    configuration sends nothing. Messages carry repository names, stages,
+    versions, banned addresses and error counts -- never build output or .env
+    values. The secrets below (token, webhook URL, SMTP password) are never
+    logged nor returned by the API.
+    """
+    # ntfy: POST to <ntfy_url> with the topic in a JSON body. On a public
+    # server such as https://ntfy.sh the topic name is effectively a password.
+    ntfy_url: str = ""
+    ntfy_topic: str = ""
+    ntfy_token: str = ""  # Access token (tk_...) for a protected topic
+    # Generic webhook. The payload follows the URL: Discord ({"content"}) for
+    # discord.com webhooks, Slack ({"text"}) for hooks.slack.com, and a generic
+    # JSON object carrying both keys otherwise. Override with webhook_format.
+    webhook_url: str = ""
+    webhook_format: str = Field(default="auto", pattern="^(auto|discord|slack|generic)$")
+    # SMTP e-mail. email_to is a comma-separated list of recipients.
+    smtp_host: str = ""
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_starttls: bool = True
+    smtp_ssl: bool = False  # Implicit TLS (usually port 465) instead of STARTTLS
+    email_from: str = ""
+    email_to: str = ""
+
+    # Events. A successful production deploy is opt-in: it is routine news.
+    on_pipeline_failure: bool = True
+    on_deploy_success: bool = False
+    on_rollback: bool = True
+    on_auto_ban: bool = True
+    on_recurring_error: bool = True
+    # Log lines can contain anything, including credentials, so the recurring
+    # error sample is left out unless explicitly enabled (and redacted then).
+    include_error_samples: bool = False
+
+    # Public URL of this PulsarCD instance, used as the click-through link.
+    public_url: str = ""
+    # Per-channel delivery timeout. Delivery never blocks the caller.
+    timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    # The same event (same repo/stage/version, same IP, same error pattern) is
+    # sent at most once per dedupe window...
+    dedupe_seconds: int = Field(default=900, ge=0, le=86400)
+    # ...and no more than this many notifications go out per rolling hour.
+    max_per_hour: int = Field(default=30, ge=1, le=1000)
+
+
 class SwarmConfig(BaseModel):
     """Swarm agent API configuration."""
     secret_key: str = ""  # API key for swarm.methodinfo.fr (Bearer token)
@@ -317,6 +370,9 @@ class Settings(BaseSettings):
     auth: AuthConfig = AuthConfig()
 
     autoban: AutoBanConfig = AutoBanConfig()
+
+    # Outbound notifications (ntfy / webhook / e-mail)
+    notify: NotifyConfig = NotifyConfig()
 
     # MCP
     mcp: MCPConfig = MCPConfig()

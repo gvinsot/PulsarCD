@@ -19,6 +19,7 @@ import structlog
 
 from .config import AutoBanConfig
 from .ip_blocklist import HTTP_ROUTER_NAME, ROUTER_NAME, IpBlocklist, _timestamp
+from .notifier import notify_auto_ban
 
 logger = structlog.get_logger()
 
@@ -159,8 +160,10 @@ class AutoBanWorker:
             return
         kind = probe_kind(fields["RequestPath"])
         if kind:
-            await self.blocklist.add_automatic(
+            entry = await self.blocklist.add_automatic(
                 str(address), f"Automatic probe: {kind}", stamp, self.config.duration_seconds)
+            if entry:  # A new ban, not a replay or an already blocked address.
+                notify_auto_ban(entry["ip"], entry["reason"], entry.get("expires_at") or "")
 
     async def scan_once(self, now=None):
         """Read every matching log in bounded pages, including delayed writes.
