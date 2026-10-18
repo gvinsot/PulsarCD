@@ -22,6 +22,7 @@ from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request, WebSo
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from pydantic import BaseModel, ValidationError
 
 from shared.access_log import is_internal_ip, normalize_ip
 
@@ -4569,6 +4570,8 @@ async def _read_pushed_head(owner: str, name: str, sha: str) -> Optional[dict]:
 async def _run_webhook_build(owner: str, name: str, ssh_url: str, sha: str,
                              old_sha: Optional[str]):
     """Background half of a webhook push: read the tag state, then build."""
+    # This task has its own context copy: label the runs it starts.
+    run_history.set_trigger("webhook", actor="github-webhook", commit=sha)
     try:
         untagged_data = await _read_pushed_head(owner, name, sha)
         if untagged_data is None:
@@ -4897,19 +4900,40 @@ async def get_agent_actions(agent_id: str = Query(..., description="Agent identi
     }
 
 
+class AgentResult(BaseModel):
+    """Result of an action, as agent/action_poller.py send_result posts it."""
+    agent_id: str
+    action_id: str
+    success: bool
+    output: str = ""
+
+
 @app.post("/api/agent/result")
-async def post_agent_result(
-    agent_id: str = Query(..., description="Agent identifier"),
-    action_id: str = Query(..., description="Action ID"),
-    success: bool = Query(..., description="Whether action succeeded"),
-    output: str = Query(default="", description="Action output"),
-):
+async def post_agent_result(request: Request):
     """Report action result from an agent.
 
     Agents call this after executing an action to report the result.  The action
     must belong to the reporting agent: the key was validated against this same
     agent_id, so the pair binds the result to the identity that was polled.
+
+    The agent sends a JSON body; query parameters are still accepted for older
+    callers.  The auth middleware rejects a request whose query and body name
+    different agents (_extract_agent_id).
     """
+    body: Any = None
+    if request.headers.get("content-type", "").startswith("application/json"):
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+    source = body if isinstance(body, dict) else dict(request.query_params)
+    try:
+        result = AgentResult.model_validate(source)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors(include_url=False))
+    agent_id, action_id = result.agent_id, result.action_id
+    success, output = result.success, result.output
+
     action = await actions_queue.complete_action(action_id, success, output,
                                                  agent_id=agent_id)
     if not action:

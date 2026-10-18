@@ -57,18 +57,22 @@ COPY pytest.ini ./
 # a subset of requirements.txt); it stays out of the production image.
 COPY agent/ ./agent/
 COPY tests/ ./tests/
-COPY scripts/build-push.sh ./scripts/build-push.sh
-COPY scripts/registry_tag_exists.py ./scripts/registry_tag_exists.py
+# The build, deploy, verify and test scripts and their Python helpers are all
+# exercised by the tests (with stubbed docker/git commands).
+COPY scripts/ ./scripts/
+# Security and settings tests check the swarm compose file's hardening and
+# defaults (.env files are excluded by .dockerignore).
+COPY devops/docker-compose.swarm.yml ./devops/docker-compose.swarm.yml
 # Build contexts may come from a Windows checkout, while these tests run Bash
-# on Linux. Match the script's Linux line endings and validate it at build time.
-RUN sed -i 's/\r$//' scripts/build-push.sh && bash -n scripts/build-push.sh
+# on Linux. Match the scripts' Linux line endings and validate them at build time.
+RUN sed -i 's/\r$//' scripts/*.sh scripts/*.py \
+    && for f in scripts/*.sh; do bash -n "$f" || exit 1; done
 
 # Static checks: ruff and mypy fail the build on likely bugs (undefined names,
 # unknown attributes, bad calls); pip-audit only warns. pyproject.toml holds
 # their configuration and scripts/static-checks.sh explains each choice.
 COPY pyproject.toml ./
-COPY scripts/static-checks.sh ./scripts/static-checks.sh
-RUN sed -i 's/\r$//' scripts/static-checks.sh && bash scripts/static-checks.sh
+RUN bash scripts/static-checks.sh
 
 # Run tests on container start
 CMD ["python", "-m", "pytest", "tests/", "-v", "--tb=short", "-p", "no:warnings"]

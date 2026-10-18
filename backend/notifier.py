@@ -525,7 +525,8 @@ def notify_pipeline_stage(repo: str, stage: str, status: str, version: str = "")
 
 @_never_raise
 def notify_rollback(repo: str, from_version: str, to_version: str, reason: str = "") -> bool:
-    """For an automatic rollback (no such mechanism exists yet; ready for it)."""
+    """For an automatic rollback after a failed post-deploy verification
+    (see backend/deploy_rollback.py)."""
     reason_text = f" Reason: {reason}." if reason else ""
     return _notifier.submit(Notification(
         event=ROLLBACK,

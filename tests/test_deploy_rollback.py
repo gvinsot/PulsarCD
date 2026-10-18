@@ -243,3 +243,39 @@ def test_auto_rollback_defaults_on_and_reads_env(monkeypatch):
     assert GitHubConfig().auto_rollback is True
     monkeypatch.setenv("PULSARCD_GITHUB__AUTO_ROLLBACK", "false")
     assert Settings().github.auto_rollback is False
+
+
+# ── Rollback notifications ──
+
+@pytest.fixture
+def sent_rollbacks(monkeypatch):
+    from backend import deploy_rollback
+    calls = []
+    monkeypatch.setattr(deploy_rollback.notifier, "notify_rollback",
+                        lambda *a, **kw: calls.append((a, kw)) or True)
+    return calls
+
+
+def test_attempted_rollback_is_notified(state, sent_rollbacks):
+    state.set_pipeline("app", "done", "success", "1.9.0")
+    run(deploy_stage_with_rollback(FakeDeployer(verify_failed(), ok()), state, "app",
+                                   "git@x:o/app.git", version="2.0.0"))
+    assert sent_rollbacks == [(("app", "2.0.0", "1.9.0"),
+                               {"reason": "post-deploy verification failed"})]
+
+
+def test_failed_qa_rollback_is_notified_as_needing_attention(state, sent_rollbacks):
+    state.set_pipeline("app", "qa", "success", "1.9.0")
+    run(deploy_stage_with_rollback(FakeDeployer(verify_failed(), verify_failed()), state,
+                                   "app", "git@x:o/app.git", version="2.0.0", qa=True))
+    (repo, _from, to), kw = sent_rollbacks[0]
+    assert (repo, to) == ("app (QA)", "1.9.0")
+    assert "FAILED" in kw["reason"]
+
+
+def test_no_rollback_no_notification(state, sent_rollbacks):
+    run(deploy_stage_with_rollback(FakeDeployer(verify_failed()), state, "new-app",
+                                   "git@x:o/new-app.git", version="1.0.0"))
+    run(deploy_stage_with_rollback(FakeDeployer(ok()), state, "new-app",
+                                   "git@x:o/new-app.git", version="1.0.1"))
+    assert sent_rollbacks == []

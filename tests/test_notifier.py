@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from aiohttp import web
-from fastapi.testclient import TestClient
 
 from backend import notifier as nt
 from backend.config import NotifyConfig, Settings

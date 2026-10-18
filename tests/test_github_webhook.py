@@ -313,6 +313,22 @@ class TestEvents:
         # The poller's bookkeeping now points at the pushed commit.
         assert webhook["state"]["app"]["last_sha"] == NEW_SHA
 
+    def test_push_runs_are_recorded_as_webhook_triggered(self, webhook, client, monkeypatch):
+        from backend import run_history
+
+        seen = []
+
+        async def _trigger(*args, **kwargs):
+            seen.append((run_history._trigger_var.get(), run_history._actor_var.get(),
+                         run_history._commit_var.get()))
+            return True
+
+        monkeypatch.setattr(webhook["api"], "_trigger_pipeline", _trigger)
+        webhook["state"]["app"] = {"last_sha": OLD_SHA, "building": False}
+        assert _post(client, _push_payload()).status_code == 202
+        assert _wait_for(lambda: seen)
+        assert seen == [("webhook", "github-webhook", NEW_SHA)]
+
     def test_push_auto_tags_untagged_commit(self, webhook, client):
         webhook["gh"].get_untagged_commits.return_value = {
             "untagged_commits": [{"sha": NEW_SHA}], "latest_tag": {"name": "v1.2.3"}}

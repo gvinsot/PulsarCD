@@ -848,6 +848,74 @@ class TestPerAgentKeys:
         assert resp.json()["status"] == "ok"
 
 
+class _RecordingQueue:
+    """Stands in for actions_queue: records complete_action calls."""
+
+    def __init__(self):
+        self.calls = []
+
+    async def complete_action(self, action_id, success, output, agent_id=None):
+        self.calls.append((action_id, success, output, agent_id))
+        return object() if action_id != "missing" else None
+
+
+@pytest.fixture
+def recording_queue(monkeypatch):
+    queue = _RecordingQueue()
+    monkeypatch.setattr(api_module, "actions_queue", queue)
+    return queue
+
+
+class TestAgentResult:
+    """POST /api/agent/result accepts what agent/action_poller.py sends."""
+
+    def test_json_body_from_agent_completes_action(self, client, recording_queue):
+        # The exact payload ActionPoller.send_result posts.
+        resp = client.post(
+            "/api/agent/result",
+            json={"agent_id": "agent-a", "action_id": "act-1", "success": True,
+                  "output": "restarted", "completed_at": "2026-10-18T00:00:00"},
+            headers=_agent_headers(),
+        )
+        assert resp.status_code == 200, resp.text
+        assert recording_queue.calls == [("act-1", True, "restarted", "agent-a")]
+
+    def test_query_parameters_still_accepted(self, client, recording_queue):
+        resp = client.post(
+            "/api/agent/result?agent_id=agent-a&action_id=act-2&success=false&output=boom",
+            headers=_agent_headers(),
+        )
+        assert resp.status_code == 200, resp.text
+        assert recording_queue.calls == [("act-2", False, "boom", "agent-a")]
+
+    def test_missing_fields_rejected(self, client, recording_queue):
+        resp = client.post(
+            "/api/agent/result",
+            json={"agent_id": "agent-a", "success": True},
+            headers=_agent_headers(),
+        )
+        assert resp.status_code == 422
+        assert recording_queue.calls == []
+
+    def test_unknown_action_is_404(self, client, recording_queue):
+        resp = client.post(
+            "/api/agent/result",
+            json={"agent_id": "agent-a", "action_id": "missing", "success": True},
+            headers=_agent_headers(),
+        )
+        assert resp.status_code == 404
+
+    def test_json_result_for_another_agent_is_rejected(self, client, per_agent_keys,
+                                                       recording_queue):
+        resp = client.post(
+            "/api/agent/result",
+            json={"agent_id": "agent-b", "action_id": "act-3", "success": True},
+            headers=_agent_headers("key-a"),
+        )
+        assert resp.status_code == 401
+        assert recording_queue.calls == []
+
+
 # ---------------------------------------------------------------------------
 # Login rate limiting (per account + per client address)
 # ---------------------------------------------------------------------------

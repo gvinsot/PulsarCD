@@ -20,6 +20,8 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 import structlog
 
+from . import notifier
+
 logger = structlog.get_logger()
 
 # Printed by deploy-service.sh (fail_verification) -- keep the two in sync.
@@ -197,6 +199,17 @@ async def deploy_stage_with_rollback(
         previous_version=previous_version, enabled=enabled,
         output_callback=output_callback, cancel_event=cancel_event,
     )
-    if result.get("rollback") and pipeline_state is not None:
-        pipeline_state.record_rollback(repo_name, stage, result["rollback"])
+    rollback = result.get("rollback")
+    if rollback and pipeline_state is not None:
+        pipeline_state.record_rollback(repo_name, stage, rollback)
+    if rollback and rollback.get("attempted"):
+        reason = "post-deploy verification failed"
+        if not rollback.get("success"):
+            reason += "; the rollback deploy FAILED too, the stack needs attention"
+        notifier.notify_rollback(
+            f"{repo_name} (QA)" if qa else repo_name,
+            rollback.get("from_version") or version,
+            rollback.get("to_version") or "",
+            reason=reason,
+        )
     return result

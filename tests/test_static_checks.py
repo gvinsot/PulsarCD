@@ -57,7 +57,8 @@ class StaticCheckBuildWiringTests(unittest.TestCase):
 
     def test_test_stage_runs_the_script_at_build_time(self):
         self.assertIn("COPY pyproject.toml", self.test_stage)
-        self.assertIn("COPY scripts/static-checks.sh", self.test_stage)
+        # Either the script alone or the whole scripts/ directory.
+        self.assertRegex(self.test_stage, r"COPY scripts/(static-checks\.sh)? ")
         self.assertRegex(self.test_stage, r"RUN .*bash scripts/static-checks\.sh")
 
     def test_tool_versions_are_pinned(self):

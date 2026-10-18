@@ -7,3 +7,8 @@ docker-compose.dev.yml
 *.pem
 id_rsa*
 id_ed25519*
+
+# Local tooling and caches
+.claude/
+**/__pycache__/
+.git/

@@ -144,6 +144,12 @@ services:
       # and the 10s poller as the only auto-build trigger.
       - PULSARCD_GITHUB__WEBHOOK_SECRET=${PULSARCD_GITHUB__WEBHOOK_SECRET:-}
       - PULSARCD_GITHUB__WEBHOOK_POLL_INTERVAL=${PULSARCD_GITHUB__WEBHOOK_POLL_INTERVAL:-120}
+      # Redeploy the last good version when a deploy fails post-deploy verification
+      - PULSARCD_GITHUB__AUTO_ROLLBACK=${PULSARCD_GITHUB__AUTO_ROLLBACK:-true}
+      # Per-branch preview environments (stacks pv-<slug>-<repo>)
+      - PULSARCD_PREVIEWS__ENABLED=${PULSARCD_PREVIEWS__ENABLED:-true}
+      - PULSARCD_PREVIEWS__TTL_HOURS=${PULSARCD_PREVIEWS__TTL_HOURS:-72}
+      - PULSARCD_PREVIEWS__MAX_ACTIVE=${PULSARCD_PREVIEWS__MAX_ACTIVE:-20}
       # Docker registry for build/push operations. Also exported as REGISTRY
       # to build-push.sh / deploy-service.sh / test.sh (scripts default to
       # registry.methodinfo.fr when this is empty).
