@@ -375,7 +375,8 @@ async def get_stacks_deployed_tags():
     # Return cached result if fresh enough
     now = asyncio.get_event_loop().time()
     if _deployed_tags_cache and _deployed_tags_cache_time and (now - _deployed_tags_cache_time) < _DEPLOYED_TAGS_CACHE_TTL:
-        return _deployed_tags_cache
+        # A copy: the MCP tool calls this directly and must not reach the cache.
+        return {key: dict(tags) for key, tags in _deployed_tags_cache.items()}
 
     repos = await api.github_service.get_starred_repos()
     deployer = StackDeployer(api.settings.github, None)
@@ -399,7 +400,7 @@ async def get_stacks_deployed_tags():
     result = {"tags": deployed_tags, "qa_tags": deployed_qa_tags, "latest_built": latest_built}
     _deployed_tags_cache = result
     _deployed_tags_cache_time = now
-    return result
+    return {key: dict(tags) for key, tags in result.items()}
 
 
 @router.get("/api/stacks/buildable")
@@ -407,8 +408,10 @@ async def get_stacks_buildable(refresh: bool = Query(default=False)) -> Dict[str
     """Return which stacks have build: directives in their docker-compose.swarm.yml."""
     if not api.github_service.is_configured():
         return {}
+    # Copies: the cache is shared with the pipeline chain, so the caller gets
+    # its own dict (the values are bools, a shallow copy is enough).
     if api._buildable_cache and not refresh:
-        return api._buildable_cache
+        return dict(api._buildable_cache)
     api._buildable_cache.clear()
     repos = await api.github_service.get_starred_repos()
     deployer, _ = api._get_deployer_and_host()
@@ -424,4 +427,4 @@ async def get_stacks_buildable(refresh: bool = Query(default=False)) -> Dict[str
             logger.warning("Failed to check build config, assuming buildable",
                            repo=name, error=str(e))
             api._buildable_cache[name] = True
-    return api._buildable_cache
+    return dict(api._buildable_cache)
