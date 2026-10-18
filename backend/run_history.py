@@ -60,6 +60,9 @@ _FINISHED_MEMORY = 512           # action ids remembered to drop duplicate close
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _COMMIT_RE = re.compile(r"(?i)\b(?:commit|HEAD is now at)[:\s]+([0-9a-f]{7,40})\b")
 _ERROR_HINT_RE = re.compile(r"(?i)\b(error|failed|failure|fatal|exception|traceback|denied)\b")
+# A pytest -v result line for a test that did not fail. Its name may still
+# contain "failed" or "error" (test_plan_rollback[...is the one that failed]).
+_PASSING_TEST_RE = re.compile(r"::\S.*\s(PASSED|SKIPPED|XFAIL|XPASS)\b")
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 # Credentials a build/deploy script may echo. Run logs are kept for months and
@@ -219,7 +222,8 @@ def error_excerpt(lines: List[str]) -> str:
     """
     clean = [strip_ansi(str(line)).rstrip() for line in lines[-200:]]
     clean = [line for line in clean if line.strip()]
-    hits = [line for line in clean if _ERROR_HINT_RE.search(line)]
+    hits = [line for line in clean
+            if _ERROR_HINT_RE.search(line) and not _PASSING_TEST_RE.search(line)]
     picked = (hits or clean)[-ERROR_EXCERPT_LINES:]
     text = "\n".join(picked)
     if len(text) > ERROR_EXCERPT_CHARS:

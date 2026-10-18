@@ -330,6 +330,11 @@ export REGISTRY
 export DOCKER_REGISTRY_URL="${DOCKER_REGISTRY_URL:-$REGISTRY_URL}"
 export REPO_NAME="${REPO_NAME:-$(basename "$REPO_PATH")}"
 
+# Each repo gets its own compose project. Without one, every repo runs under
+# the project "devops" (the folder name) and one run's `down --remove-orphans`
+# kills the test containers of the runs in progress for other repos (exit 137).
+TEST_PROJECT=$(printf 'pulsarcd-test-%s' "$REPO_NAME" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9_-' '-')
+
 # ============================================================================
 # Step 5: Build the test service
 # ============================================================================
@@ -339,9 +344,9 @@ cd "$DEVOPS_PATH"
 
 # Clean up stale containers/networks from previous interrupted runs
 # (prevents "container is not connected to the network" errors)
-docker compose -f "$COMPOSE_FILE" down --remove-orphans 2>/dev/null || true
+docker compose -p "$TEST_PROJECT" -f "$COMPOSE_FILE" down --remove-orphans 2>/dev/null || true
 
-if ! docker compose -f "$COMPOSE_FILE" build test; then
+if ! docker compose -p "$TEST_PROJECT" -f "$COMPOSE_FILE" build test; then
     log_error "Test build failed!"
 
     # Restore original state
@@ -365,10 +370,10 @@ log_info "Running the 'test' service..."
 echo ""
 
 TEST_EXIT_CODE=0
-docker compose -f "$COMPOSE_FILE" run --rm test || TEST_EXIT_CODE=$?
+docker compose -p "$TEST_PROJECT" -f "$COMPOSE_FILE" run --rm test || TEST_EXIT_CODE=$?
 
 # Clean up containers and networks after test run
-docker compose -f "$COMPOSE_FILE" down --remove-orphans 2>/dev/null || true
+docker compose -p "$TEST_PROJECT" -f "$COMPOSE_FILE" down --remove-orphans 2>/dev/null || true
 
 echo ""
 

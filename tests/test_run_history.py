@@ -111,6 +111,15 @@ class TestHelpers:
         lines = ["step 1", "ERROR: npm install failed", "step 3", "cleanup"]
         assert error_excerpt(lines) == "ERROR: npm install failed"
 
+    def test_error_excerpt_ignores_passing_tests_named_after_failures(self):
+        lines = [
+            "tests/test_x.py::test_plan[kwargs4-None-is the one that failed] PASSED [ 19%]",
+            "tests/test_x.py::test_error_path SKIPPED (no docker)       [ 20%]",
+            "tests/test_x.py::test_real_bug FAILED                      [ 21%]",
+            "  Tests Failed! (exit code: 1)",
+        ]
+        assert error_excerpt(lines).split("\n") == lines[2:]
+
     def test_error_excerpt_falls_back_to_tail(self):
         lines = [f"line {i}" for i in range(100)]
         excerpt = error_excerpt(lines).split("\n")
