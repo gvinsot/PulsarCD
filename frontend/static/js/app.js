@@ -38,13 +38,6 @@ document.getElementById('ai-query').addEventListener('keypress', (e) => {
     }
 });
 
-// AI search enter key
-document.getElementById('ai-query').addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') {
-        aiSearchLogs();
-    }
-});
-
 // Declarative event handlers. An element names its handler, and one listener
 // per event type on the document runs it:
 //
