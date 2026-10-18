@@ -8,7 +8,21 @@
     <!-- Replaced per response by the server; core/csp.js hands it to the style
          elements xterm creates, the only inline styles the CSP accepts. -->
     <meta name="csp-nonce" nonce="__CSP_NONCE__">
-    <link rel="stylesheet" href="/static/css/style.css">
+    <!-- One stylesheet cut into consecutive pieces: the cascade depends on
+         this order, so keep it as it is. -->
+    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <link rel="stylesheet" href="/static/css/containers.css">
+    <link rel="stylesheet" href="/static/css/logs.css">
+    <link rel="stylesheet" href="/static/css/modals.css">
+    <link rel="stylesheet" href="/static/css/stacks.css">
+    <link rel="stylesheet" href="/static/css/pipeline.css">
+    <link rel="stylesheet" href="/static/css/responsive.css">
+    <link rel="stylesheet" href="/static/css/panels.css">
+    <link rel="stylesheet" href="/static/css/utilities.css">
+    <link rel="stylesheet" href="/static/css/security.css">
+    <link rel="stylesheet" href="/static/css/usage.css">
+    <link rel="stylesheet" href="/static/css/test-runs.css">
     <link rel="stylesheet" href="/static/css/previews.css">
     <!-- Third-party files are pinned by hash: a CDN serving anything else is refused. -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
