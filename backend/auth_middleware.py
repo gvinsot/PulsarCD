@@ -21,7 +21,6 @@ from fastapi.responses import JSONResponse
 
 from .auth import AUTH_SOURCE_GOOGLE, AUTH_SOURCE_LOCAL, decode_token
 from . import run_history
-from . import api
 
 logger = structlog.get_logger()
 
@@ -407,3 +406,9 @@ async def auth_middleware(request: Request, call_next):
             return JSONResponse(status_code=403, content={"detail": "Admin access required"})
 
     return await call_next(request)
+
+
+# Imported last: backend.api imports this module while it initializes, and
+# ``api`` is only used at call time above.  This way the module can also be
+# imported first, before backend.api.
+from . import api  # noqa: E402

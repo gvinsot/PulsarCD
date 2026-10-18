@@ -28,7 +28,6 @@ from .pipeline_state import _UNSET
 from .deploy_rollback import deploy_stage_with_rollback
 from . import run_history
 from .background_actions import BackgroundAction
-from . import api
 
 logger = structlog.get_logger()
 
@@ -688,3 +687,9 @@ async def auto_build_poller():
             logger.error("Auto-build poller error", error=str(e))
 
         await api.asyncio.sleep(_auto_build_poll_interval())
+
+
+# Imported last: backend.api imports this module while it initializes, and
+# ``api`` is only used at call time above.  This way the module can also be
+# imported first, before backend.api.
+from . import api  # noqa: E402

@@ -9,7 +9,6 @@ from typing import Optional
 
 from fastapi import Request
 
-from . import api
 
 
 # ============== Security Headers ==============
@@ -117,3 +116,9 @@ async def security_headers_middleware(request: Request, call_next):
     if _request_is_https(request):
         headers.setdefault("Strict-Transport-Security", _HSTS_VALUE)
     return response
+
+
+# Imported last: backend.api imports this module while it initializes, and
+# ``api`` is only used at call time above.  This way the module can also be
+# imported first, before backend.api.
+from . import api  # noqa: E402
