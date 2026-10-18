@@ -327,7 +327,11 @@ and PyJWT versions carry advisories until the framework upgrade; set
 pulsarcd/
 ├── backend/
 │   ├── __init__.py
-│   ├── api.py              # FastAPI REST endpoints
+│   ├── api.py              # FastAPI app: lifespan, shared state, middleware and router registration
+│   ├── routes/             # REST endpoints, one APIRouter module per domain
+│   ├── auth_middleware.py  # /api/ authentication and role policy
+│   ├── security_headers.py # CSP / HSTS response headers
+│   ├── pipeline_runner.py  # Build → test → deploy chain and auto-build poller
 │   ├── actions_queue.py    # Agent actions queue (persisted to /data)
 │   ├── ai_service.py       # Ollama integration for NL queries
 │   ├── collector.py        # Legacy log/metrics collection service

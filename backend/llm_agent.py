@@ -1128,7 +1128,7 @@ class LLMAgent:
     async def handle_failure(self, stage: str, repo_name: str, version: str, error_output: str):
         """Handle a build/test/deploy failure via the LLM agent.
 
-        Called from api.py when a build, test, or deploy fails.
+        Called from pipeline_runner.py when a build, test, or deploy fails.
         """
         if not self._error_handling.enabled:
             logger.debug("Error handling disabled in config")

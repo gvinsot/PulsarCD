@@ -134,7 +134,7 @@ def _raise_unknown_stack(repo_name: str, known):
 
 
 def _api_error(exc: Exception) -> str:
-    """Render an api.py handler failure as the JSON error shape tools return."""
+    """Render a route handler failure as the JSON error shape tools return."""
     detail = getattr(exc, "detail", None)
     if detail is not None:
         payload = {"error": str(detail)}
@@ -1403,7 +1403,7 @@ async def cancel_action(action_id: str) -> str:
 # ---------------------------------------------------------------------------
 # Both live on the admin-only actions server, not the read server: a stack .env
 # holds secrets, which is why GET /api/stacks/{repo}/env is admin-only too
-# (_ADMIN_ONLY_GET_RE in api.py). Exposing them on the read server would hand
+# (_ADMIN_ONLY_GET_RE in auth_middleware.py). Exposing them on the read server would hand
 # every viewer JWT the deployment secrets.
 #
 # Neither tool ever returns a value. The MCP client is an LLM: whatever these

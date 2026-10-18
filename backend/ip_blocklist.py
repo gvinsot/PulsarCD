@@ -12,7 +12,7 @@ idiomatic way to write one is an ``ipAllowList`` whose only allowed source is an
 address no packet can come from.
 
 Traefik reads that router through its HTTP provider, which polls
-``GET /api/security/waf/traefik-config`` (see backend/api.py).  Nothing is
+``GET /api/security/waf/traefik-config`` (see backend/routes/security.py).  Nothing is
 written on the edge node and no stack is redeployed, so a block takes effect
 within one poll interval.  The provider is namespaced (``@http``), so a mistake
 here can only break this one router -- never the file and swarm providers that
