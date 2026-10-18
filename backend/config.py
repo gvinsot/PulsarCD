@@ -121,6 +121,24 @@ class HostConfig(BaseModel):
     swarm_autodiscover: bool = False
     
     
+def find_swarm_manager(
+    hosts: List[HostConfig], *, fallback_to_only_host: bool = False
+) -> Optional[HostConfig]:
+    """Return the first host flagged swarm_manager, or None.
+
+    With fallback_to_only_host, a deployment that configures exactly one host
+    and flags none gets that host back: it is the only machine there is, so
+    there is nothing to get wrong. With several unflagged hosts the answer stays
+    None even then - picking one of them would act on an arbitrary machine.
+    """
+    for host in hosts:
+        if host.swarm_manager:
+            return host
+    if fallback_to_only_host and len(hosts) == 1:
+        return hosts[0]
+    return None
+
+
 class OpenSearchConfig(BaseModel):
     """OpenSearch configuration."""
     hosts: List[str] = ["http://localhost:9200"]
