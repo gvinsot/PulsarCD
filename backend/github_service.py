@@ -808,14 +808,27 @@ class GitHubService:
         tagged_shas = {t["sha"] for t in tags}
 
         untagged = []
+        boundary_sha: Optional[str] = None
         for commit in commits:
             if commit["sha"] not in tagged_shas:
                 untagged.append(commit)
             else:
                 # Stop at the first tagged commit - everything before it is "new"
+                boundary_sha = commit["sha"]
                 break
 
-        latest_tag = _highest_release_tag(tags) or (tags[0] if tags else None)
+        # latest_tag is the tag the untagged commits sit on: the one on the
+        # first tagged commit of the branch (when no commit is untagged, the
+        # pipeline builds HEAD under this tag, so it must be HEAD's own tag).
+        # Several tags on that commit: the highest release wins. No tagged
+        # commit in the window: the highest release tag of the repository.
+        boundary_tags = [t for t in tags if t["sha"] == boundary_sha]
+        latest_tag = (
+            _highest_release_tag(boundary_tags)
+            or (boundary_tags[0] if boundary_tags else None)
+            or _highest_release_tag(tags)
+            or (tags[0] if tags else None)
+        )
 
         return {
             "untagged_commits": untagged,

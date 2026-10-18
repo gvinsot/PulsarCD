@@ -548,6 +548,33 @@ class TestTagsAndVersions:
         result = await svc.get_untagged_commits("o", "r", limit=2)
         assert result["latest_tag"]["name"] == "v1.0.10"
 
+    async def test_untagged_commits_latest_tag_is_the_tag_on_the_branch(self):
+        """A higher release on another branch must not label HEAD's build."""
+        commits = [_commit("head"), _commit("older")]
+
+        def handler(method, url, kwargs):
+            if url.endswith("/commits"):
+                return FakeResponse(200, commits)
+            return _tags_handler([_tag("v2.0.0", "hotfix"), _tag("v1.4.3", "head")])(method, url, kwargs)
+
+        svc, _ = _service(handler)
+        result = await svc.get_untagged_commits("o", "r", limit=2)
+        assert result["untagged_commits"] == []
+        assert result["latest_tag"]["name"] == "v1.4.3"
+
+    async def test_untagged_commits_without_tagged_commit_uses_highest_release(self):
+        commits = [_commit("c2"), _commit("c1")]
+
+        def handler(method, url, kwargs):
+            if url.endswith("/commits"):
+                return FakeResponse(200, commits)
+            return _tags_handler([_tag("v1.0.9", "x"), _tag("v1.0.10", "y")])(method, url, kwargs)
+
+        svc, _ = _service(handler)
+        result = await svc.get_untagged_commits("o", "r", limit=2)
+        assert len(result["untagged_commits"]) == 2
+        assert result["latest_tag"]["name"] == "v1.0.10"
+
     async def test_tags_result_shape(self):
         svc, _ = _service(_tags_handler(
             [_tag("v1.0.1", "s1"), _tag("v1.0.0", "s0")],
