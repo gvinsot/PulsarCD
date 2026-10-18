@@ -6,7 +6,7 @@
  * Deploys run as regular background actions, so their progress shows in the
  * same action toasts and log modal as builds and deploys.
  *
- * Kept out of app.js on purpose: it only relies on app.js globals
+ * Kept out of app.js on purpose: it only relies on globals of the core/ and views/ scripts
  * (API_BASE, authHeaders, escapeHtml, showNotification, formatTimeAgo,
  * trackBackgroundAction, openActionLogs) and uses its own event delegation
  * (data-preview-action) instead of the frozen UI_HANDLERS registry.

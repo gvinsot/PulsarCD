@@ -1430,8 +1430,14 @@ def _directive(csp: str, name: str) -> str:
     return next(d.strip() for d in csp.split(";") if d.strip().startswith(name + " "))
 
 
+def _page_scripts() -> list[str]:
+    """The frontend scripts index.html loads, relative to frontend/, in load order."""
+    index = (_FRONTEND / "index.html").read_text(encoding="utf-8")
+    return [src.lstrip("/") for src in re.findall(r'<script src="(/static/js/[^"]+)"', index)]
+
+
 class TestFrontendPage:
-    """index.html and app.js must hold up under a CSP with no 'unsafe-inline'."""
+    """index.html and its scripts must hold up under a CSP with no 'unsafe-inline'."""
 
     def test_page_sends_no_html_comments(self, client):
         """Comments are notes for the people editing the page, not for its visitors."""
@@ -1459,7 +1465,8 @@ class TestFrontendPage:
 
     def test_markup_has_no_inline_script_or_style(self):
         """on*= handlers, style= attributes and inline <script>/<style> blocks are all refused."""
-        for name in ("index.html", "static/js/app.js"):
+        assert "static/js/app.js" in _page_scripts()
+        for name in ("index.html", *_page_scripts()):
             source = (_FRONTEND / name).read_text(encoding="utf-8")
             assert not re.findall(r'\son[a-z]+\s*=\s*["\']', source), name
             assert not re.findall(r'\sstyle\s*=\s*["\']', source), name
@@ -1481,8 +1488,9 @@ class TestFrontendPage:
     def test_every_declared_handler_is_registered(self):
         """A data-click naming no UI_HANDLERS entry is a dead button, not an error."""
         index = (_FRONTEND / "index.html").read_text(encoding="utf-8")
+        scripts = "".join((_FRONTEND / name).read_text(encoding="utf-8") for name in _page_scripts())
         app_js = (_FRONTEND / "static/js/app.js").read_text(encoding="utf-8")
-        names = set(re.findall(r'data-(?:click|change|input|focus)="(\w+)"', index + app_js))
+        names = set(re.findall(r'data-(?:click|change|input|focus)="(\w+)"', index + scripts))
         registry = app_js[app_js.index("const UI_HANDLERS = Object.freeze({"):]
         registry = registry[:registry.index("\n});")]
         assert names
