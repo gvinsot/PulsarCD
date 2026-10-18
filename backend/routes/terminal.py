@@ -14,6 +14,7 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from ..auth import decode_token
 from ..auth_middleware import _token_is_revoked
+from ..config import find_swarm_manager
 from .. import api
 
 logger = structlog.get_logger()
@@ -24,13 +25,14 @@ router = APIRouter()
 # ============== Terminal WebSocket ==============
 
 def _find_swarm_manager_config():
-    """Find the swarm manager host config."""
-    for host_config in api.settings.hosts:
-        if host_config.swarm_manager:
-            return host_config
-    if api.settings.hosts:
-        return api.settings.hosts[0]
-    return None
+    """Find the swarm manager host config the terminal opens a shell on.
+
+    This used to fall back to the first configured host whenever none was
+    flagged swarm_manager, which with several hosts opens an admin shell on
+    whichever one happens to be listed first. The fallback is kept only where
+    it cannot pick the wrong machine: a single-host setup that never flags it.
+    """
+    return find_swarm_manager(api.settings.hosts, fallback_to_only_host=True)
 
 
 @router.websocket("/api/terminal/ws")
@@ -64,7 +66,11 @@ async def terminal_websocket(
 
     manager_config = _find_swarm_manager_config()
     if not manager_config:
-        await websocket.send_text("\x1b[31mError: No host configured.\x1b[0m\r\n")
+        if api.settings.hosts:
+            message = "Error: No swarm manager host configured (set swarm_manager on one host)."
+        else:
+            message = "Error: No host configured."
+        await websocket.send_text(f"\x1b[31m{message}\x1b[0m\r\n")
         await websocket.close()
         return
 

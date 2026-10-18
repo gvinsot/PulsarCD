@@ -23,6 +23,7 @@ import structlog
 from fastapi import HTTPException
 
 from . import notifier
+from .config import find_swarm_manager
 from .github_service import StackDeployer
 from .pipeline_state import _UNSET
 from .deploy_rollback import deploy_stage_with_rollback
@@ -50,10 +51,8 @@ async def _notify_agent_failure(stage: str, repo_name: str, version: str, error_
 
 def _get_swarm_manager_host() -> Optional[str]:
     """Return the swarm manager host name, or None if not configured."""
-    for host_config in api.settings.hosts:
-        if host_config.swarm_manager:
-            return host_config.name
-    return None
+    manager = find_swarm_manager(api.settings.hosts)
+    return manager.name if manager else None
 
 
 def _set_pipeline(
