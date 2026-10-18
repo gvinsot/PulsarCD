@@ -3,12 +3,16 @@
 Also runnable directly: python tests/test_build_push.py
 """
 
+import base64
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
+
+import yaml
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "build-push.sh"
@@ -19,7 +23,7 @@ BASH = str(GIT_BASH) if GIT_BASH.exists() else shutil.which("bash")
 @unittest.skipUnless(BASH, "Bash is required")
 class BuildPushTests(unittest.TestCase):
     def run_build(self, *, existing="", failure="", platforms="", no_cache=False, tag_status=2,
-                  registry=None, version="1.2.3"):
+                  registry=None, version="1.2.3", extra_env=None, secrets_copy=None):
         self.assertTrue(SCRIPT.is_file(), f"Build script missing from test environment: {SCRIPT}")
         with tempfile.TemporaryDirectory(prefix="build push ") as directory:
             root = Path(directory)
@@ -78,6 +82,9 @@ case "$*" in
     [ "$FAIL_COMMAND" != bake ]; exit $? ;;
   "buildx imagetools create "*) [ "$FAIL_COMMAND" != tag ]; exit $? ;;
   "push "*) [ "$FAIL_COMMAND" != push ]; exit $? ;;
+  "compose "*)
+    # compose -f COMPOSE -f OVERRIDE build ...: keep the build-secrets override.
+    if [ "$4" = "-f" ] && [ -n "$SECRETS_COPY" ]; then cp -r "$(dirname "$5")" "$SECRETS_COPY"; fi ;;
 esac
 exit 0
 ''', newline="\n")
@@ -89,6 +96,7 @@ exit 0
             python = bin_dir / "python3"
             python.write_text('''#!/bin/bash
 case "$1" in
+  */build_secrets.py) exec "$REAL_PYTHON" "$@" ;;
   */registry_tag_exists.py)
     printf 'tag-check\t%s\t\n' "$2" >> "$DOCKER_LOG"
     exit "$STUB_TAG_STATUS" ;;
@@ -100,7 +108,12 @@ exit 0
             env = os.environ.copy()
             env.update(DOCKER_LOG=log.as_posix(), EXISTING_IMAGE=existing,
                        FAIL_COMMAND=failure, BUILD_PLATFORMS=platforms,
-                       STUB_TAG_STATUS=str(tag_status))
+                       STUB_TAG_STATUS=str(tag_status),
+                       REAL_PYTHON=Path(sys.executable).as_posix(),
+                       SECRETS_COPY=secrets_copy or "")
+            for name in [n for n in env if n.startswith("BUILD_SECRET_")]:
+                env.pop(name)
+            env.update(extra_env or {})
             # The registry comes from the environment (PulsarCD exports it);
             # without it the script must keep its historical default.
             for name in ("REGISTRY", "REGISTRY_URL", "DOCKER_REGISTRY_URL"):
@@ -116,6 +129,44 @@ exit 0
             )
             calls = [line.rstrip("\t").split("\t") for line in log.read_text().splitlines()] if log.exists() else []
             return result, calls
+
+    def test_build_secrets_reach_every_build_through_a_build_only_override(self):
+        keystore = bytes(range(256))
+        with tempfile.TemporaryDirectory() as copy_root:
+            copy = Path(copy_root) / "secrets"
+            result, calls = self.run_build(
+                extra_env={
+                    "BUILD_SECRET_KEYSTORE_B64": base64.b64encode(keystore).decode(),
+                    "BUILD_SECRET_KEYSTORE_ENV": "KEY_ALIAS=release",
+                },
+                secrets_copy=copy.as_posix(),
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Build secrets: keystore,keystore_env", result.stdout)
+            self.assertNotIn("KEY_ALIAS=release", result.stdout + result.stderr)
+            compose, = [c for c in calls if c[0] == "compose"]
+            self.assertEqual(compose[1], "-f")
+            self.assertEqual(compose[3], "-f")
+            self.assertTrue(compose[4].endswith("compose.build-secrets.yml"))
+            bake, = [c for c in calls if c[:2] == ["buildx", "bake"]]
+            self.assertEqual([a for a in bake if a.endswith("compose.build-secrets.yml")], [compose[4]])
+            override = yaml.safe_load((copy / "compose.build-secrets.yml").read_text())
+            self.assertEqual(set(override["services"]), {"stt-server", "tts-server", "web"})
+            self.assertEqual(override["services"]["web"]["build"]["secrets"], ["keystore", "keystore_env"])
+            self.assertEqual((copy / "keystore").read_bytes(), keystore)
+            self.assertEqual((copy / "keystore_env").read_text(), "KEY_ALIAS=release")
+
+    def test_no_build_secret_keeps_the_single_compose_file(self):
+        result, calls = self.run_build()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        compose, = [c for c in calls if c[0] == "compose"]
+        self.assertEqual(compose.count("-f"), 1)
+
+    def test_invalid_base64_build_secret_fails_the_build(self):
+        result, calls = self.run_build(extra_env={"BUILD_SECRET_KEYSTORE_B64": "not base64!"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Invalid build secrets", result.stdout + result.stderr)
+        self.assertFalse([c for c in calls if c[0] == "compose"])
 
     def test_arm_build_uses_compose_builder_platform_and_exact_tag(self):
         result, calls = self.run_build()

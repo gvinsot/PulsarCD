@@ -472,6 +472,26 @@ export DOCKER_REGISTRY_URL="${DOCKER_REGISTRY_URL:-$REGISTRY}"
 log_info "REGISTRY_URL=$REGISTRY_URL"
 log_info "REPO_NAME=$REPO_NAME"
 
+# Build-time secrets (BuildKit): every BUILD_SECRET_<ID> (text) or
+# BUILD_SECRET_<ID>_B64 (base64, e.g. a keystore) of devops/.env becomes the
+# secret <id> of every service with a build section, through a compose
+# override used for this build only (never deployed). See build_secrets.py.
+COMPOSE_FILES=(-f "$COMPOSE_PATH")
+if env | grep -q '^BUILD_SECRET_'; then
+    BUILD_SECRETS_DIR=$(mktemp -d)
+    chmod 700 "$BUILD_SECRETS_DIR"
+    trap 'rm -rf "$BUILD_SECRETS_DIR"' EXIT
+    BUILD_SECRETS_OVERRIDE="$BUILD_SECRETS_DIR/compose.build-secrets.yml"
+    if ! BUILD_SECRET_IDS=$(python3 "$SCRIPT_DIR/build_secrets.py" "$COMPOSE_PATH" "$BUILD_SECRETS_DIR" "$BUILD_SECRETS_OVERRIDE"); then
+        log_error "Invalid build secrets (BUILD_SECRET_* in devops/.env)"
+        exit 1
+    fi
+    if [ -f "$BUILD_SECRETS_OVERRIDE" ]; then
+        COMPOSE_FILES+=(-f "$BUILD_SECRETS_OVERRIDE")
+        log_info "Build secrets: $BUILD_SECRET_IDS"
+    fi
+fi
+
 log_info "Reading images from compose file..."
 IMAGES=$(get_images_from_compose "$COMPOSE_PATH")
 
@@ -814,7 +834,7 @@ for img in $IMAGES_TO_BUILD; do
         # feature branch would overwrite what production references.
         PUSH_TAG="$RESOLVED_IMG"
         [ "$PREVIEW_BUILD" = true ] && PUSH_TAG=$(image_version_tag "$RESOLVED_IMG" "$FULL_VERSION")
-        BUILDX_CMD=(docker buildx bake --builder "$BUILDER_NAME" -f "$COMPOSE_PATH"
+        BUILDX_CMD=(docker buildx bake --builder "$BUILDER_NAME" "${COMPOSE_FILES[@]}"
             # Compose contexts such as .. are outside the devops working
             # directory. Grant read access to this repository for this build.
             "--allow=fs.read=$REPO_PATH"
@@ -882,7 +902,7 @@ if [ "$BUILD_FAILED" = false ] && [ -n "$SINGLEARCH_IMAGES" ]; then
         log_warning "Could not name every single-arch service, falling back to building the whole compose file"
         BUILD_TARGETS=""
     fi
-    if ! docker compose -f "$COMPOSE_PATH" build $BUILD_ARGS $BUILD_TARGETS; then
+    if ! docker compose "${COMPOSE_FILES[@]}" build $BUILD_ARGS $BUILD_TARGETS; then
         log_error "Docker compose build failed!"
         BUILD_FAILED=true
     fi

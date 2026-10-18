@@ -209,6 +209,21 @@ secrets:
 - **Valeur vide = pas de secret.** Si la variable n’a pas de valeur dans `.env`, elle est laissée comme variable d’environnement classique (avec un avertissement). Assurez-vous que toutes les valeurs sensibles sont bien renseignées.
 - **Ne définissez pas la même clé à la fois en secret et en variable d’environnement** : une variable d’environnement déjà présente a priorité sur le fichier `/run/secrets/` au chargement.
 
+### Secrets de build (BuildKit)
+
+Pour un secret nécessaire **pendant le build** de l’image (clé de signature d’une application mobile, token d’un registre privé…), sans qu’il finisse dans une couche de l’image ni dans un secret Docker au déploiement :
+
+- dans `devops/.env`, `BUILD_SECRET_<ID>=valeur` (texte) ou `BUILD_SECRET_<ID>_B64=...` (contenu **encodé en base64** : fichier binaire comme un keystore `.jks`, ou texte sur plusieurs lignes, car une valeur `.env` tient sur une ligne) ;
+- dans le Dockerfile, `RUN --mount=type=secret,id=<id>` puis lire `/run/secrets/<id>` (`<id>` = `<ID>` en minuscules).
+
+Au build, PulsarCD écrit chaque secret dans un fichier temporaire (mode 600, supprimé en fin de build) et ajoute un override compose **utilisé pour le build seulement** qui déclare ces secrets pour tous les services ayant une section `build:` (`docker compose build` comme `docker buildx bake`). Rien de tout cela n’est déployé, et seuls les identifiants apparaissent dans les logs.
+
+```bash
+# Exemple : keystore Android et ses mots de passe
+BUILD_SECRET_KEYSTORE_B64=$(base64 -w0 release.jks)
+BUILD_SECRET_KEYSTORE_ENV_B64=$(printf 'KEYSTORE_PASSWORD=...\nKEY_ALIAS=...\nKEY_PASSWORD=...\n' | base64 -w0)
+```
+
 
 ## Environnement QA (`.env.qa`)
 
