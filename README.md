@@ -486,6 +486,38 @@ All backend configuration is done via environment variables prefixed with `PULSA
 | `PULSARCD_OPENSEARCH__INDEX_PREFIX` | Index prefix | `pulsarcd` |
 | `PULSARCD_OPENSEARCH__USERNAME` | Username (optional) | - |
 | `PULSARCD_OPENSEARCH__PASSWORD` | Password (optional) | - |
+| `PULSARCD_OPENSEARCH__AUTO_MIGRATE_MAPPINGS` | Reindex into a new versioned index when a field type is wrong (see below) | `true` |
+| `PULSARCD_OPENSEARCH__MIGRATE_LEGACY_INDICES` | Also move plain pre-alias indices with a correct mapping to the versioned layout at startup | `false` |
+| `PULSARCD_OPENSEARCH__MIGRATION_CATCHUP_SECONDS` | Recent window copied again under a write block before the alias switch | `900` |
+
+#### Index layout and mapping migrations
+
+Each logical index (`pulsarcd-logs`, `pulsarcd-metrics`, `pulsarcd-host-metrics`,
+`pulsarcd-access`) is an alias over a versioned index (`pulsarcd-logs-v1`, ...).
+Readers and writers, the agents included, only use the logical name.
+Deployments created before this layout keep their plain index; it counts as
+version 1.
+
+When an existing index has a wrong field type (typically a field that
+OpenSearch auto-mapped as `text` before the mapping was created), nothing is
+deleted any more. The backend, in the background:
+
+1. creates `<name>-v<N+1>` with the right mapping and reindexes into it while
+   reads and writes continue on the current index;
+2. copies again, still without blocking, the documents that arrived during
+   that copy (window: copy start minus `MIGRATION_CATCHUP_SECONDS`);
+3. blocks writes on the current index for a short time and copies once more
+   what arrived during step 2 (same margin), so the block stays short even
+   when the bulk copy took hours;
+4. checks the copy holds at least as many documents and has the expected
+   mapping, then switches the alias
+   and removes the old index in one atomic call.
+
+Any failure lifts the write block, drops the partial copy and keeps the old
+index with all its data. Agents never migrate: they log the mismatch and keep
+writing. `/api/health` reports `"indices": "ok" | "migrating" | "degraded"`,
+and `/api/admin/opensearch-status` gives the details per index
+(`_index_migrations`, concrete indices, write block).
 
 #### AI Settings
 

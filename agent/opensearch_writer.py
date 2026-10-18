@@ -9,6 +9,7 @@ import structlog
 from opensearchpy import AsyncOpenSearch, helpers
 
 from shared.access_log import ACCESS_INDEX_MAPPING, build_access_doc
+from shared.index_aliases import IndexManager
 
 from .config import OpenSearchConfig
 
@@ -36,77 +37,18 @@ class OpenSearchWriter:
             verify_certs=False,
             ssl_show_warn=False,
         )
+        self.index_manager = IndexManager(self._client, allow_migration=False)
         self._write_count = 0
 
     async def _ensure_index(self, index_name: str, mapping: dict):
-        """Create an index if it doesn't exist, handling opensearch-py 2.x/3.x differences.
+        """Create ``index_name`` (an alias over ``<name>-v1``) if it is missing.
 
-        Also verifies the mapping of existing indices — if key fields have
-        wrong types (e.g. 'text' instead of 'keyword' from auto-mapping),
-        the index is deleted and recreated with the correct mapping.
+        An existing index with a wrong field type is reported, never deleted:
+        agents run on every host and must not race each other into destroying
+        data. The backend migrates it (reindex + atomic alias swap) and the
+        agent keeps writing to the same name, which follows the alias.
         """
-        try:
-            await self._client.indices.create(index=index_name, body=mapping)
-            logger.warning("Created index", index=index_name)
-        except Exception as e:
-            error_str = str(e).lower()
-            if "resource_already_exists" in error_str or "already exists" in error_str:
-                logger.info("Index already exists, verifying mapping...",
-                            index=index_name)
-                await self._verify_mapping(index_name, mapping)
-            else:
-                logger.error("Failed to create index", index=index_name,
-                             error=str(e), error_type=type(e).__name__)
-                raise
-
-    async def _verify_mapping(self, index_name: str, expected_mapping: dict):
-        """Check if existing index has the correct field types.
-
-        If key fields have wrong types (e.g. auto-mapped 'text' instead of
-        'keyword'), delete and recreate the index.
-        """
-        try:
-            resp = await self._client.indices.get_mapping(index=index_name)
-
-            # opensearch-py 3.x returns ApiResponse; convert to dict
-            resp_dict = resp
-            if hasattr(resp, "body"):
-                resp_dict = resp.body
-            if not isinstance(resp_dict, dict):
-                resp_dict = dict(resp_dict)
-
-            actual_props = {}
-            if index_name in resp_dict:
-                actual_props = resp_dict[index_name].get("mappings", {}).get("properties", {})
-
-            expected_props = expected_mapping.get("mappings", {}).get("properties", {})
-
-            logger.warning("Mapping verification",
-                           index=index_name,
-                           actual_fields=list(actual_props.keys()),
-                           expected_fields=list(expected_props.keys()))
-
-            mismatches = []
-            for field, expected_def in expected_props.items():
-                expected_type = expected_def.get("type")
-                actual_def = actual_props.get(field, {})
-                actual_type = actual_def.get("type")
-                if actual_type and expected_type and actual_type != expected_type:
-                    mismatches.append(f"{field}: {actual_type} -> {expected_type}")
-
-            if mismatches:
-                logger.warning("Index has wrong field types, recreating...",
-                               index=index_name, mismatches=mismatches)
-                await self._client.indices.delete(index=index_name)
-                logger.warning("Deleted index with bad mapping", index=index_name)
-                await self._client.indices.create(index=index_name, body=expected_mapping)
-                logger.warning("Recreated index with correct mapping",
-                               index=index_name)
-            else:
-                logger.info("Index mapping verified OK", index=index_name)
-        except Exception as e:
-            logger.error("Mapping verification failed", index=index_name,
-                         error=str(e), error_type=type(e).__name__)
+        await self.index_manager.ensure(index_name, mapping)
 
     async def initialize(self):
         """Ensure indices exist (create if needed)."""

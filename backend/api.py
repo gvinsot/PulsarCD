@@ -1756,13 +1756,16 @@ async def get_opensearch_status():
                 oldest_ts = oldest_hit[0]["_source"].get("timestamp") if oldest_hit else None
 
                 # Get mapping (field types)
+                # index_name is usually an alias: responses are keyed by the
+                # concrete (versioned) index behind it.
                 mapping_resp = await opensearch._client.indices.get_mapping(index=index_name)
-                mapping = mapping_resp.get(index_name, {}).get("mappings", {}).get("properties", {})
+                concrete = index_name if index_name in mapping_resp else next(iter(mapping_resp), index_name)
+                mapping = mapping_resp.get(concrete, {}).get("mappings", {}).get("properties", {})
                 field_types = {k: v.get("type", "?") for k, v in mapping.items()}
 
                 # Get index settings
                 settings_resp = await opensearch._client.indices.get_settings(index=index_name)
-                idx_settings = settings_resp.get(index_name, {}).get("settings", {}).get("index", {})
+                idx_settings = settings_resp.get(concrete, {}).get("settings", {}).get("index", {})
 
                 result[index_name] = {
                     "exists": True,
@@ -1774,11 +1777,14 @@ async def get_opensearch_status():
                     "field_types": field_types,
                     "index_uuid": idx_settings.get("uuid"),
                     "refresh_interval": idx_settings.get("refresh_interval"),
+                    "concrete_indices": sorted(mapping_resp),
+                    "write_block": idx_settings.get("blocks", {}).get("write"),
                 }
             else:
                 result[index_name] = {"exists": False}
         except Exception as e:
             result[index_name] = {"exists": "unknown", "error": str(e)[:500]}
+    result["_index_migrations"] = opensearch.index_status()
     return result
 
 
@@ -1787,7 +1793,9 @@ async def recreate_opensearch_index(
     index: str = Query(..., description="Index name to recreate"),
 ):
     """Force delete and recreate an OpenSearch index with correct mapping.
-    WARNING: This deletes all data in the index. Agents will repopulate it.
+    WARNING: This deletes all data in the index (every concrete index behind
+    the alias). Mapping mismatches no longer need this: the backend migrates
+    them in the background without data loss.
     """
     try:
         result = await opensearch.recreate_index(index)
@@ -2630,6 +2638,11 @@ async def health_check() -> Dict[str, Any]:
         try:
             await opensearch._client.info()
             result["opensearch"] = "connected"
+            # Coarse only ("ok" / "migrating" / "degraded"): details are in
+            # /api/admin/opensearch-status.
+            index_health = opensearch.index_health()
+            if isinstance(index_health, str):
+                result["indices"] = index_health
         except Exception as e:
             # The error type/message can leak host names or credentials: log it
             # server-side and expose only the coarse state.
