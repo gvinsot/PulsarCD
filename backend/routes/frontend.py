@@ -12,6 +12,7 @@ from typing import Dict
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
+from .. import api
 from ..security_headers import _csp_directives
 
 router = APIRouter()
@@ -67,10 +68,35 @@ _HTML_COMMENT_RE = re.compile(r"[ \t]*<!--.*?-->[ \t]*(?:\r?\n)?", re.DOTALL)
 _CSP_NONCE_PLACEHOLDER = "__CSP_NONCE__"
 
 
+# Markup that only exists while an optional feature is enabled:
+#   <!-- feature:NAME[: note] --> ... <!-- /feature:NAME -->
+# Disabled features are cut out of the page entirely (panel, script and
+# stylesheet), so the UI never shows a section whose API answers 404.
+_FEATURE_BLOCK_RE = re.compile(
+    r"[ \t]*<!-- feature:(?P<name>[a-z_]+)(?::[^>]*)? -->.*?<!-- /feature:(?P=name) -->[ \t]*(?:\r?\n)?",
+    re.DOTALL,
+)
+
+
+def _enabled_features() -> Dict[str, bool]:
+    """Optional frontend features and whether the settings enable them."""
+    previews = getattr(api.settings, "previews", None)
+    return {"previews": bool(getattr(previews, "enabled", False))}
+
+
+def _strip_disabled_features(html: str, features: Dict[str, bool]) -> str:
+    """Drop the blocks of features that are not enabled (unknown ones too)."""
+    return _FEATURE_BLOCK_RE.sub(
+        lambda m: m.group(0) if features.get(m.group("name")) else "", html,
+    )
+
+
 def _render_index(style_nonce: str) -> str:
-    """Read index.html, strip its comments, stamp /static references and the nonce."""
+    """Read index.html, drop disabled features, strip its comments, stamp
+    /static references and the nonce."""
     with open(_INDEX_PATH, encoding="utf-8") as f:
         html = f.read()
+    html = _strip_disabled_features(html, _enabled_features())
     html = _HTML_COMMENT_RE.sub("", html)
     html = _ASSET_REF_RE.sub(
         lambda m: f'{m.group("attr")}="{m.group("path")}?v={_asset_version(m.group("path"))}"',

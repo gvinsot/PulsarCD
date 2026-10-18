@@ -1079,7 +1079,7 @@ it until it is torn down by hand.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `PULSARCD_PREVIEWS__ENABLED` | Enable the preview API and cleanup | `true` |
+| `PULSARCD_PREVIEWS__ENABLED` | Enable the preview API, its cleanup and the "Preview environments" section of the Stacks view (removed from the page when `false`) | `true` |
 | `PULSARCD_PREVIEWS__TTL_HOURS` | Default lifetime without redeploy (0 = never) | `72` |
 | `PULSARCD_PREVIEWS__CLEANUP_INTERVAL_MINUTES` | Expiry check interval | `30` |
 | `PULSARCD_PREVIEWS__MAX_ACTIVE` | Maximum recorded previews | `20` |

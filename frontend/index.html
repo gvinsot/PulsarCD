@@ -23,7 +23,9 @@
     <link rel="stylesheet" href="/static/css/security.css">
     <link rel="stylesheet" href="/static/css/usage.css">
     <link rel="stylesheet" href="/static/css/test-runs.css">
+    <!-- feature:previews -->
     <link rel="stylesheet" href="/static/css/previews.css">
+    <!-- /feature:previews -->
     <!-- Third-party files are pinned by hash: a CDN serving anything else is refused. -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
             integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4"
@@ -953,6 +955,7 @@
                 </header>
                 
                 <div class="stacks-content">
+                    <!-- feature:previews: removed by serve_frontend when PULSARCD_PREVIEWS__ENABLED=false -->
                     <!-- Per-branch preview environments (frontend/static/js/previews.js) -->
                     <details id="previews-panel" class="previews-panel">
                         <summary>Preview environments <span id="previews-summary-count" class="previews-count"></span></summary>
@@ -965,6 +968,7 @@
                         </div>
                         <div id="previews-list" class="previews-list"><div class="loading-placeholder">Loading previews...</div></div>
                     </details>
+                    <!-- /feature:previews -->
                     <!-- Repos list -->
                     <div id="stacks-list" class="stacks-list">
                         <!-- Populated by JavaScript -->
@@ -2024,6 +2028,8 @@
     <script src="/static/js/views/terminal.js"></script>
     <script src="/static/js/app.js"></script>
     <script src="/static/js/notifications-settings.js"></script>
+    <!-- feature:previews -->
     <script src="/static/js/previews.js"></script>
+    <!-- /feature:previews -->
 </body>
 </html>

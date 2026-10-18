@@ -1463,6 +1463,38 @@ class TestFrontendPage:
     def test_other_responses_get_no_nonce(self, client):
         assert "nonce-" not in client.get("/api/health").headers["Content-Security-Policy"]
 
+
+_PREVIEW_MARKUP = ('id="previews-panel"', "/static/js/previews.js", "/static/css/previews.css")
+
+
+class TestPreviewFeatureToggle:
+    """The Stacks view only carries the preview section while the feature is on."""
+
+    def test_enabled_page_has_the_preview_section(self, client, monkeypatch):
+        monkeypatch.setattr(api_module.settings.previews, "enabled", True)
+        html = client.get("/").text
+        for marker in _PREVIEW_MARKUP:
+            assert marker in html
+        assert 'id="stacks-list"' in html
+
+    def test_disabled_page_has_no_trace_of_previews(self, client, monkeypatch):
+        monkeypatch.setattr(api_module.settings.previews, "enabled", False)
+        resp = client.get("/")
+        assert resp.status_code == 200
+        for marker in _PREVIEW_MARKUP:
+            assert marker not in resp.text
+        assert "Preview environments" not in resp.text
+        # Only the preview block goes: the rest of the Stacks view stays.
+        assert 'id="stacks-list"' in resp.text
+        assert "feature:" not in resp.text
+
+    def test_every_feature_block_is_closed(self):
+        """An unclosed marker would leave the block in place even when disabled."""
+        index = (_FRONTEND / "index.html").read_text(encoding="utf-8")
+        opened = re.findall(r"<!-- feature:([a-z_]+)(?::[^>]*)? -->", index)
+        closed = re.findall(r"<!-- /feature:([a-z_]+) -->", index)
+        assert opened and sorted(opened) == sorted(closed)
+
     def test_markup_has_no_inline_script_or_style(self):
         """on*= handlers, style= attributes and inline <script>/<style> blocks are all refused."""
         assert "static/js/app.js" in _page_scripts()
