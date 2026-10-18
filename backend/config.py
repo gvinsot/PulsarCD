@@ -184,6 +184,12 @@ class GitHubConfig(BaseModel):
     # post-deploy verification (services not converging, health check failing).
     # See backend/deploy_rollback.py.
     auto_rollback: bool = True
+    # Shared secret of the GitHub push webhook (POST /api/webhooks/github).
+    # Unset leaves the endpoint disabled (404) and the poller as the only trigger.
+    webhook_secret: Optional[str] = None
+    # Auto-build poll interval (seconds) once the webhook is configured: the
+    # poller then only catches deliveries GitHub failed to make.
+    webhook_poll_interval: int = 120
 
 
 class AuthConfig(BaseModel):
@@ -539,6 +545,9 @@ def load_config() -> Settings:
     load_env(settings.github, "registry_url", "PULSARCD_GITHUB__REGISTRY_URL")
     load_env(settings.github, "registry_username", "PULSARCD_GITHUB__REGISTRY_USERNAME")
     load_env(settings.github, "registry_password", "PULSARCD_GITHUB__REGISTRY_PASSWORD")
+    load_env(settings.github, "webhook_secret", "PULSARCD_GITHUB__WEBHOOK_SECRET")
+    load_env(settings.github, "webhook_poll_interval",
+             "PULSARCD_GITHUB__WEBHOOK_POLL_INTERVAL", int)
 
     # Load config file from data directory
     try:

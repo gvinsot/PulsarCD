@@ -267,7 +267,8 @@ async def lifespan(app: FastAPI):
     global _auto_build_task
     if github_service.is_configured():
         _auto_build_task = asyncio.create_task(auto_build_poller())
-        logger.info("Auto-build poller started", interval=f"{AUTO_BUILD_POLL_INTERVAL}s")
+        logger.info("Auto-build poller started", interval=f"{_auto_build_poll_interval()}s",
+                    webhook=bool(_github_webhook_secret()))
 
     # Start tag cleanup background task
     global tag_cleaner
@@ -526,6 +527,16 @@ _AGENT_KEY_ROUTES = frozenset({
 # /api, so it is never left open.
 _EDGE_KEY_ROUTES = frozenset({
     ("GET", "/api/security/waf/traefik-config"),
+})
+
+# ---- Signed webhook policy -------------------------------------------------
+# GitHub delivers push events without any session: the route authenticates the
+# request itself by checking its HMAC signature against
+# PULSARCD_GITHUB__WEBHOOK_SECRET (see github_webhook_endpoint).  Only this
+# exact method and path bypass the JWT check; any other method on it, and every
+# other path under /api/webhooks/, still requires a session.
+_WEBHOOK_ROUTES = frozenset({
+    ("POST", "/api/webhooks/github"),
 })
 
 # ---- Where a JWT may travel in the query string ----------------------------
@@ -835,6 +846,10 @@ async def auth_middleware(request: Request, call_next):
         denied = await _authenticate_agent(request, auth_header)
         if denied is not None:
             return denied
+        return await call_next(request)
+
+    # Signed webhooks: the handler verifies the HMAC signature itself.
+    if (request.method.upper(), path) in _WEBHOOK_ROUTES:
         return await call_next(request)
 
     # The edge proxy polling the blocklist it enforces: its own shared key.
@@ -4317,6 +4332,311 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
     return True
 
 
+# ---- Shared auto-build entry point (poller and push webhook) ----------------
+
+_SEEN_SHAS_KEEP = 20
+
+
+def _github_webhook_secret() -> str:
+    """The push webhook secret, or "" when the webhook is not configured."""
+    return getattr(getattr(settings, "github", None), "webhook_secret", None) or ""
+
+
+def _auto_build_poll_interval() -> int:
+    """Seconds between poller runs: longer once the webhook delivers pushes."""
+    if _github_webhook_secret():
+        configured = getattr(settings.github, "webhook_poll_interval", 0) or 0
+        return max(AUTO_BUILD_POLL_INTERVAL, int(configured))
+    return AUTO_BUILD_POLL_INTERVAL
+
+
+def _advance_last_sha(state: dict, sha: str):
+    """Move ``last_sha`` to ``sha``, remembering the SHA it replaces.
+
+    The webhook usually learns about a commit before GitHub's REST listings do,
+    so the poller can read the previous head again after the webhook advanced
+    ``last_sha``.  Remembering recent heads keeps that stale read from looking
+    like a new commit and rebuilding it.
+    """
+    old = state.get("last_sha")
+    if old and old != sha:
+        seen = state.setdefault("seen_shas", [])
+        if old not in seen:
+            seen.append(old)
+            del seen[:-_SEEN_SHAS_KEEP]
+    state["last_sha"] = sha
+
+
+def _sha_already_handled(state: dict, sha: str) -> bool:
+    """Whether ``sha`` is the current or a recent head already acted upon."""
+    return sha == state.get("last_sha") or sha in state.get("seen_shas", ())
+
+
+async def _auto_build_commit(owner: str, name: str, ssh_url: str, sha: str,
+                             untagged_data: dict, old_sha: Optional[str] = None,
+                             source: str = "poller") -> bool:
+    """Build ``sha``, the new head of ``name``'s default branch.
+
+    The single auto-build path shared by the poller and the push webhook: it
+    honours the version->build gate, advances ``last_sha``, auto-tags untagged
+    commits and hands over to ``_trigger_pipeline``, whose build lock
+    de-duplicates concurrent triggers.  Callers have checked that ``sha`` is
+    new and that no build is running.  Returns True if a pipeline started.
+    """
+    state = _auto_build_state.setdefault(name, {"building": False})
+    untagged_count = len(untagged_data.get("untagged_commits", []))
+    state["untagged_commits"] = untagged_count
+
+    _vb_cfg = pipeline_state.get_transition_config(name, "version_to_build")
+    _vb_mode = _vb_cfg.get("mode", "auto_with_success") if _vb_cfg else "auto_with_success"
+    if _vb_mode == "manual":
+        logger.info("Auto-build skipped (version→build set to manual)", repo=name, source=source)
+        _advance_last_sha(state, sha)
+        return False
+
+    logger.info("New commit detected, triggering pipeline",
+                repo=name,
+                old_sha=(old_sha or "")[:7],
+                new_sha=sha[:7],
+                untagged=untagged_count,
+                source=source)
+    # Advance last_sha so the next poll iteration doesn't re-evaluate
+    # the same commit. The actual build lock is owned by _trigger_pipeline.
+    _advance_last_sha(state, sha)
+
+    latest_tag_info = untagged_data.get("latest_tag")
+    if untagged_count > 0:
+        try:
+            next_ver = await github_service.get_next_version(owner, name)
+            new_tag = f"v{next_ver}"
+            tag_result = await github_service.create_tag(owner, name, new_tag, sha)
+            if tag_result.get("success"):
+                logger.info("Auto-tagged new commit", repo=name, tag=new_tag, sha=sha[:7])
+                return await _trigger_pipeline(name, ssh_url, version=next_ver, tag=new_tag)
+            logger.error("Failed to auto-tag", repo=name, error=tag_result.get("error"))
+        except Exception as tag_err:
+            logger.error("Auto-tag failed", repo=name, error=str(tag_err))
+        return False
+    if latest_tag_info:
+        tag_name = latest_tag_info.get("name", "")
+        version = tag_name.lstrip("v")
+        return await _trigger_pipeline(name, ssh_url, version=version, tag=tag_name)
+    return await _trigger_pipeline(name, ssh_url)
+
+
+# ---- GitHub push webhook ----------------------------------------------------
+# Signature checking, replay protection and parsing live in github_webhook.py;
+# this route only maps a verified push onto _auto_build_commit.  The auth
+# middleware lets this exact route through without a session (_WEBHOOK_ROUTES).
+
+from .github_webhook import (  # noqa: E402  (kept next to its only user)
+    MAX_PAYLOAD_BYTES as _WEBHOOK_MAX_PAYLOAD_BYTES,
+    ZERO_SHA as _ZERO_SHA,
+    DeliveryCache,
+    PushEvent,
+    decode_body as _decode_webhook_body,
+    parse_push as _parse_push,
+    verify_signature as _verify_webhook_signature,
+)
+
+_webhook_deliveries = DeliveryCache()
+# Strong references to in-flight webhook builds (asyncio keeps only weak ones).
+_webhook_tasks: set = set()
+
+
+# Pause before each read of the branch listing.  GitHub can deliver a push
+# before its REST API lists the commit; reading the tag state from that stale
+# listing would build the previous release under the new commit's name.
+_WEBHOOK_LISTING_RETRY_DELAYS = (0, 1, 2, 4, 8, 15)
+# How long the poller keeps re-reading a repo after the webhook handed a
+# commit back to it, even though the repo's pushed_at no longer changes.
+_WEBHOOK_HANDBACK_RECHECK_SECONDS = 600
+
+
+class _StaleListing(Exception):
+    """GitHub's commit listing did not show the pushed commit as the head."""
+
+
+def _request_recheck(state: dict, seconds: float = _WEBHOOK_HANDBACK_RECHECK_SECONDS):
+    """Make the poller re-read this repo on every cycle for ``seconds``."""
+    state["recheck_until"] = max(state.get("recheck_until", 0.0),
+                                 time.monotonic() + seconds)
+
+
+async def _read_pushed_head(owner: str, name: str, sha: str) -> Optional[dict]:
+    """Read the tag state once GitHub's listing shows ``sha`` as the head.
+
+    Returns None when a newer commit superseded ``sha`` meanwhile (its own
+    delivery or the poller deals with it).  Raises _StaleListing when the
+    listing never caught up.
+    """
+    seen_head = None
+    for delay in _WEBHOOK_LISTING_RETRY_DELAYS:
+        if delay:
+            await asyncio.sleep(delay)
+        if (_auto_build_state.get(name) or {}).get("last_sha") != sha:
+            return None
+        github_service.invalidate_repo_cache(owner, name)
+        # Same arguments (and so the same cache entry) as the commit read
+        # inside get_untagged_commits, so both describe one listing.
+        commits_data = await github_service.get_repo_commits(owner, name, per_page=20)
+        commits = commits_data.get("commits") or []
+        seen_head = commits[0].get("sha") if commits else None
+        if seen_head != sha:
+            continue
+        untagged_data = await github_service.get_untagged_commits(owner, name, limit=20)
+        untagged = untagged_data.get("untagged_commits") or []
+        if untagged and untagged[0].get("sha") != sha:
+            continue
+        return untagged_data
+    raise _StaleListing(f"listing head is {(seen_head or 'unknown')[:7]}, not {sha[:7]}")
+
+
+async def _run_webhook_build(owner: str, name: str, ssh_url: str, sha: str,
+                             old_sha: Optional[str]):
+    """Background half of a webhook push: read the tag state, then build."""
+    try:
+        untagged_data = await _read_pushed_head(owner, name, sha)
+        if untagged_data is None:
+            logger.info("Webhook push superseded by a newer commit", repo=name, sha=sha[:7])
+            return
+        await _auto_build_commit(owner, name, ssh_url, sha, untagged_data,
+                                 old_sha=old_sha, source="webhook")
+    except Exception as e:
+        logger.error("Webhook-triggered build failed", repo=name, sha=sha[:7], error=str(e))
+        # Nothing was started: hand the commit back to the poller.
+        state = _auto_build_state.get(name) or {}
+        if state.get("last_sha") == sha and not state.get("building"):
+            if old_sha:
+                state["last_sha"] = old_sha
+                if old_sha in state.get("seen_shas", []):
+                    state["seen_shas"].remove(old_sha)
+            else:
+                state.pop("last_sha", None)
+            # The poller may already have consumed this push's pushed_at.
+            _request_recheck(state)
+
+
+async def _handle_github_push(push: PushEvent) -> dict:
+    """Decide what a verified push means for the auto-build.
+
+    Everything up to claiming the commit runs without an ``await`` between the
+    state check and ``_advance_last_sha``, so a concurrent poll can never pick
+    the same commit up a second time.  The slow part (tagging, cloning) runs in
+    the background: GitHub gives up on a delivery after 10 seconds.
+    """
+    def ignored(reason: str) -> dict:
+        return {"status": "ignored", "reason": reason, "repo": push.full_name}
+
+    if not github_service or not github_service.is_configured():
+        return ignored("GitHub integration is not configured")
+    if push.deleted:
+        return ignored("ref was deleted")
+    if push.branch is None:
+        return ignored("not a branch push")
+    if not push.is_default_branch:
+        return ignored(f"push to '{push.branch}', not the default branch")
+
+    repos = await github_service.get_starred_repos()
+    wanted = push.full_name.lower()
+    tracked = next((r for r in repos if (r.get("full_name") or "").lower() == wanted), None)
+    if tracked is None:
+        return ignored("repository is not tracked")
+
+    # Owner, name and clone URL come from our own repo listing, not the payload.
+    owner, name, ssh_url = tracked["owner"], tracked["name"], tracked["ssh_url"]
+    state = _auto_build_state.setdefault(name, {"building": False})
+    if _sha_already_handled(state, push.after):
+        return ignored("commit already handled")
+
+    if state.get("building"):
+        # Leave the commit to the poller, which builds it once the running
+        # pipeline releases the lock.  A repo the poller has not observed yet
+        # gets the pre-push head as its baseline so the new one reads as new.
+        if "last_sha" not in state and push.before and push.before != _ZERO_SHA:
+            state["last_sha"] = push.before
+        state["recheck"] = True
+        # Also past a stale listing that still shows the pre-push head.
+        _request_recheck(state)
+        return {"status": "deferred", "repo": name, "sha": push.after,
+                "reason": "a pipeline is already running for this repository"}
+
+    # Baseline handed back to the poller if the build cannot start: without
+    # one, the poller's first look would only record the pushed commit.
+    old_sha = state.get("last_sha") or (
+        push.before if push.before and push.before != _ZERO_SHA else None)
+    _advance_last_sha(state, push.after)
+    task = asyncio.create_task(_run_webhook_build(owner, name, ssh_url, push.after, old_sha))
+    _webhook_tasks.add(task)
+    task.add_done_callback(_webhook_tasks.discard)
+    return {"status": "triggered", "repo": name, "sha": push.after}
+
+
+@app.post("/api/webhooks/github")
+async def github_webhook_endpoint(request: Request):
+    """Receive GitHub push events and start the auto-build immediately.
+
+    Authenticated by ``X-Hub-Signature-256`` against
+    PULSARCD_GITHUB__WEBHOOK_SECRET; answers 404 while that secret is unset.
+    ``X-GitHub-Delivery`` ids are remembered so a replayed delivery is a no-op.
+    """
+    secret = _github_webhook_secret()
+    if not secret:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > _WEBHOOK_MAX_PAYLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Payload too large")
+    body = await request.body()
+    if len(body) > _WEBHOOK_MAX_PAYLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Payload too large")
+
+    if not _verify_webhook_signature(secret, body, request.headers.get("X-Hub-Signature-256")):
+        logger.warning("GitHub webhook rejected: invalid signature",
+                       client=request.client.host if request.client else "",
+                       delivery=request.headers.get("X-GitHub-Delivery", ""))
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
+    event = request.headers.get("X-GitHub-Event", "")
+    delivery = request.headers.get("X-GitHub-Delivery", "").strip()
+    if not delivery:
+        raise HTTPException(status_code=400, detail="Missing X-GitHub-Delivery header")
+    if not _webhook_deliveries.check_and_add(delivery):
+        logger.info("GitHub webhook delivery already processed", delivery=delivery,
+                    github_event=event)
+        return {"status": "duplicate", "delivery": delivery}
+
+    try:
+        payload = _decode_webhook_body(body, request.headers.get("content-type", ""))
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="Invalid webhook payload")
+
+    if event == "ping":
+        logger.info("GitHub webhook ping received", delivery=delivery,
+                    hook_id=payload.get("hook_id"))
+        return {"status": "pong", "delivery": delivery}
+    if event != "push":
+        return {"status": "ignored", "reason": f"event '{event}' is not handled",
+                "delivery": delivery}
+
+    push = _parse_push(payload)
+    if push is None:
+        raise HTTPException(status_code=400, detail="Invalid push payload")
+
+    try:
+        result = await _handle_github_push(push)
+    except Exception:
+        # Let GitHub's redelivery of this id through: nothing was claimed.
+        _webhook_deliveries.discard(delivery)
+        raise
+    result["delivery"] = delivery
+    logger.info("GitHub push webhook processed", delivery=delivery, ref=push.ref,
+                sha=push.after[:7], **{k: v for k, v in result.items()
+                                       if k in ("status", "repo", "reason")})
+    return JSONResponse(status_code=202 if result["status"] == "triggered" else 200,
+                        content=result)
+
+
 async def auto_build_poller():
     """Periodically check starred repos for new commits on default branch and trigger pipeline.
 
@@ -4379,49 +4699,18 @@ async def auto_build_poller():
         # Always update untagged count
         state["untagged_commits"] = untagged_count
 
-        if latest_sha != state["last_sha"] and state.get("building"):
-            # Come back to this commit once the running build has finished:
-            # the pushed_at fast-filter would otherwise skip the repo until
-            # the next push, and the commit would never be built.
+        if _sha_already_handled(state, latest_sha):
+            state.pop("recheck", None)
+            return True
+        if state.get("building"):
+            # Keep checking this repo on every poll, even though its pushed_at
+            # will not change again, so the commit is built once the running
+            # pipeline releases the lock.
+            state["recheck"] = True
             return False
-
-        if latest_sha != state["last_sha"] and not state.get("building"):
-            # Check version_to_build transition config — skip if manual
-            _vb_cfg = pipeline_state.get_transition_config(name, "version_to_build")
-            _vb_mode = _vb_cfg.get("mode", "auto_with_success") if _vb_cfg else "auto_with_success"
-            if _vb_mode == "manual":
-                logger.info("Auto-build skipped (version→build set to manual)", repo=name)
-                state["last_sha"] = latest_sha
-                return True
-
-            logger.info("New commit detected, triggering pipeline",
-                        repo=name,
-                        old_sha=state["last_sha"][:7],
-                        new_sha=latest_sha[:7],
-                        untagged=untagged_count)
-            # Advance last_sha so the next poll iteration doesn't re-evaluate
-            # the same commit. The actual build lock is owned by _trigger_pipeline.
-            state["last_sha"] = latest_sha
-
-            latest_tag_info = untagged_data.get("latest_tag")
-            if untagged_count > 0:
-                try:
-                    next_ver = await github_service.get_next_version(owner, name)
-                    new_tag = f"v{next_ver}"
-                    tag_result = await github_service.create_tag(owner, name, new_tag, latest_sha)
-                    if tag_result.get("success"):
-                        logger.info("Auto-tagged new commit", repo=name, tag=new_tag, sha=latest_sha[:7])
-                        await _trigger_pipeline(name, ssh_url, version=next_ver, tag=new_tag)
-                    else:
-                        logger.error("Failed to auto-tag", repo=name, error=tag_result.get("error"))
-                except Exception as tag_err:
-                    logger.error("Auto-tag failed", repo=name, error=str(tag_err))
-            elif latest_tag_info:
-                tag_name = latest_tag_info.get("name", "")
-                version = tag_name.lstrip("v")
-                await _trigger_pipeline(name, ssh_url, version=version, tag=tag_name)
-            else:
-                await _trigger_pipeline(name, ssh_url)
+        state.pop("recheck", None)
+        await _auto_build_commit(owner, name, ssh_url, latest_sha, untagged_data,
+                                 old_sha=state["last_sha"], source="poller")
         return True
 
     while True:
@@ -4435,7 +4724,10 @@ async def auto_build_poller():
                     name = repo["name"]
                     pushed_at = repo.get("pushed_at", "")
                     prev = _pushed_at_cache.get(name)
-                    if prev is not None and prev == pushed_at:
+                    _st = _auto_build_state.get(name) or {}
+                    recheck = (_st.get("recheck")
+                               or _st.get("recheck_until", 0.0) > time.monotonic())
+                    if prev is not None and prev == pushed_at and not recheck:
                         # No push since last poll – skip expensive per-repo calls
                         continue
                     repos_to_check.append(repo)
@@ -4455,7 +4747,7 @@ async def auto_build_poller():
         except Exception as e:
             logger.error("Auto-build poller error", error=str(e))
 
-        await asyncio.sleep(AUTO_BUILD_POLL_INTERVAL)
+        await asyncio.sleep(_auto_build_poll_interval())
 
 
 @app.get("/api/stacks/pipeline/status")

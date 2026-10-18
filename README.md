@@ -422,6 +422,7 @@ pulsarcd/
 | `/api/stacks/{repo_name}/env` | GET | Get stack environment config |
 | `/api/stacks/{repo_name}/env` | PUT | Update stack environment config |
 | `/api/stacks/deployed-tags` | GET | Get deployed image tags |
+| `/api/webhooks/github` | POST | GitHub push webhook (HMAC-signed, no session; see "Instant builds on push") |
 
 #### Search Query Parameters
 
@@ -586,6 +587,8 @@ and `/api/admin/opensearch-status` gives the details per index
 | `PULSARCD_GITHUB__REGISTRY_URL` | Docker registry host images are pushed to and deployed from (e.g. `registry.example.com` or `host:5000`; a `https://` prefix is stripped). Passed to `build-push.sh`, `deploy-service.sh` and `test.sh` as `REGISTRY`, also used for `docker login`, deployed-version detection and tag cleanup | unset: the scripts use `registry.methodinfo.fr` |
 | `PULSARCD_GITHUB__REGISTRY_USERNAME` / `PULSARCD_GITHUB__REGISTRY_PASSWORD` | Credentials for `docker login` and registry tag cleanup | - |
 | `PULSARCD_GITHUB__AUTO_ROLLBACK` | Redeploy the last good version when a deploy fails post-deploy verification | `true` |
+| `PULSARCD_GITHUB__WEBHOOK_SECRET` | Secret of the push webhook (see "Instant builds on push"). Unset disables `POST /api/webhooks/github` (404) | - |
+| `PULSARCD_GITHUB__WEBHOOK_POLL_INTERVAL` | Auto-build poll interval in seconds once the webhook secret is set (never below the 10 s default) | `120` |
 
 When the scripts in `scripts/` are run by hand, set `REGISTRY` in the
 environment to target another registry
@@ -593,6 +596,52 @@ environment to target another registry
 Compose files may reference it as `${REGISTRY}`, `${REGISTRY_URL}` or
 `${DOCKER_REGISTRY_URL}`; the latter two default to `REGISTRY` unless the
 project's `devops/.env` sets them.
+
+#### Instant builds on push (GitHub webhook)
+
+Without a webhook, PulsarCD polls GitHub every 10 seconds for new commits on
+each tracked repository's default branch. A push webhook starts the same
+pipeline as soon as GitHub delivers the event:
+
+1. Generate a secret (`openssl rand -hex 32`) and set it as
+   `PULSARCD_GITHUB__WEBHOOK_SECRET` on the backend, then redeploy.
+2. In the repository (or organization) on GitHub: *Settings ▸ Webhooks ▸ Add
+   webhook*, with payload URL `https://<pulsarcd host>/api/webhooks/github`,
+   content type `application/json` (form-encoded also works), the same secret,
+   and *Just the push event*.
+3. GitHub sends a `ping` right away; *Recent Deliveries* should show a `200`
+   answering `{"status": "pong"}`.
+
+How deliveries are handled:
+
+- The route needs no session: it is authenticated by the
+  `X-Hub-Signature-256` HMAC, checked in constant time (`401` on mismatch).
+  Only `POST` on that exact path bypasses session auth.
+- Only pushes to the default branch of a repository PulsarCD already tracks
+  (the Stacks list) start a build; other branches, tag pushes (including the
+  tags PulsarCD creates itself), deleted refs, unknown repositories and other
+  event types are acknowledged with `{"status": "ignored", "reason": ...}`.
+- A triggered build answers `202`. It goes through the poller's own path:
+  the version→build gate, auto-tagging of untagged commits, and the per-repo
+  build lock, so a commit is never built twice. The poller is told the commit
+  was handled and does not rebuild it.
+- `X-GitHub-Delivery` ids are remembered for 24 h: a replayed delivery answers
+  `{"status": "duplicate"}` and does nothing. A delivery that failed with a
+  server error is forgotten, so it can be redelivered; and a commit that was
+  already handled is never rebuilt, whatever the delivery id. The poller
+  catches anything a lost delivery missed.
+- GitHub can deliver a push before its REST API lists the commit. The build
+  waits (up to about 30 s) until the branch listing shows the pushed commit as
+  its head; if it never does, or GitHub errors, the commit is handed back to
+  the poller, which keeps re-reading the repository for 10 minutes.
+- A push that arrives while the repository is already building answers
+  `{"status": "deferred"}`; the poller builds it once the running pipeline ends.
+- The poller keeps running as a fallback, every
+  `PULSARCD_GITHUB__WEBHOOK_POLL_INTERVAL` seconds.
+
+The route must be reachable from GitHub's
+[webhook addresses](https://api.github.com/meta) (`hooks`): if the edge proxy
+restricts sources, allow those ranges for `/api/webhooks/github`.
 
 #### Collector Settings (Legacy)
 

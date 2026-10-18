@@ -313,6 +313,17 @@ class GitHubService:
         self._tags_cache.clear()
         logger.info("All GitHub caches invalidated")
 
+    def invalidate_repo_cache(self, owner: str, repo: str):
+        """Drop the cached commits and tags of one repository.
+
+        Called when a push webhook announces a new commit, so the next reads
+        see it instead of a listing cached a few seconds before the push.
+        """
+        prefix = f"{owner}/{repo}/"
+        for cache in (self._commits_cache, self._tags_cache):
+            for key in [k for k in cache if k.startswith(prefix)]:
+                del cache[key]
+
     async def get_starred_repos(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
         """Get list of repositories to display in Stacks.
 
