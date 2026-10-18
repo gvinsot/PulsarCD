@@ -151,6 +151,9 @@ class PipelineEntry:
         # Why the pipeline ended in its current status when the backend, not
         # the run itself, decided it (e.g. interrupted by a restart).
         self.status_reason: Optional[str] = None
+        # Last automatic rollback after a deploy failed post-deploy
+        # verification (see deploy_rollback.py), or None.
+        self.last_rollback: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> dict:
         return {
@@ -164,6 +167,7 @@ class PipelineEntry:
             "last_deployed_at": self.last_deployed_at,
             "transition_configs": self.transition_configs,
             "status_reason": self.status_reason,
+            "last_rollback": self.last_rollback,
         }
 
     @classmethod
@@ -184,6 +188,7 @@ class PipelineEntry:
         entry.last_deployed_at = data.get("last_deployed_at")
         entry.transition_configs = data.get("transition_configs", {})
         entry.status_reason = data.get("status_reason")
+        entry.last_rollback = data.get("last_rollback")
         return entry
 
     def mark_interrupted(self, now: str) -> bool:
@@ -237,6 +242,7 @@ class PipelineEntry:
             "last_deployed_at": self.last_deployed_at,
             "transition_configs": self.transition_configs,
             "status_reason": self.status_reason,
+            "last_rollback": self.last_rollback,
             # Enriched per-stage data. ``last_log`` is deliberately left out:
             # the UI polls this every couple of seconds and only reads statuses
             # and versions, while the log tail would make the payload change on
@@ -429,6 +435,25 @@ class PipelineStateManager:
         entry.overall_status = status
 
         self._save()
+
+    def record_rollback(self, repo_name: str, stage: str, rollback: Dict[str, Any]):
+        """Record the outcome of an automatic rollback (see deploy_rollback.py).
+
+        The failed stage keeps its "failed" status: the requested version did
+        not deploy. After a successful rollback the stage's current_version is
+        the version that was restored, so the UI shows what actually runs.
+        """
+        if stage not in ("deploy", "qa"):
+            return
+        entry = self.get_or_create(repo_name)
+        entry.last_rollback = {**rollback, "stage": stage}
+        if rollback.get("attempted") and rollback.get("success") and rollback.get("to_version"):
+            entry.stages[stage].current_version = rollback["to_version"]
+        self._save()
+        logger.info("Pipeline rollback recorded", repo=repo_name, stage=stage,
+                    from_version=rollback.get("from_version"),
+                    to_version=rollback.get("to_version"),
+                    attempted=rollback.get("attempted"), success=rollback.get("success"))
 
     def update_log(self, repo_name: str, stage: str, log_lines: List[str]):
         """Append/replace last log for a stage."""

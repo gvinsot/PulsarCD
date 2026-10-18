@@ -67,6 +67,7 @@ For production? Not yet. But the gap is closing fast. And when it does, PulsarCD
 - **Docker Swarm**: Deploy as Swarm stacks for high availability
 - **Environment Management**: Configure environment variables per stack
 - **Tag Selection**: Deploy specific versions or latest builds
+- **Verified Deploys & Auto-Rollback**: A deploy only succeeds once every service runs the new version (and an optional health URL answers); otherwise the previous version is redeployed automatically — see [Post-deploy verification and rollback](#post-deploy-verification-and-rollback)
 
 ### Monitoring & Logs
 - **Centralized Log Collection**: Agents collect logs from all containers across all hosts
@@ -465,6 +466,57 @@ pulsarcd/
 | `/api/hosts` | GET | List configured hosts |
 | `/api/health` | GET | Health check |
 
+## Post-deploy verification and rollback
+
+`docker stack deploy` returns as soon as the swarm accepts the new service
+specs, before any new container runs. `scripts/deploy-service.sh` therefore
+verifies the deploy (`scripts/verify-deploy.sh`) before reporting success:
+
+1. **Convergence** — waits until every service of the stack runs its requested
+   replicas on the new image (`replicas: 0` and `mode: global` are handled; job
+   services are only checked for failures; one-shot services with
+   `restart_policy.condition: none` or `on-failure`, such as migrations, count
+   as done once their task completed), and stays that way for a few
+   seconds. It fails as soon as a task created by this deploy is `Failed` or
+   `Rejected` (a crash loop), or the swarm paused/rolled back the update, or the
+   timeout expires.
+2. **Health check (optional)** — when `DEPLOY_HEALTHCHECK_PATH` is set, polls
+   `https://$TRAEFIK_HOST<path>` (or the first `Host()` rule of the compose
+   file) until it answers 2xx/3xx; `DEPLOY_HEALTHCHECK_URL` sets the full URL
+   instead.
+
+A failed verification exits with code **3** and prints a line starting with
+`PULSARCD_DEPLOY_VERIFICATION_FAILED`; the post-deploy hook is not run. The
+stack itself stays deployed, so the backend then redeploys the last version
+that deployed successfully on that stage (production or QA), records it in the
+pipeline state (`last_rollback` in `/api/stacks/pipeline/status`), logs it in the deploy
+output and passes it to the LLM agent failure handler. The rollback is
+attempted once: if the previous version fails verification too, nothing else is
+redeployed. Failures before `docker stack deploy` (checkout, pull, pre-deploy
+hook) never trigger a rollback since the running version was not touched.
+Disable with `PULSARCD_GITHUB__AUTO_ROLLBACK=false`.
+
+Per-project settings, read from the project's `devops/.env`:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DEPLOY_VERIFY` | `false` skips both checks (previous behaviour) | `true` |
+| `DEPLOY_CONVERGE_TIMEOUT` | Seconds to wait for all replicas | `180` |
+| `DEPLOY_CONVERGE_INTERVAL` | Seconds between two polls | `5` |
+| `DEPLOY_CONVERGE_STABLE` | Seconds the stack must stay converged | `10` |
+| `DEPLOY_CONVERGE_MAX_FAILURES` | Failed/rejected new tasks tolerated | `0` |
+| `DEPLOY_HEALTHCHECK_PATH` | Path probed on the Traefik host, e.g. `/health` | - |
+| `DEPLOY_HEALTHCHECK_URL` | Full URL to probe instead | - |
+| `DEPLOY_HEALTHCHECK_TIMEOUT` | Seconds to wait for a 2xx/3xx answer | `60` |
+
+Swarm can also roll a single service back by itself: with
+`deploy.update_config.failure_action: rollback` (and a container
+`healthcheck`), a failing update is reverted to the previous spec by Docker.
+That is the project's choice to make in its compose file; PulsarCD does not
+set it. When it happens during a deploy, the convergence check sees the
+`rollback_*` update state and reports the deploy as failed, and the
+PulsarCD rollback then redeploys the whole stack at the previous version.
+
 ## Environment Variables Reference
 
 ### Backend (Central Server) Settings
@@ -533,6 +585,7 @@ and `/api/admin/opensearch-status` gives the details per index
 | `PULSARCD_GITHUB__TOKEN` | GitHub personal access token | - |
 | `PULSARCD_GITHUB__REGISTRY_URL` | Docker registry host images are pushed to and deployed from (e.g. `registry.example.com` or `host:5000`; a `https://` prefix is stripped). Passed to `build-push.sh`, `deploy-service.sh` and `test.sh` as `REGISTRY`, also used for `docker login`, deployed-version detection and tag cleanup | unset: the scripts use `registry.methodinfo.fr` |
 | `PULSARCD_GITHUB__REGISTRY_USERNAME` / `PULSARCD_GITHUB__REGISTRY_PASSWORD` | Credentials for `docker login` and registry tag cleanup | - |
+| `PULSARCD_GITHUB__AUTO_ROLLBACK` | Redeploy the last good version when a deploy fails post-deploy verification | `true` |
 
 When the scripts in `scripts/` are run by hand, set `REGISTRY` in the
 environment to target another registry
