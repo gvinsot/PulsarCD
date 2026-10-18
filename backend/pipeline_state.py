@@ -3,16 +3,22 @@
 Tracks each pipeline step's state, desired version, current version,
 and last log per repository. State is persisted to a JSON file on the
 data volume alongside settings.
+
+Pipeline runs themselves are asyncio tasks inside the backend process, so they
+do not survive a restart.  On load, any stage still marked ``running`` is
+therefore marked ``failed`` with a ``status_reason`` explaining that the run was
+interrupted, instead of showing a spinner forever.
 """
 
 import json
-import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import structlog
+
+from .durable_json import atomic_write_json
 
 logger = structlog.get_logger()
 
@@ -21,6 +27,11 @@ _MAX_LOG_LINES = 500
 
 # Sentinel for set_pipeline's optional IDs
 _UNSET = object()
+
+# Recorded on a run the backend found "running" at startup (see module doc).
+INTERRUPTED_REASON = (
+    "Interrupted: the PulsarCD backend restarted while this stage was running"
+)
 
 
 class StageState:
@@ -137,6 +148,9 @@ class PipelineEntry:
         # Per-project transition configs: {"build_to_test": {"mode": "...", ...}, "test_to_deploy": {...}}
         # mode: "auto" (no gate), "auto_with_success" (auto if prev succeeded), "agent" (LLM gate), "manual"
         self.transition_configs: Dict[str, Dict[str, Any]] = {}
+        # Why the pipeline ended in its current status when the backend, not
+        # the run itself, decided it (e.g. interrupted by a restart).
+        self.status_reason: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -149,6 +163,7 @@ class PipelineEntry:
             "gates": [g.to_dict() for g in self.gates],
             "last_deployed_at": self.last_deployed_at,
             "transition_configs": self.transition_configs,
+            "status_reason": self.status_reason,
         }
 
     @classmethod
@@ -168,7 +183,27 @@ class PipelineEntry:
         ]
         entry.last_deployed_at = data.get("last_deployed_at")
         entry.transition_configs = data.get("transition_configs", {})
+        entry.status_reason = data.get("status_reason")
         return entry
+
+    def mark_interrupted(self, now: str) -> bool:
+        """Fail every stage left ``running`` by a previous backend process.
+
+        Returns True when anything changed.
+        """
+        changed = False
+        for stage in self.stages.values():
+            if stage.status == "running":
+                stage.status = "failed"
+                stage.updated_at = now
+                stage.last_log = (stage.last_log + [f"[PulsarCD] {INTERRUPTED_REASON}"])[-_MAX_LOG_LINES:]
+                changed = True
+        if self.overall_status == "running":
+            self.overall_status = "failed"
+            changed = True
+        if changed:
+            self.status_reason = INTERRUPTED_REASON
+        return changed
 
     # ── Convenience for backward-compatible API response ──
 
@@ -201,6 +236,7 @@ class PipelineEntry:
             "gates": [g.to_dict() for g in self.gates],
             "last_deployed_at": self.last_deployed_at,
             "transition_configs": self.transition_configs,
+            "status_reason": self.status_reason,
             # Enriched per-stage data. ``last_log`` is deliberately left out:
             # the UI polls this every couple of seconds and only reads statuses
             # and versions, while the log tail would make the payload change on
@@ -253,21 +289,29 @@ class PipelineStateManager:
             logger.error("Failed to load pipeline state, starting fresh",
                          path=str(self._path), error=str(e))
             self._state = {}
+            return
+        self._mark_interrupted_runs()
+
+    def _mark_interrupted_runs(self):
+        """Fail runs that were in flight when the previous process stopped.
+
+        Loading only happens once per process (singleton), so every ``running``
+        stage found here belongs to an asyncio task that no longer exists.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        interrupted = [repo for repo, entry in self._state.items() if entry.mark_interrupted(now)]
+        if interrupted:
+            logger.warning("Pipeline runs interrupted by a backend restart marked failed",
+                           repos=interrupted)
+            self._save()
 
     def _save(self):
-        # Write to a sibling file and rename it over the real one: a crash or
-        # full disk mid-write would otherwise leave a truncated file, which
+        # Atomic replace: a crash or full disk mid-write would otherwise leave a truncated file, which
         # _load discards -- forgetting every pipeline and transition config,
         # manual gates included.
-        tmp_path = self._path.with_name(self._path.name + ".tmp")
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
             payload = {repo: entry.to_dict() for repo, entry in self._state.items()}
-            tmp_path.write_text(
-                json.dumps(payload, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
-            os.replace(tmp_path, self._path)
+            atomic_write_json(self._path, payload)
         except Exception as e:
             logger.error("Failed to save pipeline state", path=str(self._path), error=str(e))
 
@@ -302,6 +346,7 @@ class PipelineStateManager:
         """
         entry = self.get_or_create(repo_name)
         now = datetime.now(timezone.utc).isoformat()
+        entry.status_reason = None
 
         if stage == "done":
             # Pipeline completed successfully — mark deploy as success
@@ -350,6 +395,7 @@ class PipelineStateManager:
         """
         entry = self.get_or_create(repo_name)
         now = datetime.now(timezone.utc).isoformat()
+        entry.status_reason = None
 
         # Update action IDs only if explicitly provided
         if build_id is not _UNSET:

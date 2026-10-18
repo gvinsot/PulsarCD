@@ -131,7 +131,9 @@ class TestPersistence:
         assert not _state_file(data_dir).exists()
 
     def test_every_mutation_is_persisted_and_reloaded(self, mgr, data_dir):
-        mgr.set_pipeline("repo", "build", "running", "1.0.0", build_id="b1")
+        # A finished stage: a reload marks "running" ones interrupted, which
+        # test_running_stage_marked_interrupted_on_reload-style tests cover.
+        mgr.set_pipeline("repo", "build", "failed", "1.0.0", build_id="b1")
         mgr.set_skip_build("repo", True)
         mgr.set_project_info("repo", "repo", "repo-stack")
         mgr.set_transition_config("repo", "test_to_deploy", {"mode": "manual", "qa_enabled": True})
@@ -160,13 +162,12 @@ class TestPersistence:
 
     def test_save_failure_is_logged_not_raised(self, mgr, data_dir, monkeypatch):
         """A full or read-only data volume must not break the pipeline itself."""
-        from pathlib import Path
+        from backend import durable_json
 
         def _boom(*args, **kwargs):
             raise OSError("No space left on device")
 
-        monkeypatch.setattr(Path, "write_text", _boom)
-        monkeypatch.setattr(Path, "write_bytes", _boom, raising=False)
+        monkeypatch.setattr(durable_json.tempfile, "mkstemp", _boom)
         mgr.set_stage("repo", "build", "running", "1.0.0")  # must not raise
         assert mgr.get("repo").stages["build"].status == "running"
 
@@ -177,18 +178,32 @@ class TestPersistence:
         empty state and forget every transition config -- including manual
         gates that hold production deploys back.
         """
-        from pathlib import Path
+        from backend import durable_json
 
         mgr.set_transition_config("repo", "test_to_deploy", {"mode": "manual"})
-        real_write_text = Path.write_text
+        real_fdopen = durable_json.os.fdopen
 
-        def _partial_write(self, data, *args, **kwargs):
-            real_write_text(self, data[: len(data) // 2], *args, **kwargs)
-            raise OSError("No space left on device")
+        class _HalfWriter:
+            def __init__(self, handle):
+                self._handle = handle
 
-        monkeypatch.setattr(Path, "write_text", _partial_write)
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self._handle.close()
+                return False
+
+            def write(self, data):
+                self._handle.write(data[: len(data) // 2])
+                raise OSError("No space left on device")
+
+        monkeypatch.setattr(durable_json.os, "fdopen",
+                            lambda *a, **kw: _HalfWriter(real_fdopen(*a, **kw)))
         mgr.set_stage("repo", "build", "running", "1.0.1")  # save fails half-way
         monkeypatch.undo()
+
+        assert not list(data_dir.glob("*.tmp")), "temporary file left behind"
 
         reloaded = _reload(data_dir)
         assert reloaded.get_transition_config("repo", "test_to_deploy")["mode"] == "manual"

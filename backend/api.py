@@ -149,6 +149,8 @@ async def lifespan(app: FastAPI):
     # Initialize persistent pipeline state
     pipeline_state = PipelineStateManager.get_instance(settings.data_dir)
     logger.info("Pipeline state manager initialized", data_dir=settings.data_dir)
+    # Survive restarts: reload queued agent actions, fail interrupted ones.
+    actions_queue.enable_persistence(f"{settings.data_dir}/actions_queue.json")
 
     # Google sign-in: who Google says you are, then whether you are allowed in.
     google_verifier = GoogleIdTokenVerifier(settings.auth.google_client_id)

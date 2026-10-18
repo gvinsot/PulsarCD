@@ -157,6 +157,18 @@ PulsarCD uses an **agent-based architecture** where lightweight agents run on ea
    - Integrates with Ollama for AI-powered log search
    - Handles GitHub integration for stack deployment
 
+   **Restarts and replicas.** The actions queue is mirrored to
+   `/data/actions_queue.json`: after a backend restart, actions still waiting for
+   their agent are delivered (within their original 60-second TTL), actions an
+   agent had already picked up are marked `failed` with a `reason` (a late result
+   from the agent still replaces it), and agents' last-seen times are restored.
+   Action results are never written to disk. Pipeline runs found `running` in
+   `/data/pipeline_state.json` at startup are marked `failed` with a
+   `status_reason` ("interrupted by a backend restart") instead of spinning
+   forever; start the pipeline again to resume. Both files are owned by a single
+   backend process, so the backend must keep running with `replicas: 1`: several
+   replicas would each hold their own queue and overwrite each other's files.
+
 3. **Frontend** provides the user interface:
    - Dashboard with metrics and error trends
    - Log search with natural language support
@@ -312,7 +324,7 @@ pulsarcd/
 ├── backend/
 │   ├── __init__.py
 │   ├── api.py              # FastAPI REST endpoints
-│   ├── actions_queue.py    # In-memory queue for agent actions
+│   ├── actions_queue.py    # Agent actions queue (persisted to /data)
 │   ├── ai_service.py       # Ollama integration for NL queries
 │   ├── collector.py        # Legacy log/metrics collection service
 │   ├── config.py           # Configuration management (env vars)
