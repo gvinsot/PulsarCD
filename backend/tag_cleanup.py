@@ -20,6 +20,7 @@ import aiohttp
 import structlog
 
 from .config_file import TagCleanupConfig
+from .registry import normalize_registry_host
 
 logger = structlog.get_logger()
 
@@ -37,7 +38,7 @@ class TagCleaner:
     ):
         self._config = cleanup_config
         self._github = github_service
-        self._registry_url = (registry_url or "").rstrip("/")
+        self._registry_url = normalize_registry_host(registry_url)
         self._registry_user = registry_username
         self._registry_pass = registry_password
         self._task: Optional[asyncio.Task] = None
@@ -253,7 +254,7 @@ class TagCleaner:
             tags_to_delete.append(commit_sha[:7])
 
         # The repo name in the registry follows the pattern from build-push.sh:
-        #   registry.methodinfo.fr/<project>/<service>:<tag>
+        #   <registry>/<project>/<service>:<tag>
         # We need to discover actual repository names in the registry that
         # belong to this project.  Use the _catalog endpoint.
         catalog = await self._registry_list_repos()

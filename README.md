@@ -471,6 +471,15 @@ All backend configuration is done via environment variables prefixed with `PULSA
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PULSARCD_GITHUB__TOKEN` | GitHub personal access token | - |
+| `PULSARCD_GITHUB__REGISTRY_URL` | Docker registry host images are pushed to and deployed from (e.g. `registry.example.com` or `host:5000`; a `https://` prefix is stripped). Passed to `build-push.sh`, `deploy-service.sh` and `test.sh` as `REGISTRY`, also used for `docker login`, deployed-version detection and tag cleanup | unset: the scripts use `registry.methodinfo.fr` |
+| `PULSARCD_GITHUB__REGISTRY_USERNAME` / `PULSARCD_GITHUB__REGISTRY_PASSWORD` | Credentials for `docker login` and registry tag cleanup | - |
+
+When the scripts in `scripts/` are run by hand, set `REGISTRY` in the
+environment to target another registry
+(`REGISTRY=registry.example.com ./scripts/build-push.sh "My App" 1.0`).
+Compose files may reference it as `${REGISTRY}`, `${REGISTRY_URL}` or
+`${DOCKER_REGISTRY_URL}`; the latter two default to `REGISTRY` unless the
+project's `devops/.env` sets them.
 
 #### Collector Settings (Legacy)
 

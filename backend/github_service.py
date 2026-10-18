@@ -15,6 +15,7 @@ import aiohttp
 import structlog
 
 from .config import GitHubConfig
+from .registry import normalize_registry_host, registry_env_prefix
 
 logger = structlog.get_logger()
 
@@ -1356,7 +1357,7 @@ class StackDeployer:
             # Architectures are declared in the compose file itself — x-platforms
             # per service, x-build-platforms for the whole file — so there is
             # nothing to pass here. An env var on top could only contradict it.
-            build_cmd = f"cd {_shell_quote_path(scripts_path)} && bash build-push.sh {_shell_quote_path(repo_path)} {shlex.quote(version)}"
+            build_cmd = f"cd {_shell_quote_path(scripts_path)} && {registry_env_prefix(self.config.registry_url)}bash build-push.sh {_shell_quote_path(repo_path)} {shlex.quote(version)}"
             if checkout_ref:
                 build_cmd += f" {shlex.quote(checkout_ref)}"
                 if commit:
@@ -1463,7 +1464,7 @@ class StackDeployer:
             # Pass absolute repo_path to avoid path computation mismatch
             # Script format: deploy-service.sh [--qa] <folder> <version> [branch/tag]
             qa_flag = "--qa " if qa else ""
-            deploy_cmd = f"cd {_shell_quote_path(scripts_path)} && bash deploy-service.sh {qa_flag}{_shell_quote_path(repo_path)} {shlex.quote(deploy_version)}"
+            deploy_cmd = f"cd {_shell_quote_path(scripts_path)} && {registry_env_prefix(self.config.registry_url)}bash deploy-service.sh {qa_flag}{_shell_quote_path(repo_path)} {shlex.quote(deploy_version)}"
             if checkout_ref:
                 deploy_cmd += " " + shlex.quote(checkout_ref)
 
@@ -1541,7 +1542,7 @@ class StackDeployer:
             repo_path = f"{repos_path}/{repo_name}"
 
             # Script format: test.sh <folder> [branch/tag] [commit]
-            test_cmd = f"cd {_shell_quote_path(scripts_path)} && bash test.sh {_shell_quote_path(repo_path)}"
+            test_cmd = f"cd {_shell_quote_path(scripts_path)} && {registry_env_prefix(self.config.registry_url)}bash test.sh {_shell_quote_path(repo_path)}"
             if checkout_ref:
                 test_cmd += f" {shlex.quote(checkout_ref)}"
                 if commit:
@@ -1675,7 +1676,7 @@ class StackDeployer:
             logger.info("No services found for stack", stack=stack_name, repo=repo_name, cmd=cmd)
             return False, None
 
-        registry = self.config.registry_url or ""
+        registry = normalize_registry_host(self.config.registry_url)
         images = [img.strip() for img in output.strip().split('\n') if img.strip()]
         logger.info("Found services for stack", stack=stack_name, repo=repo_name, image_count=len(images), registry=registry, images=images[:5])
         fallback_tag = None
@@ -1737,7 +1738,7 @@ class StackDeployer:
             logger.warning("docker service ls failed for bulk query", output=output[:200] if output else "")
             return prod_result, qa_result
 
-        registry = self.config.registry_url or ""
+        registry = normalize_registry_host(self.config.registry_url)
 
         # Build map: stack_name -> list of images
         # We match services to stacks using known stack names from repos

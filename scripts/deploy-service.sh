@@ -48,7 +48,13 @@ set -e
 # ============================================================================
 # Configuration
 # ============================================================================
-REGISTRY="registry.methodinfo.fr"
+# Registry host the images are pushed to / pulled from (no scheme). PulsarCD
+# passes its configured registry (PULSARCD_GITHUB__REGISTRY_URL) as REGISTRY;
+# the default keeps standalone runs working as before.
+REGISTRY="${REGISTRY:-registry.methodinfo.fr}"
+REGISTRY="${REGISTRY#http://}"
+REGISTRY="${REGISTRY#https://}"
+REGISTRY="${REGISTRY%/}"
 DEVOPS_FOLDER="devops"
 COMPOSE_FILE="docker-compose.swarm.yml"
 PRE_SCRIPT="docker-compose.pre.sh"
@@ -665,7 +671,7 @@ grep -E "^\s+image:" "$DEPLOY_COMPOSE" | \
     sed 's/"//g' | \
     sed "s/'//g" | \
     tr -d ' ' | \
-    sed "s/\${DOCKER_REGISTRY_URL}/${REGISTRY}/g" | \
+    sed "s|\${DOCKER_REGISTRY_URL}|${REGISTRY}|g" | \
     grep "^${REGISTRY}/" | \
     while read -r img; do
         RESOLVED_IMG=$(resolve_image_name "$img" "$VERSION")
@@ -683,7 +689,7 @@ IMAGES=$(grep -E "^\s+image:" "$DEPLOY_COMPOSE" | \
     sed 's/"//g' | \
     sed "s/'//g" | \
     tr -d ' ' | \
-    sed "s/\${DOCKER_REGISTRY_URL}/${REGISTRY}/g" | \
+    sed "s|\${DOCKER_REGISTRY_URL}|${REGISTRY}|g" | \
     grep "^${REGISTRY}/" || true)
 
 for img in $IMAGES; do

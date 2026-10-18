@@ -18,7 +18,8 @@ BASH = str(GIT_BASH) if GIT_BASH.exists() else shutil.which("bash")
 
 @unittest.skipUnless(BASH, "Bash is required")
 class BuildPushTests(unittest.TestCase):
-    def run_build(self, *, existing="", failure="", platforms="", no_cache=False, tag_status=2):
+    def run_build(self, *, existing="", failure="", platforms="", no_cache=False, tag_status=2,
+                  registry=None):
         self.assertTrue(SCRIPT.is_file(), f"Build script missing from test environment: {SCRIPT}")
         with tempfile.TemporaryDirectory(prefix="build push ") as directory:
             root = Path(directory)
@@ -100,6 +101,12 @@ exit 0
             env.update(DOCKER_LOG=log.as_posix(), EXISTING_IMAGE=existing,
                        FAIL_COMMAND=failure, BUILD_PLATFORMS=platforms,
                        STUB_TAG_STATUS=str(tag_status))
+            # The registry comes from the environment (PulsarCD exports it);
+            # without it the script must keep its historical default.
+            for name in ("REGISTRY", "REGISTRY_URL", "DOCKER_REGISTRY_URL"):
+                env.pop(name, None)
+            if registry is not None:
+                env["REGISTRY"] = registry
             # Add stubs inside Bash so Git Bash receives a POSIX PATH.
             command = 'export PATH="$(cd "$1" && pwd):$PATH"; cd "$2"; bash "$3" "$PWD" 1.2.3 "" "" "$4"'
             result = subprocess.run(
@@ -131,6 +138,16 @@ exit 0
                        "registry.methodinfo.fr/speech:rocm-1.2.3"], calls)
         self.assertIn(["tag", "registry.methodinfo.fr/web:latest",
                        "registry.methodinfo.fr/web:1.2.3"], calls)
+
+    def test_registry_from_environment_replaces_default(self):
+        result, calls = self.run_build(registry="https://registry.example.com:5000/")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Registry: registry.example.com:5000", result.stdout)
+        bake, = [c for c in calls if c[:2] == ["buildx", "bake"]]
+        self.assertIn("tts-server.tags=registry.example.com:5000/speech:cuda-arm64", bake)
+        self.assertIn(["tag", "registry.example.com:5000/web:latest",
+                       "registry.example.com:5000/web:1.2.3"], calls)
+        self.assertFalse(any("registry.methodinfo.fr" in arg for c in calls for arg in c))
 
     def test_existing_rocm_release_does_not_skip_arm(self):
         result, calls = self.run_build(existing="registry.methodinfo.fr/speech:rocm-1.2.3")
