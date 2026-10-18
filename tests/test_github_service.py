@@ -472,6 +472,109 @@ class TestTagsAndVersions:
         svc2, _ = _service(_tags_handler([]))
         assert await svc2.get_latest_tag("o", "r") is None
 
+    async def test_next_version_uses_highest_of_unordered_tags(self):
+        """GitHub does not list tags in version order: the first one is not the latest."""
+        tags = [_tag("v1.2.3", "a"), _tag("v1.10.0", "b"), _tag("1.9.7", "c"), _tag("v2.0.1", "d"),
+                _tag("v1.99.99", "e")]
+        svc, _ = _service(_tags_handler(tags))
+        assert await svc.get_next_version("o", "r") == "2.0.2"
+        assert await svc.get_latest_tag("o", "r") == "v2.0.1"
+
+    @pytest.mark.parametrize("names,expected", [
+        (["latest", "v1.4.2"], "1.4.3"),
+        (["release-3", "v1.2", "1.0.7", "nightly"], "1.0.8"),
+        (["v2.0.0-rc1", "v1.9.9", "1.9.10+build"], "1.9.10"),
+        (["latest", "v1.2"], "1.0.0"),
+    ])
+    async def test_next_version_ignores_non_release_tags(self, names, expected):
+        svc, _ = _service(_tags_handler([_tag(n, f"s{i}") for i, n in enumerate(names)]))
+        assert await svc.get_next_version("o", "r") == expected
+
+    async def test_latest_tag_falls_back_to_first_tag_without_releases(self):
+        svc, _ = _service(_tags_handler([_tag("latest", "s0"), _tag("v1.2", "s1")]))
+        assert await svc.get_latest_tag("o", "r") == "latest"
+
+    async def test_next_version_reads_every_page_of_tags(self):
+        # 250 tags: the highest release only appears on the third page.
+        tags = [_tag(f"v1.0.{i}", f"s{i}") for i in range(249)] + [_tag("v3.0.0", "top")]
+        pages = []
+
+        def handler(method, url, kwargs):
+            assert url.endswith("/tags")
+            params = kwargs["params"]
+            pages.append(params["page"])
+            start = (params["page"] - 1) * params["per_page"]
+            return FakeResponse(200, tags[start:start + params["per_page"]])
+
+        svc, session = _service(handler)
+        assert await svc.get_next_version("o", "r") == "3.0.1"
+        assert pages == [1, 2, 3]
+        assert all(kw["params"]["per_page"] == 100 for _, _, kw in session.calls)
+        # The listing is cached, and create_tag drops it with the other tag caches
+        assert await svc.get_next_version("o", "r") == "3.0.1"
+        assert pages == [1, 2, 3]
+        svc.invalidate_repo_cache("o", "r")
+        assert "o/r/all" not in svc._tags_cache
+
+    async def test_tag_pagination_is_capped(self, monkeypatch):
+        monkeypatch.setattr(gh, "VERSION_TAGS_MAX_PAGES", 3)
+        pages = []
+
+        def handler(method, url, kwargs):
+            pages.append(kwargs["params"]["page"])
+            return FakeResponse(200, [_tag(f"v1.{kwargs['params']['page']}.{i}", "s") for i in range(100)])
+
+        svc, _ = _service(handler)
+        assert await svc.get_next_version("o", "r") == "1.3.100"
+        assert pages == [1, 2, 3]
+
+    async def test_next_version_api_error_serves_stale_listing(self):
+        responses = iter([FakeResponse(200, [_tag("v1.4.2", "s")]), FakeResponse(500, None, text="boom")])
+        svc, _ = _service(lambda *a: next(responses))
+        assert await svc.get_next_version("o", "r") == "1.4.3"
+        TestRateLimit._expire(svc._tags_cache)
+        assert await svc.get_next_version("o", "r") == "1.4.3"
+
+    async def test_untagged_commits_latest_tag_is_highest_release(self):
+        commits = [_commit("c2"), _commit("c1")]
+
+        def handler(method, url, kwargs):
+            if url.endswith("/commits"):
+                return FakeResponse(200, commits)
+            return _tags_handler([_tag("latest", "c1"), _tag("v1.0.9", "c0"), _tag("v1.0.10", "c1")])(
+                method, url, kwargs)
+
+        svc, _ = _service(handler)
+        result = await svc.get_untagged_commits("o", "r", limit=2)
+        assert result["latest_tag"]["name"] == "v1.0.10"
+
+    async def test_untagged_commits_latest_tag_is_the_tag_on_the_branch(self):
+        """A higher release on another branch must not label HEAD's build."""
+        commits = [_commit("head"), _commit("older")]
+
+        def handler(method, url, kwargs):
+            if url.endswith("/commits"):
+                return FakeResponse(200, commits)
+            return _tags_handler([_tag("v2.0.0", "hotfix"), _tag("v1.4.3", "head")])(method, url, kwargs)
+
+        svc, _ = _service(handler)
+        result = await svc.get_untagged_commits("o", "r", limit=2)
+        assert result["untagged_commits"] == []
+        assert result["latest_tag"]["name"] == "v1.4.3"
+
+    async def test_untagged_commits_without_tagged_commit_uses_highest_release(self):
+        commits = [_commit("c2"), _commit("c1")]
+
+        def handler(method, url, kwargs):
+            if url.endswith("/commits"):
+                return FakeResponse(200, commits)
+            return _tags_handler([_tag("v1.0.9", "x"), _tag("v1.0.10", "y")])(method, url, kwargs)
+
+        svc, _ = _service(handler)
+        result = await svc.get_untagged_commits("o", "r", limit=2)
+        assert len(result["untagged_commits"]) == 2
+        assert result["latest_tag"]["name"] == "v1.0.10"
+
     async def test_tags_result_shape(self):
         svc, _ = _service(_tags_handler(
             [_tag("v1.0.1", "s1"), _tag("v1.0.0", "s0")],
