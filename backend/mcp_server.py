@@ -483,7 +483,8 @@ async def test_stack(
                 action.status = "cancelled"
             status = "success" if result.get("success") else "failed"
             _set_pipeline(repo_name, "test", status, resolved_version, test_id=action_id, log_lines=action.output_lines)
-            if not result.get("success"):
+            # A cancelled test is the operator's doing, not an incident to investigate.
+            if not result.get("success") and not action.cancel_event.is_set():
                 await _notify_agent_failure("test", repo_name, resolved_version, result.get("output", ""))
         except Exception as e:
             action.status = "failed"

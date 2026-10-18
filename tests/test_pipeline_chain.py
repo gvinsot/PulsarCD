@@ -920,6 +920,22 @@ class TestCancelAction:
         assert _legacy(env)["stages"]["test"]["status"] == "failed"
         env.llm.handle_failure.assert_not_awaited()
 
+    async def test_cancelled_mcp_test_is_not_reported_as_an_incident(self, env, monkeypatch):
+        import json
+        from backend import mcp_server
+        monkeypatch.setattr(api, "github_service", MagicMock(is_configured=MagicMock(return_value=True)))
+        monkeypatch.setattr(mcp_server, "_resolve_repo", AsyncMock(return_value=("owner", "git@x:owner/app.git")))
+        monkeypatch.setattr(mcp_server, "_get_deployer_and_host", lambda: (env.deployer, "manager-1"))
+        env.deployer.cancel_test = True
+        env.deployer.test_ok = False
+        resp = json.loads(await mcp_server.test_stack(repo_name="app"))
+        action = api._background_actions[resp["action_id"]]
+        await asyncio.wait_for(action.task, timeout=5)
+
+        assert action.status == "cancelled"
+        assert _legacy(env)["stages"]["test"]["status"] == "failed"
+        env.llm.handle_failure.assert_not_awaited()
+
     def test_cancel_finished_action_is_refused(self, client, auth_headers, env):
         action = api.BackgroundAction("done1234", "build", "app")
         action.status = "completed"
