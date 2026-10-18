@@ -401,12 +401,15 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
                 qa_action.result = qa_result
                 qa_action.status = "completed" if qa_result.get("success") else "failed"
 
-                if not qa_result.get("success"):
+                if not qa_result.get("success") or qa_action.cancel_event.is_set():
+                    qa_result["success"] = False
+                    qa_action.status = "cancelled" if qa_action.cancel_event.is_set() else "failed"
                     _set_pipeline(repo_name, "qa", "failed", built_version,
                                   build_id=build_id, test_id=test_id, qa_id=qa_id, deploy_id=None,
                                   log_lines=qa_action.output_lines)
                     logger.warning("Pipeline: QA deploy failed", repo=repo_name)
-                    await _notify_agent_failure("qa", repo_name, built_version or "", qa_result.get("output", ""))
+                    if not qa_action.cancel_event.is_set():
+                        await _notify_agent_failure("qa", repo_name, built_version or "", qa_result.get("output", ""))
                     return
 
                 _set_pipeline(repo_name, "qa", "success", built_version,

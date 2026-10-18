@@ -26,7 +26,7 @@ class FakeDeployer:
 
     def __init__(self, *, buildable=True, build_ok=True, test_ok=True, qa_ok=True,
                  deploy_ok=True, build_output=None, test_error=None, hold_build=None,
-                 cancel_test=False):
+                 cancel_test=False, cancel_qa=False):
         self.buildable = buildable
         self.build_ok = build_ok
         self.test_ok = test_ok
@@ -36,6 +36,7 @@ class FakeDeployer:
         self.test_error = test_error
         self.hold_build = hold_build  # asyncio.Event the build waits on
         self.cancel_test = cancel_test
+        self.cancel_qa = cancel_qa
         self.calls = []
 
     def stages(self):
@@ -60,7 +61,8 @@ class FakeDeployer:
             output_callback(line)
         return {"success": self.build_ok, "output": "\n".join(self.build_output)}
 
-    async def test(self, repo_name, ssh_url, tag=None, output_callback=None, cancel_event=None):
+    async def test(self, repo_name, ssh_url, tag=None, output_callback=None, cancel_event=None,
+                   branch=None, commit=None):
         self.calls.append(("test", {"tag": tag}))
         if self.test_error:
             raise self.test_error
@@ -74,6 +76,9 @@ class FakeDeployer:
         stage = "qa" if qa else "deploy"
         self.calls.append((stage, {"version": version, "tag": tag, "qa": qa}))
         output_callback(f"{stage} done")
+        if qa and self.cancel_qa:
+            cancel_event.set()
+            return {"success": False, "output": "Command cancelled"}
         ok = self.qa_ok if qa else self.deploy_ok
         return {"success": ok, "output": f"{stage} output"}
 
@@ -474,6 +479,15 @@ class TestQaStage:
         assert (legacy["stage"], legacy["status"]) == ("qa", "failed")
         assert env.llm.handle_failure.await_args.args[0] == "qa"
         assert _actions_by_type()["qa-deploy"].status == "failed"
+
+    async def test_cancelled_qa_is_not_reported_as_an_incident(self, env):
+        self._enable_qa(env, qd_mode="auto")
+        env.deployer.cancel_qa = True
+        await _run()
+        assert env.deployer.stages() == ["build", "test", "qa"]
+        assert (_legacy(env)["stage"], _legacy(env)["status"]) == ("qa", "failed")
+        assert _actions_by_type()["qa-deploy"].status == "cancelled"
+        env.llm.handle_failure.assert_not_awaited()
 
     async def test_agent_rejects_after_qa_records_one_decision(self, env):
         self._enable_qa(env, qd_mode="agent")
@@ -892,6 +906,35 @@ class TestCancelAction:
         assert (legacy["stage"], legacy["status"]) == (stage, "failed")
         assert legacy["stages"][stage]["status"] == "failed"
         assert legacy[id_key] == action.id
+
+    async def test_cancelled_standalone_test_is_not_reported_as_an_incident(self, env, monkeypatch):
+        from backend.routes import actions
+        monkeypatch.setattr(api, "github_service", MagicMock(is_configured=MagicMock(return_value=True)))
+        env.deployer.cancel_test = True
+        env.deployer.test_ok = False
+        resp = await actions.test_stack(repo_name="app", ssh_url="", branch=None, tag=None, commit=None)
+        action = api._background_actions[resp["action_id"]]
+        await asyncio.wait_for(action.task, timeout=5)
+
+        assert action.status == "cancelled"
+        assert _legacy(env)["stages"]["test"]["status"] == "failed"
+        env.llm.handle_failure.assert_not_awaited()
+
+    async def test_cancelled_mcp_test_is_not_reported_as_an_incident(self, env, monkeypatch):
+        import json
+        from backend import mcp_server
+        monkeypatch.setattr(api, "github_service", MagicMock(is_configured=MagicMock(return_value=True)))
+        monkeypatch.setattr(mcp_server, "_resolve_repo", AsyncMock(return_value=("owner", "git@x:owner/app.git")))
+        monkeypatch.setattr(mcp_server, "_get_deployer_and_host", lambda: (env.deployer, "manager-1"))
+        env.deployer.cancel_test = True
+        env.deployer.test_ok = False
+        resp = json.loads(await mcp_server.test_stack(repo_name="app"))
+        action = api._background_actions[resp["action_id"]]
+        await asyncio.wait_for(action.task, timeout=5)
+
+        assert action.status == "cancelled"
+        assert _legacy(env)["stages"]["test"]["status"] == "failed"
+        env.llm.handle_failure.assert_not_awaited()
 
     def test_cancel_finished_action_is_refused(self, client, auth_headers, env):
         action = api.BackgroundAction("done1234", "build", "app")
