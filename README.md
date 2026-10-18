@@ -356,10 +356,12 @@ pulsarcd/
 ├── frontend/
 │   ├── index.html          # Main HTML page
 │   └── static/
-│       ├── css/
-│       │   └── style.css   # Styles (Deep Ocean theme)
+│       ├── css/            # Styles (Deep Ocean theme), one sheet per area,
+│       │                   #   linked in cascade order by index.html
 │       └── js/
-│           └── app.js      # Frontend JavaScript
+│           ├── core/       # Shared plumbing: CSP helpers, utils, state, API, auth, navigation
+│           ├── views/      # One classic script per view or modal family
+│           └── app.js      # Global key bindings and the UI_HANDLERS registry (loads last)
 ├── devops/
 │   └── docker-compose.swarm.yml  # Docker Swarm deployment (backend + agents, global)
 ├── docker-compose.yml          # Central server deployment (dev/single host)

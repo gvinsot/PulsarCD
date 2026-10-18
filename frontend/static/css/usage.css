@@ -1,0 +1,106 @@
+/* ============== Usage View ============== */
+/* Tables, cards and the error banner are shared with the Security view: the
+   two read the same access index and look alike on purpose. Only what is
+   particular to usage lives here. */
+
+.stat-sub {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    margin-left: 4px;
+}
+
+.usage-stack-row {
+    cursor: pointer;
+}
+
+.usage-stack-name {
+    font-weight: 500;
+}
+
+/* A stack name in an endpoint row: it filters the view, like the row above. */
+.usage-stack-tag {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.usage-stack-tag:hover {
+    color: var(--accent-secondary);
+}
+
+.usage-unattributed {
+    color: var(--text-muted);
+    cursor: help;
+}
+
+.usage-method {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-right: 5px;
+}
+
+.usage-breakdowns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 28px;
+}
+
+.usage-breakdown-title {
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin: 0 0 8px;
+}
+
+.usage-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.usage-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    font-size: 0.78rem;
+    white-space: nowrap;
+}
+
+.usage-chip .usage-chip-count {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.usage-chip-2xx { box-shadow: inset 3px 0 0 var(--status-success); }
+.usage-chip-4xx { box-shadow: inset 3px 0 0 var(--status-warning); }
+.usage-chip-5xx { box-shadow: inset 3px 0 0 var(--status-error); }
+
+/* The busiest rows read as a bar chart without one: a tinted background whose
+   width is the row's share of the window. */
+.usage-bar-cell {
+    position: relative;
+}
+
+.usage-bar {
+    position: absolute;
+    left: 0;
+    top: 2px;
+    bottom: 2px;
+    background: rgba(88, 166, 255, 0.14);
+    border-radius: 2px;
+    pointer-events: none;
+}
+
+.usage-bar-cell > span {
+    position: relative;
+}
+

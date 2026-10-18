@@ -16,10 +16,10 @@ from fastapi import Request
 # Content-Security-Policy sources, kept in sync with frontend/index.html:
 #   * scripts: files only.  Chart.js and xterm come from jsdelivr, pinned by
 #     their integrity hashes.  There is no 'unsafe-inline': the markup carries
-#     no inline script and no on* attribute, app.js wires every handler itself;
+#     no inline script and no on* attribute, the scripts wire every handler;
 #   * styles: files only, style="" attributes included.  The single exception
 #     is the <style> elements xterm's DOM renderer creates at run time, which
-#     app.js stamps with the page's nonce (see serve_frontend);
+#     core/csp.js stamps with the page's nonce (see serve_frontend);
 #   * fonts: self-hosted under /static/fonts;
 #   * images: the inline data: favicon.
 # Anything not listed falls back to default-src 'self'.  The Google sign-in

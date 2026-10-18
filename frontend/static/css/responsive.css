@@ -1,0 +1,669 @@
+/* Responsive */
+@media (max-width: 1200px) {
+    .charts-grid {
+        grid-template-columns: 1fr;
+        grid-template-rows: repeat(4, 1fr);
+    }
+}
+
+@media (max-width: 768px) {
+    /* Allow body scroll on mobile */
+    body {
+        overflow: auto;
+    }
+    
+    /* Hide desktop nav on mobile, logo-icon becomes the menu toggle */
+    .nav {
+        display: none;
+    }
+
+    .logo-icon {
+        cursor: pointer;
+        transition: transform 0.25s ease, box-shadow 0.25s ease;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    .logo-icon:active {
+        transform: scale(0.9);
+    }
+
+    .logo-icon.menu-open {
+        box-shadow: 0 0 0 3px var(--accent-primary), 0 10px 15px -3px rgba(99, 102, 241, 0.3);
+        transform: rotate(15deg);
+    }
+
+    .connection-status .status-text {
+        display: none;
+    }
+
+    /* Logo adjustment */
+    .logo {
+        padding: 0;
+    }
+
+    .logo-subtitle {
+        display: none;
+    }
+
+    /* Main content - full width with scroll */
+    .main-content {
+        padding: 10px;
+        width: 100%;
+        overflow-y: auto;
+        overflow-x: hidden;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .view-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .view-header h1 {
+        font-size: 1.5rem;
+    }
+
+    .header-actions {
+        width: 100%;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    /* Stats grid - horizontal scroll */
+    .stats-grid {
+        display: flex;
+        overflow-x: auto;
+        gap: 10px;
+        margin-bottom: 12px;
+        padding-bottom: 6px;
+        -webkit-overflow-scrolling: touch;
+        scroll-snap-type: x mandatory;
+    }
+
+    .stat-card {
+        flex: 0 0 160px;
+        scroll-snap-align: start;
+        padding: 16px;
+    }
+
+    .stat-icon {
+        width: 40px;
+        height: 40px;
+    }
+
+    .stat-icon svg {
+        width: 20px;
+        height: 20px;
+    }
+
+    .stat-value {
+        font-size: 1.4rem;
+    }
+
+    .stat-label {
+        font-size: 0.75rem;
+    }
+
+    /* Charts - vertical stack with fixed height */
+    .charts-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        flex: none;
+        overflow-y: auto;
+        padding-bottom: 12px;
+    }
+
+    .chart-card {
+        height: auto;
+        min-height: 0;
+        flex: none;
+        padding: 12px;
+    }
+
+    .chart-card h3 {
+        font-size: 0.8rem;
+        margin-bottom: 8px;
+    }
+
+    .chart-wrapper {
+        height: 140px;
+        min-height: 140px;
+    }
+
+    /* Container view */
+    #containers-view .view-header {
+        padding-bottom: 8px;
+    }
+
+    .filter-group {
+        flex: 1;
+        min-width: 120px;
+    }
+
+    .filter-group select {
+        width: 100%;
+    }
+
+    /* Container items - stack vertically */
+    .container-item {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        padding: 12px;
+    }
+
+    .container-info {
+        width: 100%;
+    }
+
+    .container-stats-mini {
+        width: 100%;
+        justify-content: flex-start;
+    }
+
+    .stat-mini {
+        flex: 1;
+        min-width: auto;
+        justify-content: center;
+    }
+
+    .stat-mini:last-child {
+        min-width: auto;
+    }
+
+    .container-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+
+    /* Host header */
+    .host-header {
+        flex-wrap: wrap;
+        padding: 12px 16px;
+    }
+
+    .host-name {
+        font-size: 1rem;
+    }
+
+    /* Pipeline: wrap to its own row on tablet */
+    .host-header-actions {
+        flex-wrap: wrap;
+    }
+
+    .pipeline-flow {
+        order: 99;
+        width: 100%;
+        margin-left: 0;
+        margin-top: 6px;
+    }
+
+    .pipeline-step {
+        min-height: 32px;
+    }
+
+    .compose-header {
+        padding: 10px 16px;
+        font-size: 0.85rem;
+    }
+
+    /* Logs view */
+    .search-panel {
+        padding: 12px;
+    }
+
+    .search-row {
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 12px;
+    }
+
+    .search-input {
+        padding: 14px 14px 14px 44px;
+        font-size: 16px; /* Prevents iOS zoom */
+    }
+
+    .filters-row {
+        display: none; /* Hide advanced filters on mobile */
+    }
+
+    /* Logs table - card view on mobile */
+    .logs-table {
+        display: block;
+    }
+
+    .logs-table thead {
+        display: none;
+    }
+
+    .logs-table tbody {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 8px;
+    }
+
+    .logs-table tr {
+        display: flex;
+        flex-direction: column;
+        background: var(--bg-tertiary);
+        border-radius: var(--radius-md);
+        padding: 12px;
+        border: 1px solid var(--border-color);
+        border-left-width: 3px;
+    }
+
+    .logs-table tr.log-row-error {
+        border-left-color: var(--status-error);
+    }
+
+    .logs-table tr.log-row-warning {
+        border-left-color: var(--status-warning);
+    }
+
+    .logs-table td {
+        display: block;
+        padding: 4px 0;
+        border: none;
+    }
+
+    .logs-table td.col-time {
+        font-size: 0.7rem;
+        order: 1;
+    }
+
+    .logs-table td.col-source {
+        order: 2;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .logs-table td.col-level {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+    }
+
+    .logs-table td.col-message {
+        order: 3;
+        white-space: normal;
+        word-break: break-word;
+        max-width: none;
+        padding-top: 8px;
+        font-size: 0.85rem;
+        line-height: 1.5;
+    }
+
+    .logs-table tr {
+        position: relative;
+    }
+
+    /* Pagination */
+    .pagination {
+        padding: 12px;
+        gap: 8px;
+    }
+
+    #page-info {
+        font-size: 0.8rem;
+    }
+
+    /* Modal - full screen on mobile */
+    .modal {
+        padding: 0;
+    }
+
+    .modal-content,
+    .modal-content.modal-fullscreen {
+        max-width: 100%;
+        width: 100%;
+        max-height: 100vh;
+        height: 100vh;
+        border-radius: 0;
+    }
+
+    .modal-header {
+        padding: 12px 16px;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .modal-title-section {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .modal-header h2 {
+        font-size: 1rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .modal-header-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .modal-header-actions .btn {
+        padding: 6px 10px;
+        font-size: 0.75rem;
+    }
+
+    .modal-header-actions .btn span:not(.btn-icon) {
+        display: none;
+    }
+
+    .modal-close {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+    }
+
+    .modal-tabs {
+        padding: 8px 12px;
+        gap: 2px;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .tab-btn {
+        padding: 8px 12px;
+        font-size: 0.85rem;
+        white-space: nowrap;
+    }
+
+    .modal-body {
+        padding: 12px;
+        flex: 1;
+        overflow: auto;
+    }
+
+    /* Logs toolbar in modal */
+    .logs-toolbar {
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .logs-toolbar-left,
+    .logs-toolbar-right {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
+    .logs-filter-input {
+        width: 100%;
+    }
+
+    .logs-filter-input:focus {
+        width: 100%;
+    }
+
+    /* Log viewer */
+    .log-viewer {
+        font-size: 0.75rem;
+    }
+
+    .log-line {
+        padding: 8px 12px;
+        flex-direction: column;
+        gap: 4px;
+        white-space: normal;
+    }
+
+    .log-line .log-timestamp {
+        font-size: 0.65rem;
+    }
+
+    .log-message-truncate {
+        white-space: normal;
+        word-break: break-word;
+    }
+
+    /* Container log expand */
+    .container-log-expand {
+        padding: 10px 12px;
+    }
+
+    .container-log-expand .log-analysis {
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .container-log-expand .analysis-item {
+        width: 100%;
+        min-width: auto;
+    }
+
+    /* Env tab */
+    .env-toolbar {
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .env-toolbar input {
+        width: 100%;
+    }
+
+    .env-row {
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .env-row .env-key {
+        min-width: auto;
+        font-size: 0.75rem;
+    }
+
+    .env-row .env-value {
+        font-size: 0.8rem;
+    }
+
+    /* Info tab */
+    .info-row {
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .info-row .label {
+        min-width: auto;
+        font-size: 0.8rem;
+    }
+
+    .info-row .value {
+        font-size: 0.85rem;
+    }
+
+    /* Stats tab */
+    .stat-row {
+        padding: 10px 12px;
+    }
+
+    /* Modal footer */
+    .modal-footer {
+        padding: 12px 16px;
+    }
+
+    /* Recent queries */
+    .recent-query-item {
+        max-width: 200px;
+        font-size: 0.75rem;
+    }
+
+    /* AI panel */
+    .ai-search-info {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .ai-badge {
+        font-size: 0.7rem;
+    }
+
+    /* Generated query panel */
+    .generated-query-panel {
+        padding: 8px 10px;
+    }
+
+    .query-json-editor {
+        font-size: 0.75rem;
+    }
+
+    /* Log expand content */
+    .log-expand-content {
+        padding: 12px;
+    }
+
+    .log-analysis {
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .analysis-item {
+        width: 100%;
+        min-width: auto;
+    }
+
+    .analysis-item.ai-assessment {
+        min-width: auto;
+    }
+}
+
+/* Small mobile (< 480px) */
+@media (max-width: 480px) {
+    .stat-card {
+        flex: 0 0 140px;
+        padding: 12px;
+        gap: 10px;
+    }
+
+    .stat-icon {
+        width: 36px;
+        height: 36px;
+    }
+
+    .stat-value {
+        font-size: 1.2rem;
+    }
+
+    .view-header h1 {
+        font-size: 1.25rem;
+    }
+
+    .chart-card {
+        height: auto;
+        min-height: 0;
+        padding: 10px;
+    }
+
+    .chart-card h3 {
+        font-size: 0.75rem;
+        margin-bottom: 6px;
+    }
+
+    .chart-wrapper {
+        height: 120px;
+        min-height: 120px;
+    }
+
+    .container-stats-mini {
+        flex-wrap: wrap;
+    }
+
+    .stat-mini {
+        flex: 1 1 45%;
+        min-width: 70px;
+    }
+
+    .host-header-actions .btn span {
+        display: none;
+    }
+
+    /* Pipeline: full-width row below action buttons on mobile */
+    .host-header-actions {
+        flex-wrap: wrap;
+    }
+
+    .pipeline-flow {
+        order: 99;
+        width: 100%;
+        justify-content: stretch;
+        gap: 6px;
+        margin-left: 0;
+        margin-top: 8px;
+    }
+
+    .pipeline-step {
+        flex: 1;
+        justify-content: center;
+        min-height: 44px;
+        padding: 8px 6px;
+        font-size: 0.75rem;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: var(--radius-md);
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    /* Make idle steps look tappable */
+    .pipeline-step.step-idle {
+        border: 1px dashed rgba(255, 255, 255, 0.2);
+        background: rgba(255, 255, 255, 0.04);
+    }
+
+    /* Active press feedback for mobile */
+    .pipeline-step:active {
+        transform: scale(0.95);
+        filter: brightness(0.9);
+    }
+
+    /* Keep step labels visible on mobile */
+    .pipeline-flow .pipeline-step span {
+        display: inline;
+    }
+
+    /* Hide version step entirely to save space on mobile */
+    .pipeline-flow .pipeline-step:first-child {
+        display: none;
+    }
+
+    .pipeline-arrow {
+        display: none;
+    }
+
+    .pipeline-transition-btn {
+        display: none;
+    }
+
+    .pipeline-log-btn {
+        display: none;
+    }
+
+    .activity-layout {
+        flex-direction: column;
+    }
+
+    .activity-diff-panel {
+        width: 100%;
+        min-width: unset;
+        border-left: none;
+        border-top: 1px solid var(--border-color);
+        max-height: 50%;
+    }
+
+    .activity-row-meta {
+        display: none;
+    }
+
+    .modal-header-actions {
+        justify-content: flex-end;
+    }
+    
+    /* Hide group stats on very small screens */
+    .group-stat {
+        display: none;
+    }
+}
+

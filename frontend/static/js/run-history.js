@@ -1,8 +1,8 @@
 /* Pipeline run history (Stacks view > History).
  *
  * Self-contained: it wires its own listeners on [data-run-history] elements
- * instead of going through app.js's UI_HANDLERS, and only borrows app.js's
- * apiGet() and escapeHtml() at call time. Log content is only ever inserted
+ * instead of going through app.js's UI_HANDLERS, and only borrows apiGet()
+ * (core/api.js) and escapeHtml() (core/utils.js) at call time. Log content is only ever inserted
  * as text, never as markup.
  */
 (function () {
