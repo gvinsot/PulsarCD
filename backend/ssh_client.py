@@ -3,7 +3,6 @@
 import asyncio
 import json
 import os
-import re
 import shlex
 import socket
 from datetime import datetime

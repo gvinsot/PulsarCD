@@ -24,6 +24,16 @@ from .registry import normalize_registry_host
 
 logger = structlog.get_logger()
 
+# Accept every manifest type build-push.sh can publish (single-arch Docker or
+# OCI images and multi-arch indexes), so Docker-Content-Digest is the digest
+# of the manifest the tag really points to, for comparison and for DELETE.
+_MANIFEST_ACCEPT = ", ".join([
+    "application/vnd.docker.distribution.manifest.v2+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+    "application/vnd.oci.image.manifest.v1+json",
+    "application/vnd.oci.image.index.v1+json",
+])
+
 
 class TagCleaner:
     """Handles discovery and deletion of expired tags and registry images."""
@@ -243,6 +253,13 @@ class TagCleaner:
 
         We delete the full-version tag and the commit-sha tag.
 
+        The registry deletes a manifest by digest, which removes every tag
+        pointing at it. build-push.sh pushes the same image as :latest, the
+        minor alias and the version tags, and an unchanged service rebuilt
+        from cache keeps its digest across versions. So a digest that any
+        other tag still references (the deployed version, :latest, the minor
+        alias) is kept, and nothing is deleted if the tags cannot be listed.
+
         Returns:
             List of deleted image references (e.g. ["myapp/web:1.0.3"])
         """
@@ -262,16 +279,69 @@ class TagCleaner:
             return []
 
         # Match registry repos that start with the project stack name
-        from .github_service import GitHubService
-        stack_name = GitHubService._repo_to_stack_name(repo)
+        from .github_service import StackDeployer
+        stack_name = StackDeployer._repo_to_stack_name(repo)
         matching_repos = [r for r in catalog if r.startswith(f"{stack_name}/") or r == stack_name]
 
         deleted: List[str] = []
         for reg_repo in matching_repos:
+            digests = await self._registry_tag_digests(reg_repo)
+            if digests is None:
+                logger.warning("Registry tags could not be resolved, keeping images",
+                               repo=reg_repo, tags=tags_to_delete)
+                continue
+            kept_digests = {d for t, d in digests.items() if t not in tags_to_delete}
             for tag in tags_to_delete:
+                digest = digests.get(tag)
+                if not digest:
+                    continue  # tag not in this registry repo
+                if digest in kept_digests:
+                    shared = sorted(t for t, d in digests.items()
+                                    if d == digest and t not in tags_to_delete)
+                    logger.info("Registry image kept: digest shared with other tags",
+                                repo=reg_repo, tag=tag, shared_with=shared[:10])
+                    continue
                 if await self._delete_registry_tag(reg_repo, tag):
                     deleted.append(f"{reg_repo}:{tag}")
         return deleted
+
+    async def _registry_tag_digests(self, repo_name: str) -> Optional[Dict[str, str]]:
+        """Map every tag of a registry repository to its manifest digest.
+
+        Returns None when the tag list or any tag's digest cannot be read, so
+        the caller never deletes a digest it could not prove is unshared.
+        """
+        base = f"https://{self._registry_url}/v2/{repo_name}"
+        auth = None
+        if self._registry_user and self._registry_pass:
+            auth = aiohttp.BasicAuth(self._registry_user, self._registry_pass)
+        timeout = aiohttp.ClientTimeout(total=15)
+        try:
+            async with aiohttp.ClientSession(auth=auth) as session:
+                async with session.get(f"{base}/tags/list", timeout=timeout) as resp:
+                    if resp.status != 200:
+                        logger.warning("Registry tag list failed", repo=repo_name, status=resp.status)
+                        return None
+                    data = await resp.json()
+                digests: Dict[str, str] = {}
+                for tag in data.get("tags") or []:
+                    async with session.head(
+                        f"{base}/manifests/{tag}",
+                        headers={"Accept": _MANIFEST_ACCEPT},
+                        timeout=timeout,
+                    ) as resp:
+                        if resp.status == 404:
+                            continue  # deleted since the listing
+                        digest = resp.headers.get("Docker-Content-Digest")
+                        if resp.status != 200 or not digest:
+                            logger.warning("Registry manifest HEAD failed",
+                                           repo=repo_name, tag=tag, status=resp.status)
+                            return None
+                        digests[tag] = digest
+                return digests
+        except Exception as e:
+            logger.error("Failed to resolve registry tag digests", repo=repo_name, error=str(e))
+            return None
 
     async def _registry_list_repos(self) -> Optional[List[str]]:
         """List repositories in the Docker registry via GET /v2/_catalog."""
@@ -306,7 +376,7 @@ class TagCleaner:
         try:
             async with aiohttp.ClientSession(auth=auth) as session:
                 # Step 1: Get manifest digest
-                headers = {"Accept": "application/vnd.docker.distribution.manifest.v2+json"}
+                headers = {"Accept": _MANIFEST_ACCEPT}
                 async with session.get(
                     f"{base}/manifests/{tag}",
                     headers=headers,

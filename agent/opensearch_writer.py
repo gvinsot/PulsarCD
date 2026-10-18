@@ -342,7 +342,7 @@ class OpenSearchWriter:
         if not entries:
             return
 
-        actions = []
+        actions: List[Dict[str, Any]] = []
         access_actions = []
         for entry in entries:
             doc_id = self._generate_log_id(entry)

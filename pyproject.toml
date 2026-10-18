@@ -1,0 +1,70 @@
+# Static-check configuration only. PulsarCD is not packaged: dependencies stay
+# in requirements.txt / agent/requirements.txt and pytest settings in pytest.ini.
+# scripts/static-checks.sh runs these tools, and the Dockerfile "test" stage
+# runs that script, so a failure stops the test image build.
+
+[tool.ruff]
+target-version = "py311"
+src = [".", "backend", "agent", "shared"]
+extend-exclude = ["frontend", "docs", "devops"]
+
+[tool.ruff.lint]
+# Deliberately permissive: only rules that flag likely bugs, never style.
+#   F      pyflakes: undefined names, unused imports, bad format strings, ...
+#   E9     syntax / IO errors
+#   PLE    pylint errors (bad __all__, await outside async, ...)
+#   B006   mutable default argument
+#   B012   return/break/continue inside finally swallows the exception
+#   B015   comparison whose result is discarded (a missing assert)
+#   B017   assertRaises(Exception) / pytest.raises(Exception) that cannot fail
+#   B018   useless expression (a missing call or assignment)
+#   B025   duplicate except clause
+#   B033   duplicate value in a set literal
+#   E711/E712/E721  == None, == True, type(x) == T
+#   W605   invalid escape sequence (a SyntaxWarning, an error in future Pythons)
+select = [
+    "F", "E9", "PLE",
+    "B006", "B012", "B015", "B017", "B018", "B025", "B033",
+    "E711", "E712", "E721", "W605",
+]
+ignore = [
+    # Dead locals and placeholder-less f-strings are harmless; flagging them
+    # would only churn code other changes are touching.
+    "F841",
+    "F541",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# api.py is the file most changes touch at once; its few unused imports are
+# left for whoever next edits that import block, to avoid merge conflicts.
+"backend/api.py" = ["F401"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["backend", "agent", "shared"]
+# Most third-party packages used here (opensearch-py, asyncssh, paramiko,
+# apscheduler, zvec, ...) ship no stubs; treating them as Any is fine.
+ignore_missing_imports = true
+# Understands pydantic models (aliases with populate_by_name, field defaults).
+plugins = ["pydantic.mypy"]
+# The code base predates PEP 484's no-implicit-Optional rule.
+implicit_optional = true
+# Permissive baseline: these codes report Optional narrowing and loose
+# container annotations throughout the code base, almost never real bugs.
+# What stays enabled is what breaks at runtime: unknown attributes and names,
+# wrong call signatures, reading unbound variables, invalid types, ...
+disable_error_code = [
+    "annotation-unchecked",
+    "arg-type",
+    "assignment",
+    "dict-item",
+    "has-type",
+    "index",
+    "no-redef",
+    "operator",
+    "return",
+    "return-value",
+    "type-var",
+    "union-attr",
+    "var-annotated",
+]

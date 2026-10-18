@@ -1,6 +1,5 @@
 """Unit tests for context compaction in backend/llm_agent.py."""
 
-import pytest
 
 from backend.llm_agent import (
     _estimate_tokens,
