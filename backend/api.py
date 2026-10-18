@@ -95,8 +95,19 @@ from .routes.auth import (
     _login_attempts,
     _record_login_attempt,
 )
+from .routes.dashboard import (
+    get_dashboard_stats,
+    get_recurring_errors,
+    get_system_errors,
+)
+from .routes.usage import (
+    _get_router_stacks,
+)
 from .routes import auth as auth_routes
 from .routes import admin as admin_routes
+from .routes import dashboard as dashboard_routes
+from .routes import security as security_routes
+from .routes import usage as usage_routes
 try:
     from .mcp_server import mcp_read, mcp_actions, get_mcp_read_app, get_mcp_actions_app
     from .mcp_auth import MCPAuthMiddleware
@@ -483,305 +494,13 @@ app.include_router(admin_routes.router)
 app.include_router(notifications_router)
 
 
-# ============== Dashboard ==============
-
-@app.get("/api/dashboard/stats", response_model=DashboardStats)
-async def get_dashboard_stats():
-    """Get dashboard statistics."""
-    stats = await opensearch.get_dashboard_stats()
-    
-    # Add container counts
-    containers = await collector.get_all_containers()
-    stats.total_containers = len(containers)
-    stats.running_containers = len([c for c in containers if c.status == ContainerStatus.RUNNING])
-    # Total hosts = configured hosts + discovered swarm nodes (each swarm node counts as a host)
-    stats.total_hosts = len(collector.clients)
-    stats.healthy_hosts = len(collector.clients)  # Simplistic health check
-    
-    return stats
+app.include_router(dashboard_routes.router)
 
 
-@app.get("/api/dashboard/errors-timeseries", response_model=List[TimeSeriesPoint])
-async def get_errors_timeseries(
-    hours: int = Query(default=24, ge=1, le=168),
-    interval: str = Query(default="1h")
-):
-    """Get error count time series."""
-    return await opensearch.get_error_timeseries(hours=hours, interval=interval)
+app.include_router(security_routes.router)
 
 
-@app.get("/api/dashboard/http-4xx-timeseries", response_model=List[TimeSeriesPoint])
-async def get_http_4xx_timeseries(
-    hours: int = Query(default=24, ge=1, le=168),
-    interval: str = Query(default="1h")
-):
-    """Get HTTP 4xx count time series."""
-    return await opensearch.get_http_status_timeseries(400, 500, hours=hours, interval=interval)
-
-
-@app.get("/api/dashboard/http-5xx-timeseries", response_model=List[TimeSeriesPoint])
-async def get_http_5xx_timeseries(
-    hours: int = Query(default=24, ge=1, le=168),
-    interval: str = Query(default="1h")
-):
-    """Get HTTP 5xx count time series."""
-    return await opensearch.get_http_status_timeseries(500, 600, hours=hours, interval=interval)
-
-
-@app.get("/api/dashboard/http-requests-timeseries", response_model=List[TimeSeriesPoint])
-async def get_http_requests_timeseries(
-    hours: int = Query(default=24, ge=1, le=168),
-    interval: str = Query(default="1h")
-):
-    """Get total HTTP requests count time series."""
-    return await opensearch.get_http_requests_timeseries(hours=hours, interval=interval)
-
-
-@app.get("/api/dashboard/cpu-timeseries", response_model=List[TimeSeriesPoint])
-async def get_cpu_timeseries(
-    hours: int = Query(default=24, ge=1, le=168),
-    interval: str = Query(default="15m")
-):
-    """Get CPU usage time series."""
-    return await opensearch.get_resource_timeseries("cpu_percent", hours=hours, interval=interval)
-
-
-@app.get("/api/dashboard/gpu-timeseries", response_model=List[TimeSeriesPoint])
-async def get_gpu_timeseries(
-    hours: int = Query(default=24, ge=1, le=168),
-    interval: str = Query(default="15m")
-):
-    """Get GPU usage time series."""
-    return await opensearch.get_resource_timeseries("gpu_percent", hours=hours, interval=interval)
-
-
-@app.get("/api/dashboard/memory-timeseries", response_model=List[TimeSeriesPoint])
-async def get_memory_timeseries(
-    hours: int = Query(default=24, ge=1, le=168),
-    interval: str = Query(default="15m")
-):
-    """Get memory usage time series."""
-    return await opensearch.get_resource_timeseries("memory_percent", hours=hours, interval=interval)
-
-
-@app.get("/api/dashboard/cpu-timeseries-by-host", response_model=List[TimeSeriesByHost])
-async def get_cpu_timeseries_by_host(
-    hours: int = Query(default=24, ge=1, le=168),
-    interval: str = Query(default="15m")
-):
-    """Get CPU usage time series grouped by host."""
-    return await opensearch.get_resource_timeseries_by_host("cpu_percent", hours=hours, interval=interval)
-
-
-@app.get("/api/dashboard/gpu-timeseries-by-host", response_model=List[TimeSeriesByHost])
-async def get_gpu_timeseries_by_host(
-    hours: int = Query(default=24, ge=1, le=168),
-    interval: str = Query(default="15m")
-):
-    """Get GPU usage time series grouped by host."""
-    return await opensearch.get_resource_timeseries_by_host("gpu_percent", hours=hours, interval=interval)
-
-
-@app.get("/api/dashboard/memory-timeseries-by-host", response_model=List[TimeSeriesByHost])
-async def get_memory_timeseries_by_host(
-    hours: int = Query(default=24, ge=1, le=168),
-    interval: str = Query(default="15m")
-):
-    """Get memory usage time series grouped by host."""
-    return await opensearch.get_resource_timeseries_by_host("memory_percent", hours=hours, interval=interval)
-
-
-@app.get("/api/dashboard/vram-timeseries-by-host", response_model=List[TimeSeriesByHost])
-async def get_vram_timeseries_by_host(
-    hours: int = Query(default=24, ge=1, le=168),
-    interval: str = Query(default="15m")
-):
-    """Get VRAM usage time series grouped by host (percentage of total)."""
-    # Use gpu_memory_used_mb / gpu_memory_total_mb * 100
-    return await opensearch.get_vram_percent_timeseries_by_host(hours=hours, interval=interval)
-
-
-@app.get("/api/dashboard/recurring-errors")
-async def get_recurring_errors(limit: int = Query(default=5, ge=1, le=50)) -> List[Dict[str, Any]]:
-    """Return the most recent notified recurring error patterns."""
-    if not error_detector:
-        return []
-    return error_detector._notification_history[:limit]
-
-
-@app.get("/api/dashboard/system-errors")
-async def get_system_errors(limit: int = Query(default=20, ge=1, le=100)) -> List[Dict[str, Any]]:
-    """Return recent system-level errors (LLM, MCP, infrastructure failures)."""
-    if not llm_agent:
-        return []
-    return llm_agent.get_system_errors(limit=limit)
-
-
-# ============== Security ==============
-
-@app.get("/api/security/overview")
-async def get_security_overview(
-    minutes: int = Query(default=60, ge=5, le=10080),
-    include_internal: bool = Query(default=False),
-):
-    """Suspicious client IPs and hot endpoints, from the Traefik access logs."""
-    overview = await opensearch.get_security_overview(
-        minutes=minutes, include_internal=include_internal)
-    # Which of those clients the edge is already refusing.  Resolved here
-    # rather than in the browser because an address can be blocked through a
-    # CIDR range that covers it, and the view has to say so instead of
-    # offering to block it again.
-    if ip_blocklist:
-        for entry in overview.get("ips", []):
-            entry["blocked"] = ip_blocklist.blocked_entry(entry.get("ip", ""))
-    return overview
-
-
-@app.get("/api/security/ips/{ip}")
-async def get_security_ip_events(
-    ip: str,
-    minutes: int = Query(default=60, ge=5, le=10080),
-):
-    """Latest requests and WAF blocks of one client IP."""
-    normalized = normalize_ip(ip)
-    if normalized is None:
-        raise HTTPException(status_code=400, detail="Invalid IP address")
-    return {
-        "ip": normalized,
-        "internal": is_internal_ip(normalized),
-        "blocked": ip_blocklist.blocked_entry(normalized) if ip_blocklist else None,
-        "events": await opensearch.get_security_ip_events(normalized, minutes=minutes),
-    }
-
-
-# ---- Blocking a client at the edge -----------------------------------------
-# A blocked address is refused by Traefik in front of Coraza: it reaches no
-# WAF rule and no application.  The list lives here and the edge polls it (see
-# backend/ip_blocklist.py); the two endpoints below are what the Security view
-# calls, and the role policy in auth_middleware already reserves the mutating
-# ones for administrators.
-
-
-@app.get("/api/security/blocklist")
-async def get_security_blocklist():
-    """Addresses currently refused at the edge."""
-    return {
-        "entries": ip_blocklist.list_entries() if ip_blocklist else [],
-        # False means blocking is inert: the edge has no key to poll with, so
-        # an entry added here would never be enforced.  The view says so
-        # rather than letting an operator believe an attacker is gone.
-        "edge_configured": bool(settings and settings.auth.edge_key),
-    }
-
-
-@app.post("/api/security/blocklist")
-async def add_security_block(request: Request):
-    """Block a client address or CIDR range at the edge (admin only)."""
-    body = await request.json()
-    ip = body.get("ip", "")
-    reason = body.get("reason", "")
-    if not isinstance(ip, str) or not isinstance(reason, str):
-        raise HTTPException(status_code=400, detail="Invalid request body")
-
-    try:
-        target = ip_blocklist_validate(ip)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    # Blocking the address the request comes from takes the unblock button
-    # away with it: PulsarCD is published through the very proxy that would
-    # start refusing this client.  The check is only meaningful behind a proxy
-    # that sets X-Forwarded-For and is trusted to (PULSARCD_TRUST_PROXY_HEADERS);
-    # otherwise the caller's address reads as Traefik's own, which is private
-    # and can never be a block target anyway.
-    caller = normalize_ip(_client_address(request))
-    if caller is not None and ip_blocklist_covers(target, caller):
-        raise HTTPException(
-            status_code=400,
-            detail=(f"You are connecting from {caller}, which '{target}' covers. "
-                    "Blocking it would lock you out of PulsarCD itself, and the "
-                    "unblock button with it."),
-        )
-
-    try:
-        return await ip_blocklist.add(
-            target, reason=reason, blocked_by=getattr(request.state, "user", ""))
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.delete("/api/security/blocklist")
-async def remove_security_block(
-    # A query parameter rather than a path one: a CIDR range carries a slash,
-    # which no path segment can hold even percent-encoded.
-    ip: str = Query(..., description="The blocked address or range to release"),
-):
-    """Stop refusing a client address at the edge (admin only)."""
-    try:
-        return await ip_blocklist.remove(ip)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@app.get("/api/security/waf/traefik-config")
-async def get_security_traefik_config():
-    """Traefik dynamic configuration enforcing the blocklist.
-
-    Polled by the edge's HTTP provider, which authenticates with
-    PULSARCD_AUTH__EDGE_KEY (see _EDGE_KEY_ROUTES).  It always answers with a
-    complete configuration -- an empty blocklist yields an empty one, which is
-    how an unblock reaches the edge.
-    """
-    return ip_blocklist.traefik_config() if ip_blocklist else {}
-
-
-# ============== Usage ==============
-# Which endpoints the platform actually serves, for every stack or for one.
-# The access index names the Traefik router that served each request; the
-# stack behind it comes from the Swarm service labels, which change only on a
-# deploy, so the map is fetched from the manager and kept for a while.
-
-_ROUTER_STACKS_TTL = 120  # seconds
-_router_stacks_cache: Dict[str, str] = {}
-_router_stacks_fetched_at: float = 0.0
-
-
-async def _get_router_stacks() -> Dict[str, str]:
-    """Traefik router name -> stack, cached; empty if the manager is down."""
-    global _router_stacks_cache, _router_stacks_fetched_at
-
-    if time.time() - _router_stacks_fetched_at < _ROUTER_STACKS_TTL:
-        return _router_stacks_cache
-
-    manager_host = _get_swarm_manager_host()
-    client = collector.clients.get(manager_host) if (collector and manager_host) else None
-    if client is None or not hasattr(client, "get_traefik_routers"):
-        return _router_stacks_cache
-
-    try:
-        routers = await client.get_traefik_routers()
-    except Exception as e:
-        # Keep the previous map rather than un-attributing every row because
-        # one poll of the Docker API failed.
-        logger.warning("Failed to map Traefik routers to stacks", error=str(e))
-        return _router_stacks_cache
-
-    if routers:
-        _router_stacks_cache = routers
-        _router_stacks_fetched_at = time.time()
-    return _router_stacks_cache
-
-
-@app.get("/api/usage/overview")
-async def get_usage_overview(
-    minutes: int = Query(default=60, ge=5, le=10080),
-    include_internal: bool = Query(default=False),
-    stack: Optional[str] = Query(default=None),
-):
-    """Endpoint and per-stack traffic statistics, from the Traefik access logs."""
-    return await opensearch.get_usage_overview(
-        minutes=minutes, include_internal=include_internal,
-        stack=stack or None, router_stacks=await _get_router_stacks())
+app.include_router(usage_routes.router)
 
 
 # ============== Containers ==============
