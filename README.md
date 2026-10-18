@@ -70,6 +70,7 @@ For production? Not yet. But the gap is closing fast. And when it does, PulsarCD
 - **Verified Deploys & Auto-Rollback**: A deploy only succeeds once every service runs the new version (and an optional health URL answers); otherwise the previous version is redeployed automatically — see [Post-deploy verification and rollback](#post-deploy-verification-and-rollback)
 - **Run History**: Every build, test, QA and deploy run is kept in OpenSearch with its full, searchable log (who/what triggered it, version, commit, duration, error excerpt) - Stacks > History
 - **Notifications**: Pipeline failures, automatic edge bans and recurring errors pushed to ntfy, a Discord/Slack webhook or e-mail (see [Notifications](#notifications))
+- **Branch Previews**: Deploy any branch as an isolated preview at `<branch-slug>.<your-host>`, with automatic expiry (see [Preview environments](#preview-environments))
 
 ### Monitoring & Logs
 - **Centralized Log Collection**: Agents collect logs from all containers across all hosts
@@ -428,6 +429,11 @@ pulsarcd/
 | `/api/pipeline/runs` | GET | Pipeline run history; filters `repo`, `stage`, `status`, `trigger`, `since`/`until`/`hours`, full-text `q` (logs, error excerpt, version, commit), `page`/`page_size` |
 | `/api/pipeline/runs/repos` | GET | Repositories with recorded runs |
 | `/api/pipeline/runs/{run_id}` | GET | One run with a window of its stored log (`log_offset`, negative = from the end; `log_limit`) |
+| `/api/previews` | GET | List branch previews (recorded + unmanaged `pv-` stacks) |
+| `/api/previews/plan?repo_name=&branch=` | GET | Names a preview would get (slug, stack, image tag, host prefix) |
+| `/api/previews?repo_name=&ssh_url=&branch=[&ttl_hours=]` | POST | Build and deploy a branch preview (background action) |
+| `/api/previews/{stack}` | DELETE | Tear down a recorded preview (`docker stack rm`) |
+| `/api/previews/cleanup` | POST | Remove expired previews now |
 
 #### Search Query Parameters
 
@@ -1022,6 +1028,90 @@ ports and removes its temporary containers and configuration on completion.
   restricted `authorized_keys` command rather than a personal key.
 - **Terminate TLS at Traefik** and keep the HTTP router redirecting to HTTPS
   (already configured in the stack file).
+
+## Preview environments
+
+A preview is a repository built from one branch and deployed beside production
+and QA. It reuses the QA machinery of `scripts/deploy-service.sh`
+(`--preview <branch>` instead of `--qa`): the `devops/.env.qa` overlay, the
+Traefik router/network isolation of `process_qa_labels.py` and host prefixing,
+with a branch-derived prefix instead of `qa`.
+
+| | Production | QA | Preview of `feature/login` |
+|---|---|---|---|
+| Stack | `shop` | `qa-shop` | `pv-feature-login-df7c7a-shop` |
+| Host | `example.com` | `qa.example.com` | `feature-login-df7c7a.example.com` |
+| Image tag | `1.0.42` | `1.0.42` | `pv-feature-login-df7c7a` |
+
+**Names** come from `shared/preview_naming.py`, used by both the API and the
+deploy script. The slug is a DNS label of at most 24 characters. A branch that
+cannot be used verbatim (upper case, `/`, `_`, too long, or a reserved name such
+as `qa` or `www`, or a name already ending in `-<6 hex digits>`) gets a
+6-character hash of its exact name, so `feature/x` and `feature-x` never share
+a stack. Stack names are capped at 48 characters.
+
+**Build**: the branch is built through the regular build path with the version
+`pv-<slug>`. `build-push.sh` then publishes that tag only. It never pushes the
+compose tag (`:latest`) or a release tag, and it creates no git tag. It always
+rebuilds, because the tag follows the branch.
+
+**Safety**: a preview can never overwrite or remove the production or QA stack:
+- The deploy script refuses any preview stack name that does not start with
+  `pv-`, or that equals `<repo>` or `qa-<repo>`.
+- The API refuses to deploy over a running stack it did not record as a preview
+  of the same repository and branch.
+- `DELETE /api/previews/{stack}` only removes stacks recorded in
+  `<data_dir>/previews.json`.
+- A running stack is only redeployed or removed (by hand or on expiry) while
+  it runs at least one image tagged `pv-<slug>`, so a production repository
+  that happens to be named `pv-<x>-<repo>` is never removed in its place.
+- Previews never touch the pipeline state of the repository.
+
+**Expiry**: a preview that has not been redeployed for `ttl_hours` is removed
+by a background task. `ttl_hours=0` on the request (or in the settings) keeps
+it until it is torn down by hand.
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PULSARCD_PREVIEWS__ENABLED` | Enable the preview API and cleanup | `true` |
+| `PULSARCD_PREVIEWS__TTL_HOURS` | Default lifetime without redeploy (0 = never) | `72` |
+| `PULSARCD_PREVIEWS__CLEANUP_INTERVAL_MINUTES` | Expiry check interval | `30` |
+| `PULSARCD_PREVIEWS__MAX_ACTIVE` | Maximum recorded previews | `20` |
+
+### DNS and Traefik requirements
+
+Each preview answers on `<slug>.<TRAEFIK_HOST>`. If `devops/.env.qa` sets
+`TRAEFIK_HOST`, the preview uses `<slug>.<that QA host>`; the same applies to
+any `*_HOST` / `*_DOMAIN` variable referenced in a Traefik `rule` label, so a
+preview never routes on a QA host. Other `*_HOST` / `*_DOMAIN` values follow
+the QA rules. For previews to be reachable:
+
+1. **DNS**: add a wildcard record for every apex you preview, e.g.
+   `*.example.com` (and `*.qa.example.com` if `.env.qa` moves `TRAEFIK_HOST`
+   to the QA host), pointing at the Traefik entry point. A specific record
+   such as `qa.example.com` still takes precedence over the wildcard.
+2. **TLS**: a wildcard certificate only covers one label. With Let's Encrypt,
+   use a DNS-01 challenge resolver (HTTP-01 cannot issue wildcards), and
+   declare `tls.domains[0].main=example.com` and
+   `tls.domains[0].sans=*.example.com` on the routers, or rely on per-host
+   certificates through HTTP-01 (one issuance per preview: mind the rate limits).
+3. Literal hosts in Traefik rules are rewritten on the compose file's own apex
+   (`www.example.com` with no other host → `<slug>.www.example.com`). That is
+   two labels below the apex, which a `*.example.com` certificate does not
+   cover: prefer `${TRAEFIK_HOST}` in rules.
+4. Previews share the production `.env` plus the `.env.qa` overlay. Point
+   databases and other stateful dependencies at QA/preview resources in
+   `.env.qa`, or a preview will use the production ones.
+
+From the command line:
+
+```bash
+# Build the branch under its preview tag, then deploy it
+python3 shared/preview_naming.py feature/login shop   # -> slug, stack, image tag
+./scripts/build-push.sh shop pv-feature-login-df7c7a feature/login
+./scripts/deploy-service.sh --preview feature/login shop pv-feature-login-df7c7a feature/login
+docker stack rm pv-feature-login-df7c7a-shop   # tear down
+```
 
 ## Troubleshooting
 

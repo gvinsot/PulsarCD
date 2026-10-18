@@ -291,6 +291,10 @@ async def lifespan(app: FastAPI):
         )
         tag_cleaner.start()
 
+    # Preview environments: TTL cleanup of stale branch previews
+    from .preview_routes import start_cleanup as _start_preview_cleanup
+    _start_preview_cleanup()
+
     # Log MCP API key for configuration
     if _mcp_available and settings.mcp.enabled:
         logger.info("MCP server enabled")
@@ -315,6 +319,8 @@ async def lifespan(app: FastAPI):
         _recovery_task = None
     if tag_cleaner:
         await tag_cleaner.stop()
+    from .preview_routes import stop_cleanup as _stop_preview_cleanup
+    await _stop_preview_cleanup()
     if error_detector:
         await error_detector.stop()
     if _auto_build_task:
@@ -343,6 +349,10 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# Per-branch preview environments (backend/preview_routes.py)
+from .preview_routes import router as _preview_router  # noqa: E402
+app.include_router(_preview_router)
 
 
 # ============== Global Error Handling ==============

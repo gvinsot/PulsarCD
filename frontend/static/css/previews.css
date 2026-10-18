@@ -1,0 +1,91 @@
+/* ============== Preview environments (Stacks view) ============== */
+
+.previews-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 10px 16px;
+}
+
+.previews-panel > summary {
+    cursor: pointer;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.previews-count {
+    color: var(--text-muted);
+    font-weight: 400;
+    margin-left: 6px;
+}
+
+.previews-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 12px 0;
+}
+
+.previews-form .form-select,
+.previews-form .form-input {
+    width: auto;
+    min-width: 160px;
+}
+
+.previews-form .previews-ttl {
+    min-width: 0;
+    width: 90px;
+}
+
+.previews-list {
+    overflow-x: auto;
+}
+
+.previews-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.previews-table th,
+.previews-table td {
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border-color);
+    vertical-align: top;
+}
+
+.previews-table th {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.preview-actions {
+    white-space: nowrap;
+}
+
+.preview-actions .btn + .btn {
+    margin-left: 4px;
+}
+
+.preview-status {
+    color: var(--text-secondary);
+}
+
+.preview-status-ok {
+    color: #3fb950;
+}
+
+.preview-status-busy {
+    color: #d29922;
+}
+
+.preview-status-err,
+.preview-error {
+    color: #f85149;
+}
+
+.preview-error {
+    font-size: 0.8rem;
+}

@@ -11,6 +11,11 @@
 # Arguments:
 #   folder  - Repository folder name (e.g., "Art Retrainer") or full path
 #   version - Major.minor version (e.g., "1.0", "2.3"). Build number is auto-incremented as patch.
+#             A preview tag "pv-<slug>" (see shared/preview_naming.py) builds a
+#             per-branch preview instead: images are published under that tag
+#             only (never the compose tag, never a release tag), the registry
+#             skip check is bypassed because the tag moves with the branch, and
+#             no git tag is created.
 #   branch  - (Optional) Branch name to build from. If not specified, uses current branch
 #   commit  - (Optional) Specific commit hash to checkout
 #
@@ -216,9 +221,13 @@ BRANCH="${3:-}"
 COMMIT="${4:-}"
 NO_CACHE="${5:-}"
 
-# Validate version format (major.minor or major.minor.patch)
+# Validate version format (major.minor, major.minor.patch or a preview tag)
 FULL_VERSION_PROVIDED=false
-if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+PREVIEW_BUILD=false
+if [[ "$VERSION" =~ ^pv-[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$ ]]; then
+    # Preview build: the tag is the whole version, there is no release.
+    PREVIEW_BUILD=true
+elif [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     # Full version provided (e.g., 1.0.5) - skip auto-increment and git tagging
     FULL_VERSION_PROVIDED=true
 elif [[ "$VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
@@ -226,7 +235,7 @@ elif [[ "$VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then
     :
 else
     log_error "Invalid version format: $VERSION"
-    log_error "Version must be major.minor (e.g., 1.0) or major.minor.patch (e.g., 1.0.5)"
+    log_error "Version must be major.minor (e.g., 1.0), major.minor.patch (e.g., 1.0.5) or a preview tag (pv-<slug>)"
     exit 1
 fi
 
@@ -399,7 +408,11 @@ restore_env_files "$REPO_PATH"
 # ============================================================================
 # Step 2: Get version (major.minor.patch)
 # ============================================================================
-if [ "$FULL_VERSION_PROVIDED" = true ]; then
+if [ "$PREVIEW_BUILD" = true ]; then
+    FULL_VERSION="$VERSION"
+    VERSION_TAG=""
+    log_info "Preview build: images tagged $FULL_VERSION, no release version, no git tag"
+elif [ "$FULL_VERSION_PROVIDED" = true ]; then
     FULL_VERSION="$VERSION"
     VERSION_TAG="v${FULL_VERSION}"
     log_info "Version: $FULL_VERSION (tag: $VERSION_TAG) [exact version, no auto-increment]"
@@ -705,6 +718,13 @@ for img in $IMAGES; do
     # listed tag with Docker as before; auth/network/pagination failures also
     # fall back to Docker instead of trusting an incomplete list.
     TAG_STATUS=2
+    if [ "$PREVIEW_BUILD" = true ]; then
+        # A preview tag follows its branch: an existing image is an older
+        # commit, never a reason to skip. The layer cache keeps it cheap.
+        IMAGES_TO_BUILD="$IMAGES_TO_BUILD $img"
+        ALL_IMAGES_EXIST=false
+        continue
+    fi
     if [ "$NO_CACHE" != "--no-cache" ]; then
         if python3 "$SCRIPT_DIR/registry_tag_exists.py" "$TARGET_TAG"; then
             TAG_STATUS=0
@@ -790,12 +810,16 @@ for img in $IMAGES_TO_BUILD; do
         # Bake reads the complete Compose build, including args, empty values,
         # target and context. The selected builder routes arm64 to its ARM node.
         # Publish the exact compose tag, never an unrelated :latest image.
+        # A preview publishes its own tag only: pushing the compose tag from a
+        # feature branch would overwrite what production references.
+        PUSH_TAG="$RESOLVED_IMG"
+        [ "$PREVIEW_BUILD" = true ] && PUSH_TAG=$(image_version_tag "$RESOLVED_IMG" "$FULL_VERSION")
         BUILDX_CMD=(docker buildx bake --builder "$BUILDER_NAME" -f "$COMPOSE_PATH"
             # Compose contexts such as .. are outside the devops working
             # directory. Grant read access to this repository for this build.
             "--allow=fs.read=$REPO_PATH"
             --set "$SVC_NAME.platform=$IMG_PLATFORMS"
-            --set "$SVC_NAME.tags=$RESOLVED_IMG" --push)
+            --set "$SVC_NAME.tags=$PUSH_TAG" --push)
         [ "$NO_CACHE" = "--no-cache" ] && BUILDX_CMD+=(--no-cache)
         BUILDX_CMD+=("$SVC_NAME")
 
@@ -893,6 +917,18 @@ for img in $IMAGES_TO_BUILD; do
     # always missed, and every image silently fell back to the global list.
     IMG_PLATFORMS="${IMAGE_PLATFORMS[$RESOLVED_IMG]:-$BUILD_PLATFORMS}"
 
+    if [ "$PREVIEW_BUILD" = true ]; then
+        # Preview: one tag, and the compose tag is never pushed. Multi-arch
+        # images were already pushed under the preview tag by bake.
+        if [ -z "$IMG_PLATFORMS" ]; then
+            TARGET_TAG=$(image_version_tag "$RESOLVED_IMG" "$FULL_VERSION")
+            docker tag "$RESOLVED_IMG" "$TARGET_TAG"
+            docker push "$TARGET_TAG"
+            log_success "Published: $TARGET_TAG"
+        fi
+        continue
+    fi
+
     # Tag only the exact image just built. Listing local images and taking the
     # first repository match can select another architecture or an older build.
     for tag_version in "$FULL_VERSION" "$VERSION" "$CURRENT_COMMIT_SHORT"; do
@@ -917,7 +953,9 @@ log_success "All images tagged and pushed!"
 # ============================================================================
 # Step 7: Tag git repository with version (skip if full version was provided)
 # ============================================================================
-if [ "$FULL_VERSION_PROVIDED" = true ]; then
+if [ "$PREVIEW_BUILD" = true ]; then
+    log_info "Skipping git tagging (preview build)"
+elif [ "$FULL_VERSION_PROVIDED" = true ]; then
     log_info "Skipping git tagging (exact version $FULL_VERSION provided, tag already exists)"
 else
     log_info "Creating git tag: $VERSION_TAG"
@@ -983,6 +1021,10 @@ for img in $IMAGES; do
     fi
     
     BASE_IMAGE="${RESOLVED_IMG%:*}"
+    if [ "$PREVIEW_BUILD" = true ]; then
+        echo "  - $(image_version_tag "$RESOLVED_IMG" "$FULL_VERSION")"
+        continue
+    fi
     echo "  - $RESOLVED_IMG"
     for tag_version in "$FULL_VERSION" "$VERSION" "$CURRENT_COMMIT_SHORT"; do
         echo "  - $(image_version_tag "$RESOLVED_IMG" "$tag_version")"
