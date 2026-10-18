@@ -1,6 +1,8 @@
-"""Stack endpoints backed by GitHub and the deployer (/api/stacks/*): starred
-repositories, branches, tags, activity, .env files, deployed tags and build
-detection, plus GET /api/github/check-access.
+"""Stack endpoints backed by GitHub and the deployer.
+
+Starred repositories, branches, tags, activity and diffs, stack .env files,
+deployed tags and build detection under /api/stacks/, plus
+GET /api/github/check-access.
 
 App state is read from backend.api at call time, as ``api.<name>`` (see
 backend/routes/__init__.py).

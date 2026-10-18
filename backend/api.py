@@ -1,106 +1,89 @@
-"""FastAPI REST API for PulsarCD."""
+"""FastAPI REST API for PulsarCD: the app, its lifespan and its shared state.
+
+The endpoints live in backend/routes/ (one APIRouter per domain), the two HTTP
+middlewares in auth_middleware.py and security_headers.py, and the pipeline
+chain and auto-build poller in pipeline_runner.py.  This module:
+
+  * owns the app state the lifespan hook initializes (settings, the service
+    clients, the background-action and auto-build registries, ...);
+  * creates the app and registers, in order, the exception handler, the
+    middlewares, the routers and the mounts;
+  * re-exports what main.py, mcp_server.py, mcp_auth.py, preview_routes.py and
+    the tests reach through backend.api.
+
+The other modules read that state as ``api.<name>`` at call time, so what the
+lifespan hook (or a test patching backend.api) assigns here is what they see.
+The few functions and tunables tests patch on this module are re-exported
+below and called through it for the same reason.
+"""
 
 import asyncio
-import hashlib
-import hmac
-import json
 import os
-import re
-import secrets
-import time
 import traceback
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
-import jwt
 import structlog
-from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel, ValidationError
+from fastapi.responses import JSONResponse
 
-from shared.access_log import is_internal_ip, normalize_ip
-
-from .auth import AUTH_SOURCE_GOOGLE, AUTH_SOURCE_LOCAL, create_token, decode_token
 from .allowlist import EmailAllowlist
 from .auto_ban import AutoBanWorker
 from . import notifier
 from .notifications_api import router as notifications_router
-from .ip_blocklist import (
-    IpBlocklist,
-    covers as ip_blocklist_covers,
-    validate_target as ip_blocklist_validate,
-)
-from .google_auth import GoogleIdTokenVerifier, GoogleTokenError
+from .ip_blocklist import IpBlocklist
+from .google_auth import GoogleIdTokenVerifier
 from .collector import Collector
 from .config import load_config, Settings
-from .models import (
-    ActionRequest, ActionResult, ContainerInfo, ContainerStatus,
-    DashboardStats, LogSearchQuery, LogSearchResult, TimeSeriesPoint, TimeSeriesByHost
-)
 from .opensearch_client import OpenSearchClient
-from .github_service import GitHubService, StackDeployer, close_shared_ssh_clients
-from .actions_queue import actions_queue, ActionType, ActionStatus
-from .pipeline_state import PipelineStateManager, _UNSET
-from .deploy_rollback import deploy_stage_with_rollback
+from .github_service import GitHubService, close_shared_ssh_clients
+from .actions_queue import actions_queue
+from .pipeline_state import PipelineStateManager
 from . import run_history
 from .run_history_api import router as run_history_router
+from .preview_routes import router as preview_router
+from .background_actions import BackgroundAction
+from .auth_middleware import auth_middleware
+from .security_headers import security_headers_middleware
+from .pipeline_runner import _auto_build_poll_interval, _github_webhook_secret, auto_build_poller
+from .routes import (
+    actions as actions_routes,
+    admin as admin_routes,
+    agents as agents_routes,
+    auth as auth_routes,
+    config as config_routes,
+    containers as containers_routes,
+    dashboard as dashboard_routes,
+    frontend as frontend_routes,
+    health as health_routes,
+    hosts as hosts_routes,
+    logs as logs_routes,
+    pipeline as pipeline_routes,
+    recovery as recovery_routes,
+    security as security_routes,
+    stacks as stacks_routes,
+    tag_cleanup as tag_cleanup_routes,
+    terminal as terminal_routes,
+    usage as usage_routes,
+    webhooks as webhooks_routes,
+)
 
-# ---- Moved out of api.py; re-exported for callers and tests ---------------
-from .background_actions import (
-    BackgroundAction,
-)
-from .pipeline_runner import (
-    AUTO_BUILD_POLL_INTERVAL,
-    _SEEN_SHAS_KEEP,
-    _acquire_build_lock,
-    _advance_last_sha,
-    _auto_build_poll_interval,
-    _extract_version_from_output,
-    _get_deployer_and_host,
-    _get_swarm_manager_host,
-    _github_webhook_secret,
-    _notify_agent_failure,
-    _release_build_lock,
-    _run_history_log_source,
-    _set_pipeline,
-    _sha_already_handled,
-    _trigger_pipeline,
-    auto_build_poller,
-)
-from .auth_middleware import (
-    _AGENT_KEY_ROUTES,
-    _AUTH_EXEMPT_PREFIXES,
-    _QUERY_TOKEN_PATH_RE,
-    _READ_ONLY_POST_PATHS,
-    _agent_key_matches,
-    _client_address,
-    _route_path,
-    _token_is_revoked,
-    auth_middleware,
-)
-from .security_headers import (
-    security_headers_middleware,
-)
-from .routes.auth import (
-    _LOGIN_ATTEMPTS_MAX_KEYS,
-    _LOGIN_MAX_ATTEMPTS,
-    _LOGIN_MAX_ATTEMPTS_PER_CLIENT,
-    _LOGIN_WINDOW_SECONDS,
-    _login_attempts,
-    _record_login_attempt,
-)
-from .routes.dashboard import (
-    get_dashboard_stats,
-    get_recurring_errors,
-    get_system_errors,
-)
-from .routes.usage import (
-    _get_router_stacks,
-)
+# ---- Re-exports --------------------------------------------------------------
+# Test seams: tests patch these on backend.api, and the modules defining them
+# call them through backend.api, so a patch here reaches every caller.
+from .github_webhook import MAX_PAYLOAD_BYTES as _WEBHOOK_MAX_PAYLOAD_BYTES
+from .auth_middleware import _client_address
+from .pipeline_runner import _get_deployer_and_host, _trigger_pipeline
+from .routes.auth import _LOGIN_ATTEMPTS_MAX_KEYS
+from .routes.usage import _get_router_stacks
+from .routes.webhooks import _WEBHOOK_LISTING_RETRY_DELAYS, _webhook_deliveries
+# Used through backend.api by mcp_server, mcp_auth and preview_routes.
+from .auth_middleware import _token_is_revoked
+from .pipeline_runner import _notify_agent_failure, _set_pipeline
+from .routes.actions import cancel_action
 from .routes.containers import (
     execute_container_action,
     get_service_tasks,
@@ -108,40 +91,38 @@ from .routes.containers import (
     remove_stack,
     update_service_image,
 )
-from .routes.stacks import (
-    get_stacks_deployed_tags,
+from .routes.dashboard import get_dashboard_stats, get_recurring_errors, get_system_errors
+from .routes.pipeline import trigger_pipeline_endpoint
+from .routes.stacks import get_stacks_deployed_tags
+# Read by the tests through backend.api.
+from .auth_middleware import (
+    _AGENT_KEY_ROUTES,
+    _AUTH_EXEMPT_PREFIXES,
+    _QUERY_TOKEN_PATH_RE,
+    _READ_ONLY_POST_PATHS,
+    _agent_key_matches,
+    _route_path,
 )
-from .routes.actions import (
-    cancel_action,
+from .pipeline_runner import (
+    AUTO_BUILD_POLL_INTERVAL,
+    _SEEN_SHAS_KEEP,
+    _acquire_build_lock,
+    _advance_last_sha,
+    _extract_version_from_output,
+    _get_swarm_manager_host,
+    _release_build_lock,
+    _run_history_log_source,
+    _sha_already_handled,
 )
-from .routes.pipeline import (
-    trigger_pipeline_endpoint,
+from .routes.auth import (
+    _LOGIN_MAX_ATTEMPTS,
+    _LOGIN_MAX_ATTEMPTS_PER_CLIENT,
+    _LOGIN_WINDOW_SECONDS,
+    _login_attempts,
+    _record_login_attempt,
 )
-from .github_webhook import MAX_PAYLOAD_BYTES as _WEBHOOK_MAX_PAYLOAD_BYTES
-from .routes.webhooks import (
-    _WEBHOOK_LISTING_RETRY_DELAYS,
-    _request_recheck,
-    _webhook_deliveries,
-)
-from .routes import auth as auth_routes
-from .routes import admin as admin_routes
-from .routes import dashboard as dashboard_routes
-from .routes import security as security_routes
-from .routes import usage as usage_routes
-from .routes import containers as containers_routes
-from .routes import logs as logs_routes
-from .routes import hosts as hosts_routes
-from .routes import health as health_routes
-from .routes import config as config_routes
-from .routes import stacks as stacks_routes
-from .routes import recovery as recovery_routes
-from .routes import tag_cleanup as tag_cleanup_routes
-from .routes import actions as actions_routes
-from .routes import pipeline as pipeline_routes
-from .routes import webhooks as webhooks_routes
-from .routes import agents as agents_routes
-from .routes import terminal as terminal_routes
-from .routes import frontend as frontend_routes
+from .routes.webhooks import _request_recheck
+
 try:
     from .mcp_server import mcp_read, mcp_actions, get_mcp_read_app, get_mcp_actions_app
     from .mcp_auth import MCPAuthMiddleware
@@ -173,6 +154,13 @@ _recovery_task = None
 
 # Store of running/recent background actions
 _background_actions: Dict[str, BackgroundAction] = {}
+
+# Build config detection (GET /api/stacks/buildable, the pipeline chain)
+_buildable_cache: Dict[str, bool] = {}  # {repo_name: has_build_config}
+
+# Pipeline (Auto Build → Test → Deploy)
+_auto_build_state = {}  # {repo_name: {"last_sha": str, "building": bool, "untagged_commits": int}}
+_auto_build_task = None
 
 
 @asynccontextmanager
@@ -259,7 +247,7 @@ async def lifespan(app: FastAPI):
             else:
                 logger.error("Failed to connect to OpenSearch after retries", error=str(e))
                 raise
-    
+
     collector = Collector(settings, opensearch)
     await collector.start()
 
@@ -277,7 +265,7 @@ async def lifespan(app: FastAPI):
             auto_ban_worker = None
     elif settings.autoban.enabled:
         logger.warning("Automatic edge bans disabled: PULSARCD_AUTH__EDGE_KEY is missing")
-    
+
     # Initialize GitHub service
     github_service = GitHubService(settings.github)
 
@@ -393,10 +381,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Per-branch preview environments (backend/preview_routes.py)
-from .preview_routes import router as _preview_router  # noqa: E402
-app.include_router(_preview_router)
-
 
 # ============== Global Error Handling ==============
 
@@ -486,19 +470,9 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
     return JSONResponse(status_code=status_code, content=body, headers={"X-Request-ID": request_id})
 
 
-# Mount MCP servers with authentication middleware
-# Read MCP: /ai/mcp (stacks, containers, hosts, logs, tags, pipeline state,
-#                    action status/logs, health summary)
-# Actions MCP: /ai/actions/mcp (trigger_pipeline, build/test/deploy_stack,
-#                    set_transition_config, cancel_action, get/set_stack_env,
-#                    container_action, update_service_image, remove_service,
-#                    remove_stack). Every tool added here must also be listed in
-#                    config_file.DANGEROUS_TOOL_NAMES.
-app.include_router(run_history_router)
-
-if _mcp_available:
-    app.mount("/ai/actions", MCPAuthMiddleware(get_mcp_actions_app(), require_admin=True))
-    app.mount("/ai", MCPAuthMiddleware(get_mcp_read_app(), require_admin=False))
+# ============== Middlewares ==============
+# Each one registered wraps the previous ones: security_headers_middleware is
+# the outermost, so its headers are also on auth_middleware's 401/403s.
 
 # CORS middleware - restricted to same-origin; only needed for dev/proxy setups
 app.add_middleware(
@@ -508,87 +482,55 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
-
-
-app.include_router(auth_routes.router)
-
-
 app.middleware("http")(auth_middleware)
-
-
 app.middleware("http")(security_headers_middleware)
 
 
+# ============== Routes ==============
+# Registration order is matching order. Where two paths can match the same
+# request (/api/previews/plan vs /api/previews/{stack}, /api/pipeline/runs/repos
+# vs /api/pipeline/runs/{run_id}, /api/stacks/test-permissions/{owner}/{repo}
+# vs /api/stacks/{owner}/{repo}/tags, the /ai mounts), the first one wins, so
+# keep the relative order of such routes when moving things around.
+
+# Per-branch preview environments (backend/preview_routes.py)
+app.include_router(preview_router)
+# Pipeline run history (backend/run_history_api.py)
+app.include_router(run_history_router)
+
+# Mount MCP servers with authentication middleware
+# Read MCP: /ai/mcp (stacks, containers, hosts, logs, tags, pipeline state,
+#                    action status/logs, health summary)
+# Actions MCP: /ai/actions/mcp (trigger_pipeline, build/test/deploy_stack,
+#                    set_transition_config, cancel_action, get/set_stack_env,
+#                    container_action, update_service_image, remove_service,
+#                    remove_stack). Every tool added here must also be listed in
+#                    config_file.DANGEROUS_TOOL_NAMES.
+if _mcp_available:
+    app.mount("/ai/actions", MCPAuthMiddleware(get_mcp_actions_app(), require_admin=True))
+    app.mount("/ai", MCPAuthMiddleware(get_mcp_read_app(), require_admin=False))
+
+app.include_router(auth_routes.router)
 app.include_router(admin_routes.router)
-
-
-# ============== Admin: Notifications ==============
-
 # GET /api/admin/notifications and POST /api/admin/notifications/test
 app.include_router(notifications_router)
-
-
 app.include_router(dashboard_routes.router)
-
-
 app.include_router(security_routes.router)
-
-
 app.include_router(usage_routes.router)
-
-
 app.include_router(containers_routes.router)
-
-
 app.include_router(logs_routes.router)
-
-
 app.include_router(hosts_routes.router)
-
-
 app.include_router(health_routes.router)
-
-
 app.include_router(stacks_routes.router)
-
-
 app.include_router(config_routes.router)
-
-
 app.include_router(actions_routes.router)
-
-
 app.include_router(recovery_routes.router)
-
-
 app.include_router(tag_cleanup_routes.router)
-
-
-# ============== Build config detection ==============
-
-_buildable_cache: Dict[str, bool] = {}  # {repo_name: has_build_config}
-
-
-# ============== Pipeline (Auto Build → Test → Deploy) ==============
-
-_auto_build_state = {}  # {repo_name: {"last_sha": str, "building": bool, "untagged_commits": int}}
-_auto_build_task = None
-
-
 app.include_router(pipeline_routes.router)
-
-
 app.include_router(webhooks_routes.router)
-
-
 app.include_router(agents_routes.router)
-
-
 app.include_router(terminal_routes.router)
-
 
 # Serve static files (frontend)
 app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
-
-
 app.include_router(frontend_routes.router)

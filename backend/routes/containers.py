@@ -1,5 +1,6 @@
-"""Container and Swarm service endpoints (/api/containers/*, /api/services/*,
-POST /api/stacks/{stack_name}/remove).
+"""Container and Swarm service endpoints.
+
+/api/containers/*, /api/services/* and POST /api/stacks/{stack_name}/remove.
 
 App state is read from backend.api at call time, as ``api.<name>`` (see
 backend/routes/__init__.py).

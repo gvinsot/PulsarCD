@@ -1,5 +1,6 @@
-"""Log search and AI endpoints (/api/logs/*, /api/ai/status) and manual
-agent task creation (/api/tasks/create).
+"""Log search and AI endpoints, plus manual agent task creation.
+
+/api/logs/*, /api/ai/status and /api/tasks/create.
 
 App state is read from backend.api at call time, as ``api.<name>`` (see
 backend/routes/__init__.py).

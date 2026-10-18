@@ -1,5 +1,7 @@
-"""Security endpoints (/api/security/*): access-log analytics and the edge IP
-blocklist, including the configuration the edge Traefik polls.
+"""Security endpoints (/api/security/*): access-log analytics and the edge blocklist.
+
+GET /api/security/waf/traefik-config is what the edge Traefik polls; the auth
+middleware authenticates it with the edge key (_EDGE_KEY_ROUTES).
 
 App state is read from backend.api at call time, as ``api.<name>`` (see
 backend/routes/__init__.py).

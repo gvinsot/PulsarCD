@@ -1,6 +1,7 @@
-"""Admin endpoints (/api/admin/*): allowed addresses, configuration, LLM and MCP
-connection tests, agent history and OpenSearch diagnostics.
+"""Admin endpoints under /api/admin/ (see also recovery, tag_cleanup).
 
+Allowed Google addresses, configuration, LLM and MCP connection tests, agent
+history, error-detector status and the OpenSearch diagnostics.
 auth_middleware restricts every /api/admin/ route to the admin role.
 
 App state is read from backend.api at call time, as ``api.<name>`` (see
