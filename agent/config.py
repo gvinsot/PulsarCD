@@ -1,8 +1,7 @@
 """Agent configuration."""
 
-import json
 import os
-from typing import List, Optional
+from typing import Optional
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 
@@ -13,10 +12,9 @@ from shared.secrets import load_docker_secrets_into_env
 load_docker_secrets_into_env()
 
 
-class OpenSearchConfig(BaseModel):
-    """OpenSearch configuration for direct writes."""
-    hosts: List[str] = ["http://localhost:9200"]
-    index_prefix: str = "pulsarcd"
+class VictoriaLogsConfig(BaseModel):
+    """VictoriaLogs, where the agent writes logs and metrics."""
+    url: str = "http://localhost:9428"
     username: Optional[str] = None
     password: Optional[str] = None
 
@@ -30,8 +28,8 @@ class AgentSettings(BaseSettings):
     # Backend URL for polling actions
     backend_url: str = "http://localhost:8000"
 
-    # OpenSearch for direct data writes
-    opensearch: OpenSearchConfig = OpenSearchConfig()
+    # VictoriaLogs for direct data writes
+    victorialogs: VictoriaLogsConfig = VictoriaLogsConfig()
 
     # Docker connection
     docker_url: str = "unix:///var/run/docker.sock"
@@ -58,9 +56,8 @@ def load_agent_config() -> AgentSettings:
     Environment variables:
     - AGENT_AGENT_ID: Unique agent identifier (hostname recommended)
     - AGENT_BACKEND_URL: URL of the PulsarCD backend
-    - AGENT_OPENSEARCH__HOSTS: JSON array of OpenSearch URLs
-    - AGENT_OPENSEARCH__USERNAME: OpenSearch username
-    - AGENT_OPENSEARCH__PASSWORD: OpenSearch password
+    - AGENT_VICTORIALOGS__URL: VictoriaLogs base URL
+    - AGENT_VICTORIALOGS__USERNAME / __PASSWORD: basic auth (optional)
     - AGENT_DOCKER_URL: Docker socket or TCP URL
     - AGENT_LOG_INTERVAL: Log collection interval in seconds
     - AGENT_METRICS_INTERVAL: Metrics collection interval in seconds
@@ -82,19 +79,10 @@ def load_agent_config() -> AgentSettings:
     load_env(settings, "backend_url", "AGENT_BACKEND_URL")
     load_env(settings, "docker_url", "AGENT_DOCKER_URL")
 
-    # OpenSearch - hosts needs special handling (JSON array or single string)
-    opensearch_hosts = os.environ.get("AGENT_OPENSEARCH__HOSTS")
-    if opensearch_hosts:
-        try:
-            hosts_list = json.loads(opensearch_hosts)
-            if isinstance(hosts_list, list):
-                settings.opensearch.hosts = hosts_list
-        except json.JSONDecodeError:
-            settings.opensearch.hosts = [opensearch_hosts]
-
-    load_env(settings.opensearch, "index_prefix", "AGENT_OPENSEARCH__INDEX_PREFIX")
-    load_env(settings.opensearch, "username", "AGENT_OPENSEARCH__USERNAME")
-    load_env(settings.opensearch, "password", "AGENT_OPENSEARCH__PASSWORD")
+    # VictoriaLogs
+    load_env(settings.victorialogs, "url", "AGENT_VICTORIALOGS__URL")
+    load_env(settings.victorialogs, "username", "AGENT_VICTORIALOGS__USERNAME")
+    load_env(settings.victorialogs, "password", "AGENT_VICTORIALOGS__PASSWORD")
 
     # Intervals
     load_env(settings, "log_interval", "AGENT_LOG_INTERVAL", int)

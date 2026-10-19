@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -65,22 +65,45 @@ def log(now, ip="45.9.12.7", path="/.env", **fields):
                 "ClientHost": ip, "DownstreamStatus": 403, "RequestPath": path, **fields}}
 
 
+class FakeLogClient:
+    """Streams rows like VictoriaLogsClient.iter_query; records the queries."""
+
+    def __init__(self):
+        self.rows = []
+        self.error = None
+        self.fail_after = None
+        self.on_call = None
+        self.calls = []
+
+    async def iter_query(self, query, **kwargs):
+        self.calls.append((query, kwargs))
+        if self.on_call:
+            self.on_call()
+        for count, row in enumerate(self.rows):
+            if self.error is not None and self.fail_after is not None and count >= self.fail_after:
+                raise self.error
+            yield row
+        if self.error is not None and self.fail_after is None:
+            raise self.error
+
+
 def worker(tmp_path, store, now, config=None):
-    os = SimpleNamespace(_client=AsyncMock(), logs_index="test-logs")
-    result = AutoBanWorker(os, store, config or AutoBanConfig(), str(tmp_path / "cursor.json"))
+    logstore = SimpleNamespace(client=FakeLogClient())
+    result = AutoBanWorker(logstore, store, config or AutoBanConfig(), str(tmp_path / "cursor.json"))
     result._checkpoint = now
     return result
 
 
-def page(*entries, scroll="cursor"):
-    return {"_scroll_id": scroll, "hits": {"hits": [{"_source": entry} for entry in entries]}}
+def rows(*entries):
+    """Log entries as VictoriaLogs returns them (parsed_fields is a JSON string)."""
+    return [{"_time": e["timestamp"], "compose_project": e["compose_project"],
+             "compose_service": e["compose_service"], "parsed_fields": json.dumps(e["parsed_fields"])}
+            for e in entries]
 
 
 async def test_auth_json_probe_creates_auditable_24h_ban(tmp_path, store, clock_now):
     w = worker(tmp_path, store, clock_now[0])
-    w.opensearch._client.search.return_value = page(
-        log(clock_now[0], path="/.composer/auth.json"))
-    w.opensearch._client.scroll.return_value = page()
+    w.logstore.client.rows = rows(log(clock_now[0], path="/.composer/auth.json"))
     await w.scan_once(clock_now[0])
     entry = store.blocked_entry("45.9.12.7")
     assert entry["reason"] == "Automatic probe: auth.json"
@@ -127,17 +150,16 @@ async def test_manual_release_ignores_delayed_subsecond_probe_after_restart(
     assert await reloaded.add_automatic("45.9.12.7", "fresh", fresh, 60)
 
 
-async def test_scans_every_page_and_clears_scroll_and_persists_cursor(tmp_path, store, clock_now):
-    w = worker(tmp_path, store, clock_now[0], AutoBanConfig(batch_size=1))
-    w.opensearch._client.search.return_value = page(log(clock_now[0], "45.9.12.7"))
-    w.opensearch._client.scroll.side_effect = [page(log(clock_now[0], "8.8.8.8")), page()]
+async def test_scans_every_row_and_persists_cursor(tmp_path, store, clock_now):
+    w = worker(tmp_path, store, clock_now[0])
+    w.logstore.client.rows = rows(log(clock_now[0], "45.9.12.7"), log(clock_now[0], "8.8.8.8"))
     await w.scan_once(clock_now[0])
     assert store.targets() == ["45.9.12.7", "8.8.8.8"]
-    assert w.opensearch._client.scroll.await_count == 2
-    w.opensearch._client.clear_scroll.assert_awaited_once_with(scroll_id="cursor")
-    body = w.opensearch._client.search.call_args.kwargs["body"]
-    assert body["size"] == 1 and body["sort"] == ["_doc"]
-    assert {"term": {"compose_service": "traefik"}} in body["query"]["bool"]["filter"]
+    (query, kwargs), = w.logstore.client.calls
+    assert query.startswith('{kind="log"} compose_project:="privatenetwork" compose_service:="traefik"')
+    # The window covers the checkpoint minus the overlap, through now included
+    assert kwargs["start"] == clock_now[0] - timedelta(seconds=300)
+    assert kwargs["end"] > clock_now[0]
     assert json.loads((tmp_path / "cursor.json").read_text())["through"] == clock_now[0].isoformat()
 
 
@@ -145,14 +167,14 @@ async def test_failed_scan_retains_checkpoint_and_retry_does_not_undo_manual_unb
         tmp_path, store, clock_now):
     w = worker(tmp_path, store, clock_now[0] - timedelta(seconds=60))
     old_checkpoint = w._checkpoint
-    w.opensearch._client.search.return_value = page(log(clock_now[0] - timedelta(seconds=1)))
-    w.opensearch._client.scroll.side_effect = RuntimeError("unavailable")
+    probe = log(clock_now[0] - timedelta(seconds=1))
+    w.logstore.client.rows = rows(probe, probe)
+    w.logstore.client.error, w.logstore.client.fail_after = RuntimeError("unavailable"), 1
     with pytest.raises(RuntimeError):
         await w.scan_once(clock_now[0])
     assert w._checkpoint == old_checkpoint
     await store.remove("45.9.12.7")
-    w.opensearch._client.scroll.side_effect = None
-    w.opensearch._client.scroll.return_value = page()
+    w.logstore.client.error = None
     await w.scan_once(clock_now[0])
     assert store.targets() == []
 
@@ -195,12 +217,10 @@ async def test_startup_releases_only_exempt_automatic_bans_and_persists_guards(
     await store.add("104.24.0.0/14", "manual range", "admin")
     reloaded = bl.IpBlocklist(str(tmp_path / "blocked_ips.json"))
     w = worker(tmp_path, reloaded, clock_now[0], AutoBanConfig(exempt_cidrs=["8.8.8.8"]))
-    # Startup reconciliation must not depend on OpenSearch availability.
+    # Startup reconciliation must not depend on the log store's availability.
     queried = asyncio.Event()
-    async def unavailable(*args, **kwargs):
-        queried.set()
-        raise RuntimeError("index unavailable")
-    w.opensearch._client.search.side_effect = unavailable
+    w.logstore.client.on_call = queried.set
+    w.logstore.client.error = RuntimeError("store unavailable")
     assert w.start()
     await asyncio.wait_for(queried.wait(), timeout=2)
     await w.stop()
@@ -262,17 +282,17 @@ async def test_corrupt_checkpoint_disables_only_worker_keeps_manual_controls(tmp
     assert w.initialization_error
     assert w.start() is False
     await w.scan_once(clock_now[0])
-    w.opensearch._client.search.assert_not_awaited()
+    assert w.logstore.client.calls == []
     await store.add("45.9.12.7", "manual")
     assert store.targets() == ["45.9.12.7"]
     assert (tmp_path / "cursor.json").read_text() == "invalid json"
 
 
-@pytest.mark.parametrize("failure", [{"timed_out": True}, {"_shards": {"failed": 1}}])
-async def test_incomplete_search_never_advances_checkpoint(tmp_path, store, clock_now, failure):
+async def test_interrupted_scan_never_advances_checkpoint(tmp_path, store, clock_now):
     before = clock_now[0] - timedelta(seconds=10)
     w = worker(tmp_path, store, before)
-    w.opensearch._client.search.return_value = {**page(log(clock_now[0])), **failure}
+    w.logstore.client.rows = rows(log(clock_now[0]))
+    w.logstore.client.error, w.logstore.client.fail_after = RuntimeError("Incomplete scan"), 0
     with pytest.raises(RuntimeError, match="Incomplete"):
         await w.scan_once(clock_now[0])
     assert w._checkpoint == before and store.targets() == []

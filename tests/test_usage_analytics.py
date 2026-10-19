@@ -1,7 +1,7 @@
 """Tests for the usage view: query shape, interpretation and API."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -12,8 +12,8 @@ from backend.config import HostConfig
 from backend.docker_client import DockerAPIClient
 
 
-NOW = datetime(2026, 9, 22, 20, 0, 0)
-START = datetime(2026, 9, 22, 19, 0, 0)
+NOW = datetime(2026, 9, 22, 20, 0, 0, tzinfo=timezone.utc)
+START = datetime(2026, 9, 22, 19, 0, 0, tzinfo=timezone.utc)
 
 ROUTER_STACKS = {
     "pulsarcd": "pulsarcd",
@@ -22,128 +22,89 @@ ROUTER_STACKS = {
 }
 
 
-def _traffic(doc_count, ips=1, client_errors=0, server_errors=0, avg=None, size=0):
+def _traffic(requests, ips=1, client_errors=0, server_errors=0, avg=None, size=0):
+    """A ranking row as VictoriaLogs returns it: every value a string."""
     return {
-        "doc_count": doc_count,
-        "distinct_ips": {"value": ips},
-        "client_errors": {"doc_count": client_errors},
-        "server_errors": {"doc_count": server_errors},
-        "avg_duration": {"value": avg},
-        "bytes": {"value": size},
+        "requests": str(requests),
+        "distinct_ips": str(ips),
+        "client_errors": str(client_errors),
+        "server_errors": str(server_errors),
+        "avg_duration": "NaN" if avg is None else str(avg),
+        "bytes": str(size),
     }
 
 
-def _path_bucket(path, doc_count, router="pulsarcd@swarm", **kwargs):
-    bucket = _traffic(doc_count, **kwargs)
-    bucket.update({
-        "key": path,
-        "max_duration": {"value": 120.0},
-        "methods": {"buckets": [{"key": "GET", "doc_count": doc_count}]},
-        "router": {"buckets": [{"key": router, "doc_count": doc_count}] if router else []},
-        "last_seen": {"value_as_string": "2026-09-22T19:58:00.000Z"},
-    })
-    return bucket
+def _endpoint(host, path, requests, router="pulsarcd@swarm", **kwargs):
+    return {
+        "request_host": host, "path": path, **_traffic(requests, **kwargs),
+        "max_duration": "120", "methods": '["GET"]', "router": router or "",
+        "last_seen": "2026-09-22T19:58:00Z",
+    }
 
 
-def _host_bucket(host, doc_count, paths, **kwargs):
-    bucket = _traffic(doc_count, **kwargs)
-    bucket.update({
-        "key": host,
-        "distinct_paths": {"value": len(paths)},
-        "paths": {"buckets": paths},
-    })
-    return bucket
-
-
-RESPONSE = {
-    "hits": {"total": {"value": 300, "relation": "eq"}},
-    "aggregations": {
-        "unique_ips": {"value": 42},
-        "distinct_paths": {"value": 17},
-        "distinct_hosts": {"value": 2},
-        "statuses": {"buckets": [
-            {"key": "ok", "doc_count": 240},
-            {"key": "client_errors", "doc_count": 55},
-            {"key": "server_errors", "doc_count": 5},
-        ]},
-        "bytes": {"value": 1048576.0},
-        "avg_duration": {"value": 12.345},
-        "duration": {"values": {"50.0": 2.5, "95.0": 40.0, "99.0": None}},
-        "timeline": {"buckets": [{
-            "key_as_string": "2026-09-22T19:00:00.000Z",
-            "doc_count": 300,
-            "avg_duration": {"value": 12.3456},
-            "statuses": {"buckets": [
-                {"key": "ok", "doc_count": 240},
-                {"key": "client_errors", "doc_count": 55},
-                {"key": "server_errors", "doc_count": 5},
-            ]},
-        }]},
-        "hosts": {"buckets": [
-            _host_bucket("logs.methodinfo.fr", 200, [
-                _path_bucket("/api/logs/search", 150, ips=8, client_errors=3, avg=30.0, size=900),
-                _path_bucket("/.env", 50, ips=40, client_errors=50, avg=1.0),
-            ], ips=44, client_errors=53, avg=22.0, size=900),
-            _host_bucket("intra-muros.fr", 100, [
-                _path_bucket("/", 100, router="intra-muros@swarm", ips=20, avg=8.0, size=500),
-            ], ips=20, avg=8.0, size=500),
-        ]},
-        "routers": {"buckets": [
-            {"key": "pulsarcd@swarm", **_traffic(150, ips=8, client_errors=3, avg=30.0, size=900)},
-            {"key": "intra-muros@swarm", **_traffic(100, ips=20, avg=8.0, size=500)},
-            {"key": "pulsarcd-ws@swarm", **_traffic(10, ips=2, avg=10.0)},
-            {"key": "", **_traffic(40, ips=30, client_errors=40, avg=0.5)},
-        ]},
-        "methods": {"buckets": [{"key": "GET", "doc_count": 280}, {"key": "POST", "doc_count": 20}]},
-        "status_codes": {"buckets": [{"key": 200, "doc_count": 240}, {"key": 404, "doc_count": 55}]},
-    },
+ROWS = {
+    "totals": [{"requests": "300", "unique_ips": "42", "distinct_paths": "17", "distinct_hosts": "2",
+                "client_errors": "55", "server_errors": "5", "bytes": "1048576",
+                "avg_duration": "12.345", "p50": "2.5", "p95": "40", "p99": "NaN"}],
+    "timeline": [{"_time": "2026-09-22T19:00:00Z", "ok": "240", "client_errors": "55",
+                  "server_errors": "5", "avg_duration_ms": "12.3456"}],
+    "hosts": [
+        {"request_host": "logs.methodinfo.fr", "distinct_paths": "2",
+         **_traffic(200, ips=44, client_errors=53, avg=22.0, size=900)},
+        {"request_host": "intra-muros.fr", "distinct_paths": "1",
+         **_traffic(100, ips=20, avg=8.0, size=500)},
+    ],
+    "endpoints": [
+        _endpoint("logs.methodinfo.fr", "/api/logs/search", 150, ips=8, client_errors=3, avg=30.0, size=900),
+        _endpoint("intra-muros.fr", "/", 100, router="intra-muros@swarm", ips=20, avg=8.0, size=500),
+        _endpoint("logs.methodinfo.fr", "/.env", 50, ips=40, client_errors=50, avg=1.0),
+    ],
+    "routers": [
+        {"router": "pulsarcd@swarm", **_traffic(150, ips=8, client_errors=3, avg=30.0, size=900)},
+        {"router": "intra-muros@swarm", **_traffic(100, ips=20, avg=8.0, size=500)},
+        {"router": "pulsarcd-ws@swarm", **_traffic(10, ips=2, avg=10.0)},
+        {"router": "", **_traffic(40, ips=30, client_errors=40, avg=0.5)},
+    ],
+    "methods": [{"method": "GET", "n": "280"}, {"method": "POST", "n": "20"}],
+    "status_codes": [{"status": "200", "n": "240"}, {"status": "404", "n": "55"}],
 }
 
 
-def _summarize(response=RESPONSE, stack=None, minutes=60):
-    return usage.summarize(response, minutes=minutes, include_internal=False, stack=stack,
+def _summarize(rows=ROWS, stack=None, minutes=60):
+    return usage.summarize(rows, minutes=minutes, include_internal=False, stack=stack,
                            stacks=sorted(set(ROUTER_STACKS.values())),
-                           router_stacks=ROUTER_STACKS, generated_at=NOW)
+                           router_stacks=ROUTER_STACKS, start=START, end=NOW, generated_at=NOW)
 
 
 class TestQuery:
     def test_only_requests_are_counted(self):
-        body = usage.build_usage_query(START, NOW, 60, False, None)
-        filters = body["query"]["bool"]["filter"]
-        assert {"term": {"event": "request"}} in filters
-        assert {"term": {"internal": False}} in filters
-        # Every share is computed against the hit count, so it must be exact.
-        assert body["track_total_hits"] is True
+        queries = usage.build_usage_queries(60, False, None)
+        for query in queries.values():
+            assert query.startswith('{kind="access"} event:="request" internal:=false')
 
     def test_internal_traffic_can_be_included(self):
-        body = usage.build_usage_query(START, NOW, 60, True, None)
-        assert {"term": {"internal": False}} not in body["query"]["bool"]["filter"]
+        queries = usage.build_usage_queries(60, True, None)
+        assert not any("internal:=false" in q for q in queries.values())
 
     def test_no_stack_filter_by_default(self):
-        body = usage.build_usage_query(START, NOW, 60, False, None)
-        assert all("bool" not in f for f in body["query"]["bool"]["filter"])
+        assert not any("router:=" in q or "router:in" in q
+                       for q in usage.build_usage_queries(60, False, None).values())
 
     def test_stack_filter_matches_every_provider_suffix(self):
-        body = usage.build_usage_query(START, NOW, 60, False, ["pulsarcd", "pulsarcd-ws"])
-        assert usage.router_filter(["pulsarcd", "pulsarcd-ws"]) in body["query"]["bool"]["filter"]
-        assert {"prefix": {"router": "pulsarcd@"}} in usage.router_filter(["pulsarcd"])["bool"]["should"]
+        queries = usage.build_usage_queries(60, False, ["pulsarcd", "pulsarcd-ws"])
+        assert '(router:="pulsarcd@"* OR router:="pulsarcd-ws@"*)' in queries["totals"]
 
     def test_a_stack_without_a_router_matches_nothing(self):
-        matched = usage.router_filter([])
-        assert matched["bool"]["should"] == [] and matched["bool"]["minimum_should_match"] == 1
+        assert usage.router_filter([]) == "router:in()"
 
-    def test_endpoints_are_nested_under_hosts(self):
-        # A multi_terms over (host, path) trips the request circuit breaker on
-        # a multi-day window; the nested form is deliberate.
-        aggs = usage.build_usage_query(START, NOW, 1440, False, None)["aggs"]
-        assert "multi_terms" not in str(aggs)
-        assert aggs["hosts"]["aggs"]["paths"]["terms"]["field"] == "path"
+    def test_endpoints_are_ranked_exactly(self):
+        endpoints = usage.build_usage_queries(1440, False, None)["endpoints"]
+        assert "stats by (request_host, path)" in endpoints
+        assert f"limit {usage.TOP_ENDPOINTS}" in endpoints
 
     def test_timeline_follows_the_window(self):
-        assert usage.build_usage_query(START, NOW, 60, False, None)["aggs"]["timeline"][
-            "date_histogram"]["fixed_interval"] == "1m"
-        assert usage.build_usage_query(START, NOW, 10080, False, None)["aggs"]["timeline"][
-            "date_histogram"]["fixed_interval"] == "1h"
+        assert "_time:1m" in usage.build_usage_queries(60, False, None)["timeline"]
+        assert "_time:1h" in usage.build_usage_queries(10080, False, None)["timeline"]
 
 
 class TestTotals:
@@ -169,9 +130,16 @@ class TestTotals:
         assert result["endpoints"] == [] and result["by_stack"] == []
         assert result["stacks"] == ["intra-muros", "pulsarcd"]
 
+    def test_timeline_covers_the_window(self):
+        timeline = _summarize()["timeline"]
+        assert len(timeline) == 60
+        assert timeline[0] == {"timestamp": "2026-09-22T19:00:00.000Z", "avg_duration_ms": 12.3,
+                               "ok": 240, "client_errors": 55, "server_errors": 5}
+        assert timeline[1]["ok"] == 0 and timeline[1]["avg_duration_ms"] is None
+
 
 class TestEndpoints:
-    def test_endpoints_of_every_host_are_ranked_together(self):
+    def test_endpoints_keep_their_ranking(self):
         endpoints = _summarize()["endpoints"]
         assert [(e["host"], e["path"], e["requests"]) for e in endpoints] == [
             ("logs.methodinfo.fr", "/api/logs/search", 150),
@@ -193,7 +161,7 @@ class TestEndpoints:
         assert endpoint["avg_duration_ms"] == 30.0
         assert endpoint["max_duration_ms"] == 120.0
         assert endpoint["methods"] == ["GET"]
-        assert endpoint["last_seen"] == "2026-09-22T19:58:00.000Z"
+        assert endpoint["last_seen"] == "2026-09-22T19:58:00Z"
 
     def test_hosts_report_their_endpoint_count(self):
         hosts = _summarize()["hosts"]
@@ -230,50 +198,76 @@ class TestByStack:
             (r["requests"] for r in rows), reverse=True)
 
 
-class TestOpenSearchClient:
-    def _client(self):
-        from backend.config import OpenSearchConfig
-        from backend.opensearch_client import OpenSearchClient
-        return OpenSearchClient(OpenSearchConfig(hosts=["http://localhost:9200"]))
+class TestLogStore:
+    def _store(self):
+        from backend.config import VictoriaLogsConfig
+        from backend.log_store import LogStore
+        return LogStore(VictoriaLogsConfig())
 
     async def test_a_stack_selects_its_routers(self):
-        client = self._client()
-        search = AsyncMock(return_value=RESPONSE)
-        with patch.object(client._client, "search", search):
-            result = await client.get_usage_overview(minutes=60, stack="pulsarcd",
-                                                     router_stacks=ROUTER_STACKS)
-        await client.close()
-        assert search.await_args.kwargs["index"] == "pulsarcd-access"
-        should = search.await_args.kwargs["body"]["query"]["bool"]["filter"][-1]["bool"]["should"]
-        assert sorted(s["prefix"]["router"] for s in should) == ["pulsarcd-ws@", "pulsarcd@"]
+        store = self._store()
+        run = AsyncMock(return_value=ROWS)
+        with patch.object(store, "_run_queries", run):
+            result = await store.get_usage_overview(minutes=60, stack="pulsarcd",
+                                                    router_stacks=ROUTER_STACKS)
+        await store.close()
+        totals = run.await_args.args[0]["totals"]
+        assert 'router:="pulsarcd@"*' in totals and 'router:="pulsarcd-ws@"*' in totals
         assert result["stack"] == "pulsarcd"
         assert result["stacks"] == ["intra-muros", "pulsarcd"]
 
-    async def test_no_stack_queries_everything(self):
-        client = self._client()
-        search = AsyncMock(return_value=RESPONSE)
-        with patch.object(client._client, "search", search):
-            await client.get_usage_overview(minutes=60, router_stacks=ROUTER_STACKS)
-        await client.close()
-        assert len(search.await_args.kwargs["body"]["query"]["bool"]["filter"]) == 3
-
     async def test_an_unknown_stack_returns_no_request(self):
         # Rather than silently reporting the whole platform under its name.
-        client = self._client()
-        search = AsyncMock(return_value=RESPONSE)
-        with patch.object(client._client, "search", search):
-            await client.get_usage_overview(minutes=60, stack="gone",
-                                            router_stacks=ROUTER_STACKS)
-        await client.close()
-        assert search.await_args.kwargs["body"]["query"]["bool"]["filter"][-1]["bool"]["should"] == []
+        store = self._store()
+        run = AsyncMock(return_value={})
+        with patch.object(store, "_run_queries", run):
+            await store.get_usage_overview(minutes=60, stack="gone", router_stacks=ROUTER_STACKS)
+        await store.close()
+        assert "router:in()" in run.await_args.args[0]["totals"]
 
-    async def test_missing_index_returns_an_empty_overview(self):
-        client = self._client()
-        with patch.object(client._client, "search", AsyncMock(side_effect=Exception("index_not_found"))):
-            result = await client.get_usage_overview(minutes=60, router_stacks=ROUTER_STACKS)
-        await client.close()
+    async def test_unreachable_store_returns_an_empty_overview(self):
+        from shared.victorialogs import VictoriaLogsError
+        store = self._store()
+        with patch.object(store, "_run_queries", AsyncMock(side_effect=VictoriaLogsError("down"))):
+            result = await store.get_usage_overview(minutes=60, router_stacks=ROUTER_STACKS)
+        await store.close()
         assert result["error"] == "Access data unavailable"
         assert result["endpoints"] == [] and result["stacks"] == ["intra-muros", "pulsarcd"]
+
+
+class TestAgainstVictoriaLogs:
+    """The LogsQL itself, run by a real VictoriaLogs."""
+
+    async def test_overview_of_one_stack(self, vlogs):
+        import uuid
+        from datetime import timedelta
+
+        from backend.config import VictoriaLogsConfig
+        from backend.log_store import LogStore
+        from shared.victorialogs import KIND_ACCESS, access_row
+
+        store = LogStore(VictoriaLogsConfig(url=vlogs))
+        router = f"r{uuid.uuid4().hex[:8]}"
+        now = datetime.now(timezone.utc)
+        docs = [{"timestamp": now - timedelta(seconds=i), "host": "edge", "event": "request",
+                 "client_ip": f"198.51.100.{i % 5 + 1}", "internal": False, "request_host": "app.test",
+                 "method": "GET" if i % 2 else "POST", "path": "/api" if i < 30 else "/health",
+                 "uri": "/api", "status": 200 if i % 10 else 500, "router": f"{router}@swarm",
+                 "duration_ms": float(i), "size": 100} for i in range(40)]
+        await store.client.insert([access_row(d) for d in docs], KIND_ACCESS)
+        await store.client.flush()
+        result = await store.get_usage_overview(minutes=60, stack="mine", router_stacks={router: "mine"})
+        await store.close()
+
+        assert "error" not in result
+        totals = result["totals"]
+        assert totals["requests"] == 40 and totals["unique_ips"] == 5 and totals["server_errors"] == 4
+        assert totals["bytes"] == 4000 and totals["p50"] is not None
+        assert [(e["path"], e["requests"], e["stack"]) for e in result["endpoints"]] == [
+            ("/api", 30, "mine"), ("/health", 10, "mine")]
+        assert sorted(result["endpoints"][0]["methods"]) == ["GET", "POST"]
+        assert result["by_stack"][0]["stack"] == "mine" and result["by_stack"][0]["requests"] == 40
+        assert {m["key"] for m in result["methods"]} == {"GET", "POST"}
 
 
 class TestRouterStacks:
@@ -347,7 +341,7 @@ class TestUsageApi:
     def test_overview(self, client, auth_headers):
         payload = usage.empty_overview(360, True, "pulsarcd", ["pulsarcd"], NOW)
         mock = AsyncMock(return_value=payload)
-        with patch.object(api_module.opensearch, "get_usage_overview", mock), \
+        with patch.object(api_module.logstore, "get_usage_overview", mock), \
                 patch.object(api_module, "_get_router_stacks", AsyncMock(return_value=ROUTER_STACKS)):
             resp = client.get(
                 "/api/usage/overview?minutes=360&include_internal=true&stack=pulsarcd",
@@ -359,7 +353,7 @@ class TestUsageApi:
 
     def test_an_empty_stack_parameter_means_every_stack(self, client, auth_headers):
         mock = AsyncMock(return_value=usage.empty_overview(60, False, None, [], NOW))
-        with patch.object(api_module.opensearch, "get_usage_overview", mock), \
+        with patch.object(api_module.logstore, "get_usage_overview", mock), \
                 patch.object(api_module, "_get_router_stacks", AsyncMock(return_value={})):
             client.get("/api/usage/overview?stack=", headers=auth_headers)
         assert mock.await_args.kwargs["stack"] is None

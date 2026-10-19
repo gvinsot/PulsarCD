@@ -34,7 +34,7 @@ _AUTH_EXEMPT_PREFIXES = (
     "/ai",  # MCP has its own auth middleware
 )
 # Only the exact liveness probe is public.  "/api/health" is deliberately NOT a
-# prefix: sub-paths such as the OpenSearch diagnostic must stay authenticated.
+# prefix: sub-paths must stay authenticated.
 # The trailing-slash form is listed too -- it used to be covered by the old
 # prefix rule and reaches the same route through Starlette's redirect, so an
 # external probe configured with it would otherwise start reporting the service

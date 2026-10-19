@@ -294,7 +294,7 @@ class TestBlocklistApi:
         client.post("/api/security/blocklist", json={"ip": "45.9.12.7"}, headers=_headers())
         client.post("/api/security/blocklist", json={"ip": "103.4.8.0/24"}, headers=_headers())
 
-        with patch.object(api_module.opensearch, "get_security_overview",
+        with patch.object(api_module.logstore, "get_security_overview",
                           AsyncMock(return_value=payload)):
             ips = client.get("/api/security/overview", headers=_headers()).json()["ips"]
 

@@ -29,7 +29,8 @@ mcp_read = FastMCP(
         "Typical log workflow:\n"
         "1. Call get_log_metadata() to discover available services, containers, and hosts.\n"
         "2. Call search_logs(github_project='myrepo', last_hours=24) to browse recent logs.\n"
-        "3. For error counts per service: search_logs with opensearch_query and size=0 + aggs.\n\n"
+        "3. For counts or any statistics: search_logs with a logsql query, e.g. "
+        "'level:in(ERROR, FATAL) | stats by (compose_project) count() as errors'.\n\n"
         "Release workflow (read side):\n"
         "1. get_deployed_tags() shows what actually runs in production and QA "
         "versus the latest tag built.\n"
@@ -591,12 +592,12 @@ async def list_computers() -> str:
 )
 async def get_log_metadata() -> str:
     """Discover available hosts, services, containers and log levels."""
-    from .api import opensearch
+    from .api import logstore
 
-    if not opensearch:
-        return json.dumps({"error": "OpenSearch not available"})
+    if not logstore:
+        return json.dumps({"error": "Log store not available"})
 
-    meta = await opensearch.get_available_metadata()
+    meta = await logstore.get_available_metadata()
     return json.dumps(meta)
 
 
@@ -604,18 +605,18 @@ async def get_log_metadata() -> str:
 # Tool 7: search_logs
 # ---------------------------------------------------------------------------
 _SEARCH_DOCS = """
-Search logs stored in OpenSearch.
+Search the container logs stored in VictoriaLogs.
 
 ## Standard mode (use named parameters)
 
 Parameters:
-- query            Free-text search on the message field only. Supported:
-                   plain keywords, "quoted phrases", AND / OR / NOT, parentheses
-                   and a trailing wildcard (e.g. "timeout AND retry", "error*").
-                   NOT supported (silently matches nothing): field:value syntax,
-                   leading wildcards (*term), regular expressions (/re/) and
-                   fuzzy matching (term~2). Filter by field with hosts,
-                   containers, compose_services, levels instead.
+- query            Free-text search on the log message, case-insensitive.
+                   Supported: plain words, "quoted phrases", AND / OR / NOT
+                   (or -word), parentheses and a trailing wildcard (e.g.
+                   "timeout AND retry", "error*"). Words are matched whole:
+                   "error" does not match "errors", use "error*". field:value
+                   syntax is searched as literal text: filter by field with
+                   hosts, containers, compose_services, levels instead.
 - github_project   GitHub repo name (case-insensitive) — matched against the
                    compose_project field. E.g. "MyApp" → searches compose_project="myapp"
 - compose_services Comma-separated compose service names to filter on
@@ -634,38 +635,32 @@ Parameters:
 - from_offset      Pagination: skip first N results (default 0)
 
 Response fields:
-- total            Total number of matching documents
+- total            Total number of matching log lines
 - returned         Number of hits in this response
 - hits             List of log entries (timestamp, host, container, compose_project,
                    compose_service, level, http_status, message)
 - aggregations     Breakdown counts by level, host, container, compose_project
 
-## Raw OpenSearch mode (advanced)
+## LogsQL mode (statistics, advanced filters)
 
-Set opensearch_query to a JSON string containing a full OpenSearch request body.
-All standard parameters above are IGNORED when this is set.
-The raw OpenSearch response is returned as-is, with these limits enforced:
-- "size" is capped at 500 and "from" at 10000 (deep pagination is refused);
-- the request times out after 30s;
-- any body containing script, script_fields, script_score, scripted_metric or
-  runtime_mappings -- at any depth -- is refused with
-  {"error": "Query construct not allowed: script"}. This also rules out the
-  bucket_script / bucket_selector pipeline aggregations: compute ratios from
-  the returned bucket counts instead of asking OpenSearch to evaluate them.
+Set logsql to a LogsQL query (https://docs.victoriametrics.com/victorialogs/logsql/).
+The standard parameters above are IGNORED, except last_hours / start_time /
+end_time, which set the time window (default: the last 24 hours, at most 30
+days). The rows the query returns are returned as-is (every value is a
+string), at most `size` of them (default 50, max 500). The query only ever
+sees container logs, whatever it says; it times out after 30s.
 
-Example — error counts per service over the last 24 hours:
-  opensearch_query = '{
-    "query": {"bool": {"filter": [
-      {"range": {"timestamp": {"gte": "now-24h"}}},
-      {"terms": {"level": ["ERROR","FATAL","CRITICAL"]}}
-    ]}},
-    "size": 0,
-    "aggs": {"by_project": {"terms": {"field": "compose_project", "size": 50}}}
-  }'
+Fields: _time, _msg (the message), host, container_id, container_name,
+compose_project, compose_service, stream, level, http_status, parsed_fields
+(the line's structured fields, as a JSON string).
 
-Available index fields: timestamp, host, container_name, container_id,
-  compose_project, compose_service, level, message, http_status,
-  network_rx_bytes, network_tx_bytes, stream.
+Examples:
+  error counts per service:
+    logsql = 'level:in(ERROR, FATAL, CRITICAL) | stats by (compose_project) count() as errors | sort by (errors desc)'
+  5xx per hour for one service:
+    logsql = 'compose_project:=myapp http_status:>=500 | stats by (_time:1h) count() as n'
+  latest lines mentioning a timeout, case-insensitive:
+    logsql = 'i(timeout) | sort by (_time desc) limit 20 | fields _time, container_name, _msg'
 
 Call get_log_metadata() first to discover valid values for host, compose_project, etc.
 """
@@ -687,58 +682,40 @@ async def search_logs(
     sort_order: str = "desc",
     size: int = 50,
     from_offset: int = 0,
-    opensearch_query: Optional[str] = None,
+    logsql: Optional[str] = None,
 ) -> str:
-    """Search logs — standard filters or raw OpenSearch query."""
-    from .api import opensearch
+    """Search logs — standard filters or a LogsQL query."""
+    from .api import logstore
     from .models import LogSearchQuery
+    from shared.victorialogs import VictoriaLogsError
 
-    if not opensearch:
-        return json.dumps({"error": "OpenSearch not available"})
+    if not logstore:
+        return json.dumps({"error": "Log store not available"})
 
-    # ── Raw OpenSearch passthrough ──────────────────────────────────────────
-    if opensearch_query:
+    # Time window: last_hours shorthand
+    try:
+        parsed_start = datetime.fromisoformat(start_time) if start_time else None
+        parsed_end = datetime.fromisoformat(end_time) if end_time else None
+    except ValueError as exc:
+        return json.dumps({"error": f"Invalid start_time / end_time: {exc}"})
+    if last_hours is not None and parsed_start is None and parsed_end is None:
+        from datetime import timedelta
+        parsed_start = datetime.utcnow() - timedelta(hours=max(1, min(last_hours, 720)))
+
+    # ── LogsQL passthrough ──────────────────────────────────────────────────
+    if logsql:
         try:
-            body = json.loads(opensearch_query)
-        except json.JSONDecodeError as exc:
-            return json.dumps({"error": f"Invalid JSON in opensearch_query: {exc}"})
-        try:
-            raw = await opensearch.run_logs_query(body)
-        except Exception as exc:
+            rows = await logstore.run_logsql(logsql, start=parsed_start, end=parsed_end,
+                                             limit=size if size > 0 else 50)
+        except VictoriaLogsError as exc:
             return json.dumps({"error": str(exc)})
-        # Return a clean subset of the raw response
-        total = raw.get("hits", {}).get("total", {})
-        total_count = total.get("value", total) if isinstance(total, dict) else total
-        hits_out = [
-            {k: v for k, v in h.get("_source", {}).items()}
-            for h in raw.get("hits", {}).get("hits", [])
-        ]
-        aggs_out = {}
-        for key, agg in raw.get("aggregations", {}).items():
-            if "buckets" in agg:
-                aggs_out[key] = [
-                    {"key": b.get("key"), "count": b.get("doc_count")}
-                    for b in agg["buckets"]
-                ]
-            else:
-                aggs_out[key] = agg
-        return json.dumps(
-            {"total": total_count, "returned": len(hits_out), "hits": hits_out, "aggregations": aggs_out},
-            default=str,
-        )
+        return json.dumps({"returned": len(rows), "rows": rows}, default=str)
 
     # ── Standard filtered search ────────────────────────────────────────────
     # Resolve github_project → compose_project (lowercased)
     projects = []
     if github_project:
         projects = [github_project.strip().lower()]
-
-    # Time window: last_hours shorthand
-    parsed_start = datetime.fromisoformat(start_time) if start_time else None
-    parsed_end = datetime.fromisoformat(end_time) if end_time else None
-    if last_hours is not None and parsed_start is None and parsed_end is None:
-        from datetime import timedelta
-        parsed_start = datetime.utcnow() - timedelta(hours=max(1, min(last_hours, 720)))
 
     search_query = LogSearchQuery(
         query=query,
@@ -758,7 +735,7 @@ async def search_logs(
         **{"from": min(max(from_offset, 0), 10000)},
     )
 
-    result = await opensearch.search_logs(search_query)
+    result = await logstore.search_logs(search_query)
 
     hits = [
         {

@@ -1,14 +1,73 @@
 """Shared pytest fixtures for PulsarCD tests.
 
-All external infrastructure (OpenSearch, Collector, GitHub) is replaced with
-AsyncMock objects so tests run without any real services.
+The API tests replace all external infrastructure (log store, Collector,
+GitHub) with AsyncMock objects. The storage tests run against a real
+VictoriaLogs instead (the ``vlogs`` fixture): the binary on PATH, started on a
+temporary directory (the test image ships it), or an instance named by
+VL_TEST_URL. Without either, those tests are skipped.
 """
 
+import os
+import shutil
+import socket
+import subprocess
+import time
+import urllib.request
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
+
+
+# ---------------------------------------------------------------------------
+# Real VictoriaLogs for the storage tests
+# ---------------------------------------------------------------------------
+
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def _healthy(url: str) -> bool:
+    try:
+        with urllib.request.urlopen(f"{url}/health", timeout=2) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+
+@pytest.fixture(scope="session")
+def vlogs(tmp_path_factory):
+    """Base URL of a VictoriaLogs instance the tests may write to."""
+    url = os.environ.get("VL_TEST_URL")
+    if url:
+        if not _healthy(url):
+            pytest.skip(f"VL_TEST_URL={url} is not reachable")
+        yield url.rstrip("/")
+        return
+    binary = shutil.which("victoria-logs") or shutil.which("victoria-logs-prod")
+    if not binary:
+        pytest.skip("no VictoriaLogs binary on PATH and no VL_TEST_URL")
+    port = _free_port()
+    process = subprocess.Popen(
+        [binary, f"-storageDataPath={tmp_path_factory.mktemp('vlogs')}",
+         f"-httpListenAddr=127.0.0.1:{port}", "-retentionPeriod=100y", "-loggerLevel=ERROR"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    url = f"http://127.0.0.1:{port}"
+    deadline = time.monotonic() + 20
+    while not _healthy(url):
+        if process.poll() is not None or time.monotonic() > deadline:
+            process.kill()
+            pytest.fail("VictoriaLogs did not start")
+        time.sleep(0.1)
+    yield url
+    process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
 
 
 # ---------------------------------------------------------------------------
@@ -18,7 +77,7 @@ from fastapi.testclient import TestClient
 def _mock_settings():
     from backend.config import (
         AuthConfig, CollectorConfig, GitHubConfig,
-        MCPConfig, OpenSearchConfig, SwarmConfig,
+        MCPConfig, SwarmConfig, VictoriaLogsConfig,
     )
     s = MagicMock()
     s.auth = AuthConfig(
@@ -31,7 +90,7 @@ def _mock_settings():
         jwt_expiry_hours=1,
         agent_key="test-agent-key",
     )
-    s.opensearch = OpenSearchConfig(hosts=["http://localhost:9200"])
+    s.victorialogs = VictoriaLogsConfig(url="http://localhost:9428")
     s.collector = CollectorConfig()
     s.github = GitHubConfig()
     s.swarm = SwarmConfig(secret_key="")
@@ -41,7 +100,7 @@ def _mock_settings():
     return s
 
 
-def _mock_opensearch():
+def _mock_logstore():
     m = AsyncMock()
     m.get_dashboard_stats = AsyncMock(return_value={
         "total_logs": 0, "error_count": 0, "warn_count": 0,
@@ -50,8 +109,7 @@ def _mock_opensearch():
     m.get_latest_container_stats = AsyncMock(return_value={})
     m.search_logs = AsyncMock(return_value={"hits": [], "total": 0})
     m.close = AsyncMock()
-    m.index_health = MagicMock(return_value="ok")
-    m.index_status = MagicMock(return_value={})
+    m.health = AsyncMock(return_value=True)
     return m
 
 
@@ -123,7 +181,7 @@ def client(tmp_path_factory):
     from backend.ip_blocklist import IpBlocklist
 
     mock_settings = _mock_settings()
-    mock_os = _mock_opensearch()
+    mock_store = _mock_logstore()
     mock_col = _mock_collector()
     mock_gh = _mock_github()
     mock_um = _mock_user_manager()
@@ -137,7 +195,7 @@ def client(tmp_path_factory):
     async def _test_lifespan(app):
         # Inject mocks directly into the module's globals
         api_module.settings = mock_settings
-        api_module.opensearch = mock_os
+        api_module.logstore = mock_store
         api_module.collector = mock_col
         api_module.github_service = mock_gh
         api_module.error_detector = None

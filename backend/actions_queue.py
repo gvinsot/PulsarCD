@@ -16,9 +16,9 @@ lose queued work:
 * agents' ``last_seen`` is restored, so ``/api/agents`` and the "is an agent
   online for this host" routing keep working through a restart.
 
-Why a JSON file rather than OpenSearch: the queue is tiny and short-lived
+Why a JSON file rather than VictoriaLogs: the queue is tiny and short-lived
 (actions expire after a minute and finished ones are dropped after five), it
-sits on the agent polling hot path, and it must be usable before OpenSearch is
+sits on the agent polling hot path, and it must be usable before VictoriaLogs is
 reachable at startup.  A file on the data volume, like ``pipeline_state.json``,
 gives synchronous, read-your-writes persistence with no new dependency.
 

@@ -1,4 +1,4 @@
-"""AI Service for natural language to OpenSearch query conversion using vLLM (OpenAI-compatible API)."""
+"""AI Service turning natural-language questions about logs into search filters (vLLM, OpenAI-compatible API)."""
 
 import json
 import re
@@ -14,7 +14,7 @@ def build_system_prompt(metadata: Optional[Dict[str, Any]] = None) -> str:
     """Build system prompt with dynamic context from available metadata."""
 
     # Base prompt structure
-    base_prompt = """You are an AI assistant that converts natural language questions about logs into OpenSearch query parameters.
+    base_prompt = """You are an AI assistant that converts natural language questions about logs into log search parameters.
 
 You must respond with a valid JSON object containing these fields:
 - query: string or null (free-text search on the message field only)
@@ -27,37 +27,17 @@ You must respond with a valid JSON object containing these fields:
 - time_range: string (relative time: "5m", "10m", "1h", "6h", "24h", "7d") or null
 - sort_order: "desc" or "asc"
 
-These parameters are converted into an OpenSearch query with the following structure:
-{
-  "query": {
-    "bool": {
-      "must": [
-        {"simple_query_string": {"query": "search terms", "fields": ["message"], "default_operator": "or"}}
-      ],
-      "filter": [
-        {"terms": {"host": ["host1", "host2"]}},
-        {"terms": {"container_name": ["container1", "container2"]}},
-        {"terms": {"compose_project": ["project1"]}},
-        {"terms": {"level": ["ERROR", "WARN"]}},
-        {"range": {"http_status": {"gte": 400, "lte": 499}}},
-        {"range": {"timestamp": {"gte": "2024-01-01T00:00:00", "lte": "2024-01-02T00:00:00"}}}
-      ]
-    }
-  },
-  "sort": [{"timestamp": {"order": "desc"}}],
-  "from": 0,
-  "size": 100
-}
+These parameters are combined (AND) into a filter over the stored log lines.
 
-Available log fields in OpenSearch:
+Available log fields:
 - timestamp: ISO datetime string
-- host: string (keyword field - exact match only)
-- container_name: string (keyword field - exact match only)
-- container_id: string (keyword field)
-- compose_project: string (keyword field - Docker Compose project name)
-- compose_service: string (keyword field - Docker Compose service name)
-- message: string (text field, full-text searchable; trailing wildcard "term*" only)
-- level: string (keyword - exact match)
+- host: string (exact match only)
+- container_name: string (exact match only)
+- container_id: string
+- compose_project: string (Docker Compose project name, exact match)
+- compose_service: string (Docker Compose service name, exact match)
+- message: string (full-text searchable, case-insensitive; whole words, trailing wildcard "term*")
+- level: string (exact match)
 - http_status: integer (HTTP status code, e.g., 200, 404, 500)
 - stream: string (stdout or stderr)
 
@@ -68,15 +48,16 @@ IMPORTANT RULES:
 4. The "levels" field filters by log level - use it for ERROR, WARN, INFO, DEBUG
 5. If searching for a service/container by name, put it in "containers" array, NOT in "query"
 6. Use "compose_projects" to filter by Docker Compose stack/project name
-7. The "query" field is executed as a simple_query_string restricted to the
-   message field. Only these forms work: plain keywords, "quoted phrases",
-   AND / OR / NOT, parentheses, and a trailing wildcard (term*).
-8. NEVER put field:value syntax in "query" (it is searched as literal words in
-   the message text and matches nothing). Filter by field with the hosts,
+7. The "query" field searches the message text only, case-insensitively.
+   Only these forms work: plain words, "quoted phrases", AND / OR / NOT (or
+   -word), parentheses, and a trailing wildcard (term*). Words match whole:
+   "error" does not match "errors", write "error*" for that.
+8. NEVER put field:value syntax in "query" (it is searched as literal text in
+   the message and matches nothing). Filter by field with the hosts,
    containers, compose_projects and levels arrays instead.
 9. NEVER use a leading wildcard (*term), a regular expression (/re/) or fuzzy
-   matching (term~2) in "query": they are disabled and silently return no
-   result."""
+   matching (term~2) in "query": they are searched as literal text and match
+   nothing."""
 
     # Add dynamic context if metadata is provided
     if metadata:
@@ -221,7 +202,7 @@ class AIService:
         return None
 
     async def convert_to_query(self, natural_query: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Convert natural language question to OpenSearch query parameters.
+        """Convert a natural language question into log search parameters.
 
         Args:
             natural_query: The user's natural language question

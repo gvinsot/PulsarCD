@@ -30,7 +30,7 @@ async def get_security_overview(
     include_internal: bool = Query(default=False),
 ):
     """Suspicious client IPs and hot endpoints, from the Traefik access logs."""
-    overview = await api.opensearch.get_security_overview(
+    overview = await api.logstore.get_security_overview(
         minutes=minutes, include_internal=include_internal)
     # Which of those clients the edge is already refusing.  Resolved here
     # rather than in the browser because an address can be blocked through a
@@ -55,7 +55,7 @@ async def get_security_ip_events(
         "ip": normalized,
         "internal": is_internal_ip(normalized),
         "blocked": api.ip_blocklist.blocked_entry(normalized) if api.ip_blocklist else None,
-        "events": await api.opensearch.get_security_ip_events(normalized, minutes=minutes),
+        "events": await api.logstore.get_security_ip_events(normalized, minutes=minutes),
     }
 
 

@@ -405,7 +405,7 @@ class TestSources:
     async def test_recurring_error_notifies(self):
         from backend.error_detector import ErrorPattern, RecurringErrorDetector
 
-        detector = RecurringErrorDetector(opensearch_client=AsyncMock(), llm_agent=None)
+        detector = RecurringErrorDetector(logstore=AsyncMock(), llm_agent=None)
         pattern = ErrorPattern("abc123", "Connection refused", "api", "shop")
         pattern.count = 7
         with patch("backend.error_detector.notify_recurring_error") as notify:

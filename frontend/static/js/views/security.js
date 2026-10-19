@@ -35,7 +35,7 @@ function securityWindow() {
     return document.getElementById('security-window').value;
 }
 
-/** Access-index timestamps are UTC; those read from _source carry no zone. */
+/** Access-record timestamps are UTC; one written without a zone is taken as such. */
 function parseUtc(iso) {
     if (!iso) return null;
     return new Date(/(Z|[+-]\d\d:?\d\d)$/.test(iso) ? iso : `${iso}Z`);

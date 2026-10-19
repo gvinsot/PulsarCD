@@ -60,10 +60,10 @@ async def get_hosts_metrics() -> Dict[str, Dict[str, Any]]:
     """
     result = {}
     
-    # Get latest host metrics from OpenSearch
+    # Get latest host metrics from the log store
     try:
         for host_name in api.collector.clients.keys():
-            metrics = await api.opensearch.get_latest_host_metrics(host_name)
+            metrics = await api.logstore.get_latest_host_metrics(host_name)
             if metrics:
                 result[host_name] = metrics
     except Exception as e:

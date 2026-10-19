@@ -20,30 +20,17 @@ router = APIRouter()
 
 @router.get("/api/health")
 async def health_check() -> Dict[str, Any]:
-    """Public liveness probe: service status and OpenSearch reachability only.
+    """Public liveness probe: service status and VictoriaLogs reachability only.
 
     This is the single unauthenticated endpoint, so it must not disclose
-    anything about the deployment.  Versions, index names and document counts
-    live in the admin-only diagnostics (/api/admin/opensearch-status and
-    /api/admin/opensearch-probe).
+    anything about the deployment.  Versions and record counts live in the
+    admin-only diagnostics (/api/admin/victorialogs-status and
+    /api/admin/victorialogs-probe).
     """
     result: Dict[str, Any] = {"status": "healthy", "service": "pulsarcd"}
-
-    if api.opensearch and api.opensearch._client:
-        try:
-            await api.opensearch._client.info()
-            result["opensearch"] = "connected"
-            # Coarse only ("ok" / "migrating" / "degraded"): details are in
-            # /api/admin/opensearch-status.
-            index_health = api.opensearch.index_health()
-            if isinstance(index_health, str):
-                result["indices"] = index_health
-        except Exception as e:
-            # The error type/message can leak host names or credentials: log it
-            # server-side and expose only the coarse state.
-            logger.warning("Health check: OpenSearch unreachable", error=str(e))
-            result["opensearch"] = "error"
+    if api.logstore:
+        # Never the error itself: it can carry host names or credentials.
+        result["victorialogs"] = "connected" if await api.logstore.health() else "error"
     else:
-        result["opensearch"] = "not_configured"
-
+        result["victorialogs"] = "not_configured"
     return result

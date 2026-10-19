@@ -60,7 +60,7 @@ async def get_containers_states(
     containers = await api.collector.get_all_containers(refresh=refresh)
 
     # Fetch latest stats
-    latest_stats = await api.opensearch.get_latest_container_stats()
+    latest_stats = await api.logstore.get_latest_container_stats()
 
     result = []
     for c in containers:
@@ -100,7 +100,7 @@ async def list_containers_grouped(
         containers = [c for c in containers if c.status == status]
     
     # Fetch latest stats for all containers (single query)
-    latest_stats = await api.opensearch.get_latest_container_stats()
+    latest_stats = await api.logstore.get_latest_container_stats()
     
     # Enrich containers with stats
     for container in containers:
@@ -267,9 +267,9 @@ async def get_container_metrics(
 ) -> Dict[str, Any]:
     """Return CPU%, memory% and error-count time series for a container."""
     hours, interval = _PERIOD_MAP.get(period, _PERIOD_MAP["7d"])
-    if not api.opensearch:
+    if not api.logstore:
         return {"cpu": [], "memory": [], "errors": []}
-    return await api.opensearch.get_container_metrics_timeseries(container_id, hours, interval)
+    return await api.logstore.get_container_metrics_timeseries(container_id, hours, interval)
 
 
 @router.get("/api/containers/{host}/{container_id}/logs")

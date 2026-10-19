@@ -1,14 +1,13 @@
 """Traefik access-log and Coraza WAF parsing for the security view.
 
 Traefik writes one JSON object per request (accessLog.format: json) and the
-Coraza WAF plugin writes one text line per blocked request. The logs index
-keeps the JSON in a disabled object, so it cannot answer "which IP sent the
-most requests" or "which endpoint is being hammered". Each such line is
-therefore also turned into a flat document for the access index, where the
-client IP, host and path are fields that can be aggregated.
+Coraza WAF plugin writes one text line per blocked request. A log line keeps
+that JSON whole, as a string, so it cannot answer "which IP sent the most
+requests" or "which endpoint is being hammered". Each such line is therefore
+also turned into a flat ``kind=access`` record, where the client IP, host and
+path are fields that can be aggregated.
 
-Shared by the agent (which writes the documents) and the backend (which
-creates the index and queries it), so both use the same mapping.
+Shared by the agents and the backend, which both write these records.
 """
 
 import ipaddress
@@ -23,41 +22,6 @@ MAX_RULE_MSG_LENGTH = 256
 
 EVENT_REQUEST = "request"
 EVENT_WAF_BLOCK = "waf_block"
-
-ACCESS_INDEX_MAPPING = {
-    "mappings": {
-        # Unknown fields are kept in _source but never mapped: a dynamically
-        # mapped field could later conflict with the declared mapping and
-        # force a full reindex (see shared/index_aliases.py).
-        "dynamic": False,
-        "properties": {
-            "timestamp": {"type": "date"},
-            "host": {"type": "keyword"},
-            "event": {"type": "keyword"},
-            "client_ip": {"type": "ip"},
-            "internal": {"type": "boolean"},
-            "request_host": {"type": "keyword"},
-            "method": {"type": "keyword"},
-            "path": {"type": "keyword"},
-            # Full request URI with its query string, for the per-IP detail
-            # only: stored, never searched or aggregated.
-            "uri": {"type": "keyword", "index": False, "doc_values": False},
-            "status": {"type": "integer"},
-            "router": {"type": "keyword"},
-            "entrypoint": {"type": "keyword"},
-            "duration_ms": {"type": "float"},
-            "size": {"type": "long"},
-            "user_agent": {"type": "keyword"},
-            "rule_id": {"type": "keyword"},
-            "rule_msg": {"type": "keyword"},
-        },
-    },
-    "settings": {
-        "number_of_shards": 1,
-        "number_of_replicas": 0,
-        "index.refresh_interval": "5s",
-    },
-}
 
 # Keys every Traefik JSON access-log line carries; together they are specific
 # enough that no other container's JSON logs are mistaken for one.
@@ -167,7 +131,7 @@ def _from_coraza(entry: Dict[str, Any], message: str) -> Optional[Dict[str, Any]
 
 
 def build_access_doc(entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Access-index document for a collected log entry.
+    """Access record for a collected log entry.
 
     Returns None unless the entry is a Traefik access-log line or a Coraza
     denial, or when its client address cannot be parsed.

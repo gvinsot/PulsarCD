@@ -27,7 +27,7 @@ router = APIRouter()
 @router.post("/api/logs/search", response_model=LogSearchResult)
 async def search_logs(query: LogSearchQuery) -> LogSearchResult:
     """Search logs with filters."""
-    return await api.opensearch.search_logs(query)
+    return await api.logstore.search_logs(query)
 
 
 @router.get("/api/logs/search")
@@ -41,7 +41,7 @@ async def search_logs_get(
     http_status_max: Optional[int] = Query(default=None),
     start_time: Optional[datetime] = Query(default=None),
     end_time: Optional[datetime] = Query(default=None),
-    # Bounds mirror opensearch_client.MAX_SEARCH_SIZE / MAX_SEARCH_FROM so an
+    # Bounds mirror log_store.MAX_SEARCH_SIZE / MAX_SEARCH_FROM so an
     # out-of-range request is refused rather than silently truncated.
     size: int = Query(default=100, ge=1, le=500),
     from_: int = Query(default=0, ge=0, le=10000, alias="from"),
@@ -62,14 +62,14 @@ async def search_logs_get(
         from_=from_,
         sort_order=sort_order,
     )
-    return await api.opensearch.search_logs(query)
+    return await api.logstore.search_logs(query)
 
 
 # ============== AI Query ==============
 
 @router.post("/api/logs/ai-search")
 async def ai_search_logs(request: Dict[str, str]) -> Dict[str, Any]:
-    """Convert natural language query to OpenSearch query and execute."""
+    """Convert a natural-language question into search filters and run them."""
     from ..ai_service import get_ai_service
     
     natural_query = request.get("question", "")
@@ -79,7 +79,7 @@ async def ai_search_logs(request: Dict[str, str]) -> Dict[str, Any]:
     ai = get_ai_service()
     
     # Get available metadata for better AI context (RAG)
-    metadata = await api.opensearch.get_available_metadata()
+    metadata = await api.logstore.get_available_metadata()
     
     # Convert natural language to query params with metadata context
     params = await ai.convert_to_query(natural_query, metadata)
@@ -115,7 +115,7 @@ async def ai_search_logs(request: Dict[str, str]) -> Dict[str, Any]:
         sort_order=params.get("sort_order") if params.get("sort_order") in ("asc", "desc") else "desc",
     )
     
-    result = await api.opensearch.search_logs(query)
+    result = await api.logstore.search_logs(query)
     
     return {
         "query_params": params,
@@ -153,7 +153,7 @@ async def get_similar_logs_count(request: Dict[str, Any]) -> Dict[str, Any]:
     if not message:
         return {"count": 0}
     
-    count = await api.opensearch.count_similar_logs(message, container_name, hours)
+    count = await api.logstore.count_similar_logs(message, container_name, hours)
     
     return {"count": count}
 

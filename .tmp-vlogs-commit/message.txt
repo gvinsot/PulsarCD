@@ -1,0 +1,11 @@
+feat(storage): replace OpenSearch with VictoriaLogs
+
+Move ingestion, log search, metrics, security analytics and pipeline history
+to VictoriaLogs and LogsQL. Update agents, backend APIs, MCP, UI labels,
+Docker services, configuration and tests.
+
+Start with a new store without importing existing OpenSearch history.
+
+Validation: 831 targeted tests passed; 3 real-VictoriaLogs integration tests
+skipped locally because no instance was available. Docker build and live
+deployment validation remain pending.

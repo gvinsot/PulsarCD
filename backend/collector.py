@@ -8,7 +8,7 @@ import structlog
 
 from .config import Settings
 from .models import ContainerInfo, ContainerStatus
-from .opensearch_client import OpenSearchClient
+from .log_store import LogStore
 from .host_client import create_host_client, HostClientProtocol, SwarmProxyClient
 
 logger = structlog.get_logger()
@@ -17,9 +17,9 @@ logger = structlog.get_logger()
 class Collector:
     """Collects logs and metrics from all configured hosts."""
 
-    def __init__(self, settings: Settings, opensearch: OpenSearchClient):
+    def __init__(self, settings: Settings, logstore: LogStore):
         self.settings = settings
-        self.opensearch = opensearch
+        self.logstore = logstore
         self.clients: Dict[str, HostClientProtocol] = {}
         self._running = False
         # Store the timestamp of the LAST LOG received (not the fetch time)
@@ -70,9 +70,6 @@ class Collector:
         else:
             logger.info("Backend collection disabled (agents_only=true) - agents handle logs/metrics")
 
-        # Always run cleanup loop (to remove old data)
-        asyncio.create_task(self._cleanup_loop())
-
         # Start node discovery refresh loop if auto-discovery is enabled
         if self._swarm_autodiscover_enabled:
             asyncio.create_task(self._node_discovery_loop())
@@ -107,17 +104,6 @@ class Collector:
             
             await asyncio.sleep(self.settings.collector.metrics_interval_seconds)
     
-    async def _cleanup_loop(self):
-        """Periodically cleanup old data."""
-        while self._running:
-            try:
-                await self.opensearch.cleanup_old_data(self.settings.collector.retention_days)
-            except Exception as e:
-                logger.error("Cleanup error", error=str(e))
-
-            # Run cleanup once per hour
-            await asyncio.sleep(3600)
-
     async def _node_discovery_loop(self):
         """Periodically refresh discovered Swarm nodes."""
         while self._running:
@@ -253,13 +239,17 @@ class Collector:
                     task_id=task_id,
                 )
                 
+                # Docker's `since` has a one-second resolution, so the lines
+                # of the last collected second come back: drop what was sent.
+                if last_timestamp is not None:
+                    logs = [entry for entry in logs if entry.timestamp > last_timestamp]
+
                 if logs:
-                    await self.opensearch.index_logs(logs)
-                    
-                    # Update with the timestamp of the MOST RECENT log
-                    # Add a tiny offset to avoid duplicates on next fetch
+                    await self.logstore.index_logs(logs)
+
+                    # The newest line sent; later fetches only keep newer ones.
                     newest_log = max(logs, key=lambda x: x.timestamp)
-                    self._last_log_timestamp[container_key] = newest_log.timestamp + timedelta(milliseconds=1)
+                    self._last_log_timestamp[container_key] = newest_log.timestamp
                     
                     logger.debug(
                         "Collected logs", 
@@ -285,7 +275,7 @@ class Collector:
         try:
             # Host-level metrics
             host_metrics = await client.get_host_metrics()
-            await self.opensearch.index_host_metrics(host_metrics)
+            await self.logstore.index_host_metrics(host_metrics)
             
             # Container-level metrics - only for containers we can actually access
             containers = self._containers_cache.get(host_name, [])
@@ -294,6 +284,7 @@ class Collector:
             # Check if this is an autodiscovered node (not in original clients list)
             is_autodiscovered = host_name in self._discovered_nodes
             
+            batch = []
             for container in running:
                 # Skip stats for containers on autodiscovered Swarm nodes
                 # because we can't access /containers/{id}/stats through the manager
@@ -302,7 +293,8 @@ class Collector:
                 
                 stats = await client.get_container_stats(container.id, container.name)
                 if stats:
-                    await self.opensearch.index_container_stats(stats)
+                    batch.append(stats)
+            await self.logstore.index_container_stats_batch(batch)
             
             logger.debug("Collected metrics", host=host_name, containers=len(running), 
                         autodiscovered=is_autodiscovered)
@@ -508,7 +500,7 @@ class Collector:
         """Get current stats for a specific container.
 
         For Swarm containers on worker nodes, stats are fetched by connecting
-        to the worker node (if SSH is configured) or falls back to OpenSearch.
+        to the worker node (if SSH is configured) or falls back to the log store.
         """
         container = await self._find_container(host, container_id)
         if not container:
@@ -538,14 +530,14 @@ class Collector:
                 if stats:
                     return stats.model_dump()
                 # Stats not available for remote Swarm containers without SSH
-                logger.debug("Stats not available for remote Swarm container, falling back to OpenSearch", 
+                logger.debug("Stats not available for remote Swarm container, falling back to the log store",
                            container=container_id, host=host)
         
-        # Fallback to OpenSearch for the latest stored stats
-        logger.debug("Falling back to OpenSearch for container stats", container=container_id, host=host)
-        opensearch_stats = await self.opensearch.get_latest_stats_for_container(container.id)
-        if opensearch_stats:
-            return opensearch_stats
+        # Fallback to the latest stats stored in the log store
+        logger.debug("Falling back to the log store for container stats", container=container_id, host=host)
+        stored_stats = await self.logstore.get_latest_stats_for_container(container.id)
+        if stored_stats:
+            return stored_stats
         
         # Return default empty stats if no stats available anywhere (container exists but no metrics)
         return {

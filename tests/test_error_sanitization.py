@@ -58,12 +58,12 @@ def boom_client():
 
     # Reuse the standard mocked lifespan from conftest by patching it inline.
     from tests.conftest import (
-        _mock_settings, _mock_opensearch, _mock_collector,
+        _mock_settings, _mock_logstore, _mock_collector,
         _mock_github, _mock_user_manager,
     )
 
     mock_settings = _mock_settings()
-    mock_os = _mock_opensearch()
+    mock_store = _mock_logstore()
     mock_col = _mock_collector()
     mock_gh = _mock_github()
     mock_um = _mock_user_manager()
@@ -71,7 +71,7 @@ def boom_client():
     @asynccontextmanager
     async def _test_lifespan(app):
         api_module.settings = mock_settings
-        api_module.opensearch = mock_os
+        api_module.logstore = mock_store
         api_module.collector = mock_col
         api_module.github_service = mock_gh
         api_module.error_detector = None

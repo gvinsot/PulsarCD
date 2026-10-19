@@ -46,49 +46,25 @@ class TestHealth:
     def test_health_payload_is_minimal(self, client):
         """The only public endpoint must not disclose the deployment."""
         data = client.get("/api/health").json()
-        assert set(data) <= {"status", "service", "opensearch", "indices"}
+        assert set(data) <= {"status", "service", "victorialogs"}
         assert data["service"] == "pulsarcd"
         # No version strings and no per-index document counts
         assert not [k for k in data if "version" in k or k.endswith("_docs")]
 
     def test_health_subpaths_are_not_exempt(self, client):
         """Only the exact /api/health path is public."""
-        resp = client.get("/api/health/opensearch")
+        resp = client.get("/api/health/victorialogs")
         assert resp.status_code == 401
 
 
 # ---------------------------------------------------------------------------
-# OpenSearch probe (deep diagnostic, admin only)
+# VictoriaLogs probe (deep diagnostic, admin only)
 # ---------------------------------------------------------------------------
 
-def _fake_opensearch_for_probe():
-    """Minimal OpenSearch double covering every call made by the probe."""
-    fake_client = AsyncMock()
-    fake_client.info.return_value = {
-        "cluster_name": "test-cluster",
-        "version": {"number": "2.11.0", "distribution": "opensearch"},
-    }
-    fake_client.cat.indices = AsyncMock(return_value=[])
-    fake_client.index.return_value = {"result": "created", "_index": "logs", "_version": 1}
-    fake_client.bulk.return_value = {"errors": False, "items": [{"index": {"status": 201}}]}
-    fake_client.get.return_value = {"found": True}
-    fake_client.delete.return_value = {}
-    fake_client.search.return_value = {
-        "hits": {
-            "total": {"value": 42},
-            "hits": [{"_source": {"message": "super-secret-production-log", "host": "prod-1"}}],
-        }
-    }
-    fake_os = MagicMock()
-    fake_os._client = fake_client
-    fake_os.logs_index = "pulsarcd-logs"
-    return fake_os
+class TestVictoriaLogsProbe:
+    """The probe writes a self-test record: admin only."""
 
-
-class TestOpenSearchProbe:
-    """The deep probe writes documents and enumerates indices: admin only."""
-
-    PROBE_PATH = "/api/admin/opensearch-probe"
+    PROBE_PATH = "/api/admin/victorialogs-probe"
 
     def test_probe_requires_authentication(self, client):
         resp = client.get(self.PROBE_PATH)
@@ -99,23 +75,28 @@ class TestOpenSearchProbe:
         assert resp.status_code == 403
         assert resp.json()["detail"] == "Admin access required"
 
-    def test_probe_reachable_by_admin(self, client):
-        with patch.object(api_module, "opensearch", None):
+    def test_probe_without_store(self, client):
+        with patch.object(api_module, "logstore", None):
             resp = client.get(self.PROBE_PATH, headers=_role_headers("admin"))
         assert resp.status_code == 200
-        assert resp.json()["error"] == "OpenSearch client not configured"
+        assert resp.json()["error"] == "Log store not configured"
 
-    def test_probe_does_not_return_log_content(self, client):
-        """Log lines are replaced by a count, even behind the admin gate."""
-        with patch.object(api_module, "opensearch", _fake_opensearch_for_probe()):
+    def test_probe_reports_the_round_trip(self, client):
+        store = MagicMock()
+        store.probe = AsyncMock(return_value={"marker": "probe-1", "write": "ok", "read": "ok", "ok": True})
+        with patch.object(api_module, "logstore", store):
             resp = client.get(self.PROBE_PATH, headers=_role_headers("admin"))
         assert resp.status_code == 200
-        search_test = resp.json()["search_test"]
-        assert search_test["status"] == "ok"
-        assert search_test["total_docs"] == 42
-        assert search_test["sample_count"] == 1
-        assert "sample_hits" not in search_test
-        assert "super-secret-production-log" not in resp.text
+        assert resp.json()["ok"] is True
+
+    def test_status_reports_records_per_kind(self, client):
+        store = MagicMock()
+        store.status = AsyncMock(return_value={"url": "http://victorialogs:9428", "reachable": True,
+                                               "kinds": [{"kind": "log", "records_24h": 12}]})
+        with patch.object(api_module, "logstore", store):
+            resp = client.get("/api/admin/victorialogs-status", headers=_role_headers("admin"))
+        assert resp.status_code == 200
+        assert resp.json()["kinds"] == [{"kind": "log", "records_24h": 12}]
 
 
 # ---------------------------------------------------------------------------
@@ -1554,7 +1535,7 @@ class TestSwarmProxyShellRefusal:
 
 
 # ---------------------------------------------------------------------------
-# search_logs: the compose_services filter must reach OpenSearch
+# search_logs: the compose_services filter must reach the store
 # ---------------------------------------------------------------------------
 
 class TestSearchLogsServiceFilter:
@@ -1576,56 +1557,44 @@ class TestSearchLogsServiceFilter:
 
         recorded = {}
 
-        class _OpenSearch:
+        class _Store:
             async def search_logs(self, query):
                 recorded["query"] = query
                 return LogSearchResult(total=0, hits=[], aggregations={})
 
-        with patch.object(api_module, "opensearch", _OpenSearch()):
+        with patch.object(api_module, "logstore", _Store()):
             await mcp_server.search_logs(
                 compose_services="agent, swarm-manager", size=0, last_hours=1
             )
 
         assert recorded["query"].compose_services == ["agent", "swarm-manager"]
 
-    @pytest.mark.asyncio
-    async def test_the_query_builder_emits_a_terms_clause(self):
+    def test_the_query_builder_filters_on_the_service(self):
+        from backend.log_store import log_filters
         from backend.models import LogSearchQuery
-        from backend.opensearch_client import OpenSearchClient
+        assert log_filters(LogSearchQuery(compose_services=["agent"])) == (
+            '{kind="log"} compose_service:in("agent")')
 
-        captured = {}
-
-        class _Client:
-            async def search(self, index, body):
-                captured["body"] = body
-                return {"hits": {"hits": [], "total": {"value": 0}}}
-
-        client = OpenSearchClient.__new__(OpenSearchClient)
-        client.logs_index = "pulsarcd-logs"
-        client._client = _Client()
-
-        await client.search_logs(LogSearchQuery(compose_services=["agent"]))
-
-        filters = captured["body"]["query"]["bool"]["filter"]
-        assert {"terms": {"compose_service": ["agent"]}} in filters
+    def test_no_service_means_no_clause(self):
+        from backend.log_store import log_filters
+        from backend.models import LogSearchQuery
+        assert log_filters(LogSearchQuery()) == '{kind="log"}'
 
     @pytest.mark.asyncio
-    async def test_no_service_means_no_clause(self):
+    async def test_total_and_facets_count_the_same_rows_as_the_hits(self):
+        """Every query of a search shares its filter: total, facets and page."""
+        from backend.config import VictoriaLogsConfig
+        from backend.log_store import LogStore
         from backend.models import LogSearchQuery
-        from backend.opensearch_client import OpenSearchClient
 
-        captured = {}
+        store = LogStore(VictoriaLogsConfig())
+        seen = []
 
-        class _Client:
-            async def search(self, index, body):
-                captured["body"] = body
-                return {"hits": {"hits": [], "total": {"value": 0}}}
-
-        client = OpenSearchClient.__new__(OpenSearchClient)
-        client.logs_index = "pulsarcd-logs"
-        client._client = _Client()
-
-        await client.search_logs(LogSearchQuery())
-
-        filters = captured["body"]["query"]["bool"]["filter"]
-        assert not any("compose_service" in str(f) for f in filters)
+        async def query(q, **kwargs):
+            seen.append(q)
+            return []
+        store.client.query = query
+        await store.search_logs(LogSearchQuery(compose_services=["agent"], size=5))
+        await store.close()
+        assert len(seen) == 6
+        assert all(q.startswith('{kind="log"} compose_service:in("agent")') for q in seen)

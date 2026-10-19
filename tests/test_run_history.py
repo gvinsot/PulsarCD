@@ -2,8 +2,9 @@
 
 import asyncio
 import json
+import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -13,59 +14,53 @@ from backend.run_history import (
     RunHistoryRecorder, build_runs_query, chunk_lines, error_excerpt,
     extract_commit, normalize_stage,
 )
+from shared.victorialogs import KIND_PIPELINE_RUN, KIND_PIPELINE_RUN_LOG
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
-class FakeOpenSearch:
-    """Minimal stand-in for OpenSearchClient as seen by RunHistoryRecorder."""
+class FakeClient:
+    """Stand-in for VictoriaLogsClient: records inserts, answers queries."""
 
     def __init__(self):
-        self._client = MagicMock()
-        self._client.index = AsyncMock(return_value={"result": "created"})
-        self._client.update_by_query = AsyncMock(return_value={"updated": 0})
-        self._client.delete_by_query = AsyncMock(return_value={"deleted": 0})
-        self._client.search = AsyncMock(return_value={"hits": {"hits": [], "total": {"value": 0}}})
-        self._client.get = AsyncMock()
-        self.ensured = []
+        self.inserted = []          # (kind, rows) per insert call
+        self.query = AsyncMock(return_value=[])
 
-    async def _ensure_index(self, name, mapping):
-        self.ensured.append(name)
+    async def insert(self, rows, kind):
+        self.inserted.append((kind, list(rows)))
+        return len(rows)
 
 
-@pytest.fixture
-def bulk_calls(monkeypatch):
-    """Capture opensearchpy.helpers.async_bulk calls instead of hitting a cluster."""
-    calls = []
-
-    async def fake_bulk(client, actions, raise_on_error=False):
-        actions = list(actions)
-        calls.append(actions)
-        return len(actions), []
-
-    import opensearchpy.helpers
-    monkeypatch.setattr(opensearchpy.helpers, "async_bulk", fake_bulk)
-    return calls
+class FakeStore:
+    def __init__(self):
+        self.client = FakeClient()
 
 
-def _settings(prefix="test", **history):
-    return SimpleNamespace(
-        opensearch=SimpleNamespace(index_prefix=prefix),
-        run_history=RunHistoryConfig(**history),
-    )
+def _settings(**history):
+    return SimpleNamespace(run_history=RunHistoryConfig(**history))
 
 
 async def _attached(log_source=None, **history):
     rec = RunHistoryRecorder()
-    fake = FakeOpenSearch()
+    fake = FakeStore()
     await rec.attach(fake, _settings(**history), log_source=log_source)
     return rec, fake
 
 
 def _indexed_docs(fake):
-    return [c.kwargs["body"] for c in fake._client.index.await_args_list]
+    """Run records appended, in order."""
+    return [row for kind, rows in fake.client.inserted if kind == KIND_PIPELINE_RUN for row in rows]
+
+
+def _log_batches(fake):
+    """Log chunk records, one list per insert."""
+    return [rows for kind, rows in fake.client.inserted if kind == KIND_PIPELINE_RUN_LOG]
+
+
+def _queries(fake):
+    return [c.args[0] for c in fake.client.query.await_args_list]
 
 
 @pytest.fixture(autouse=True)
@@ -132,21 +127,30 @@ class TestHelpers:
 
     def test_build_runs_query_filters(self):
         query = build_runs_query(repo="r", stage="done", status="failed", trigger="auto")
-        terms = query["bool"]["filter"]
-        assert {"term": {"repo": "r"}} in terms
-        assert {"term": {"stage": "deploy"}} in terms
-        assert {"term": {"status": "failed"}} in terms
-        assert {"term": {"trigger": "auto"}} in terms
-        assert "should" not in query["bool"]
+        # Fixed fields select records, the others the latest record of each run
+        selection, latest = query.split(" | last 1 by (_time, seq) partition by (run_id)")
+        assert selection == '{kind="pipeline_run", repo="r"} stage:="deploy"'
+        assert latest == ' | filter status:="failed" trigger:="auto"'
 
     def test_build_runs_query_text_matches_logs_and_metadata(self):
         query = build_runs_query(text="OOMKilled", run_ids=["a", "b"])
-        should = query["bool"]["should"]
-        assert query["bool"]["minimum_should_match"] == 1
-        assert {"terms": {"run_id": ["a", "b"]}} in should
-        sqs = [s for s in should if "simple_query_string" in s][0]["simple_query_string"]
-        # Expensive operators (fuzzy, slop, regexp) stay disabled.
-        assert "FUZZY" not in sqs["flags"] and "SLOP" not in sqs["flags"]
+        text = query.split("| filter ", 1)[1]
+        assert 'error_excerpt:i("OOMKilled")' in text
+        assert 'version:="OOMKilled"' in text and 'commit:="oomkilled"' in text
+        assert 'run_id:in("a", "b")' in text
+        assert text.count(" OR ") == 4
+
+    def test_build_runs_query_time_window_uses_the_start(self):
+        from datetime import datetime, timezone
+        since = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        assert "started_ms:range[1767225600000, Inf]" in build_runs_query(since=since)
+
+    def test_run_from_row_types_the_fields(self):
+        run = run_history.run_from_row({"run_id": "x", "duration_seconds": "1.5",
+                                        "log_line_count": "26", "log_truncated": "false"})
+        assert run["duration_seconds"] == 1.5 and run["log_line_count"] == 26
+        assert run["log_truncated"] is False and run["error_excerpt"] is None
+        assert run["log_stored_lines"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -154,30 +158,36 @@ class TestHelpers:
 # ---------------------------------------------------------------------------
 
 class TestRecorder:
-    async def test_attach_creates_indices_and_closes_interrupted_runs(self):
-        rec, fake = await _attached()
-        assert rec.available
-        assert fake.ensured == ["test-pipeline-runs", "test-pipeline-run-logs"]
-        fake._client.update_by_query.assert_awaited_once()
-        body = fake._client.update_by_query.await_args.kwargs["body"]
-        assert body["query"] == {"term": {"status": "running"}}
-
-    async def test_attach_failure_leaves_recorder_detached(self):
+    async def test_attach_closes_interrupted_runs_with_a_new_record(self):
         rec = RunHistoryRecorder()
-        fake = FakeOpenSearch()
-        fake._ensure_index = AsyncMock(side_effect=RuntimeError("cluster down"))
+        fake = FakeStore()
+        fake.client.query = AsyncMock(return_value=[
+            {"run_id": "r1", "repo": "app", "stage": "build", "status": "running",
+             "started_at": "2026-01-01T00:00:00+00:00"}])
         await rec.attach(fake, _settings())
-        assert not rec.available
+        assert rec.available
+        assert 'filter status:="running"' in _queries(fake)[0]
+        (closed,) = _indexed_docs(fake)
+        assert (closed["run_id"], closed["status"]) == ("r1", "interrupted")
+        assert closed["started_ms"] == 1767225600000
+
+    async def test_query_failure_at_attach_is_not_fatal(self):
+        rec = RunHistoryRecorder()
+        fake = FakeStore()
+        fake.client.query = AsyncMock(side_effect=RuntimeError("store down"))
+        await rec.attach(fake, _settings())
+        assert rec.available
         # Observing still works and never raises.
         rec.observe("repo", "build", "running", "1.0.0", action_id="a1")
         rec.observe("repo", "build", "success", "1.0.0", action_id="a1", log_lines=["ok"])
+        await rec.drain()
 
     async def test_disabled_by_config(self):
         rec, fake = await _attached(enabled=False)
         assert not rec.available
-        assert fake.ensured == []
+        assert fake.client.query.await_count == 0
 
-    async def test_successful_run_is_recorded_with_logs(self, bulk_calls):
+    async def test_successful_run_is_recorded_with_logs(self):
         rec, fake = await _attached(log_chunk_lines=10)
         run_history.set_trigger("manual", actor="alice@example.com")
         rec.observe("myrepo", "build", "running", "1.2.3", action_id="b1")
@@ -187,7 +197,9 @@ class TestRecorder:
 
         docs = _indexed_docs(fake)
         assert [d["status"] for d in docs] == ["running", "success"]
+        assert docs[0]["seq"] < docs[1]["seq"]
         final = docs[-1]
+        assert final["kind"] == KIND_PIPELINE_RUN
         assert final["run_id"] == docs[0]["run_id"]
         assert final["repo"] == "myrepo" and final["stage"] == "build"
         assert final["version"] == "1.2.3"
@@ -196,27 +208,31 @@ class TestRecorder:
         assert final["commit"] == "abcdef1"
         assert final["log_line_count"] == 26 and final["log_truncated"] is False
         assert final["duration_seconds"] >= 0
-        assert final["error_excerpt"] is None
+        assert final.get("error_excerpt") is None
 
-        (actions,) = bulk_calls
-        assert len(actions) == 3  # 26 lines in chunks of 10
-        assert [a["_source"]["line_start"] for a in actions] == [0, 10, 20]
-        assert actions[-1]["_source"]["line_end"] == 26
-        assert all(a["_index"] == "test-pipeline-run-logs" for a in actions)
-        assert actions[0]["_id"] == f"{final['run_id']}-00000"
+        (chunks,) = _log_batches(fake)
+        assert len(chunks) == 3  # 26 lines in chunks of 10
+        assert [c["line_start"] for c in chunks] == [0, 10, 20]
+        assert chunks[-1]["line_end"] == 26
+        assert {c["run_id"] for c in chunks} == {final["run_id"]}
+        assert [c["chunk"] for c in chunks] == [0, 1, 2]
+        # A run's log is stamped with the run's start
+        assert {c["_time"] for c in chunks} == {final["started_at"]}
 
-    async def test_writes_of_one_run_keep_their_order(self, bulk_calls):
+    async def test_writes_of_one_run_keep_their_order(self):
         """The 'running' write must never land after the final one."""
         rec, fake = await _attached()
         gate = asyncio.Event()
         order = []
 
-        async def slow_index(index, id, body):
-            if body["status"] == "running":
-                await gate.wait()
-            order.append(body["status"])
+        async def slow_insert(rows, kind):
+            if kind == KIND_PIPELINE_RUN:
+                if rows[0]["status"] == "running":
+                    await gate.wait()
+                order.append(rows[0]["status"])
+            return len(rows)
 
-        fake._client.index = AsyncMock(side_effect=slow_index)
+        fake.client.insert = slow_insert
         rec.observe("r", "test", "running", "1.0.0", action_id="t1")
         rec.observe("r", "test", "failed", "1.0.0", action_id="t1", log_lines=["boom"])
         await asyncio.sleep(0)
@@ -224,7 +240,7 @@ class TestRecorder:
         await rec.drain()
         assert order == ["running", "failed"]
 
-    async def test_failure_keeps_error_excerpt(self, bulk_calls):
+    async def test_failure_keeps_error_excerpt(self):
         rec, fake = await _attached()
         rec.observe("r", "deploy", "running", "2.0.0", action_id="d1")
         rec.observe("r", "deploy", "failed", "2.0.0", action_id="d1",
@@ -234,7 +250,7 @@ class TestRecorder:
         assert final["status"] == "failed"
         assert "no such image" in final["error_excerpt"]
 
-    async def test_done_closes_deploy_as_success(self, bulk_calls):
+    async def test_done_closes_deploy_as_success(self):
         rec, fake = await _attached()
         rec.observe("r", "deploy", "running", "2.0.0", action_id="d1")
         rec.observe("r", "done", "success", "2.0.0", action_id="d1", log_lines=["ok"])
@@ -242,7 +258,7 @@ class TestRecorder:
         final = _indexed_docs(fake)[-1]
         assert (final["stage"], final["status"]) == ("deploy", "success")
 
-    async def test_cancel_marker_marks_run_cancelled(self, bulk_calls):
+    async def test_cancel_marker_marks_run_cancelled(self):
         rec, fake = await _attached()
         rec.observe("r", "build", "running", "1.0", action_id="b1")
         rec.observe("r", "build", "failed", "1.0", action_id="b1",
@@ -250,7 +266,7 @@ class TestRecorder:
         await rec.drain()
         assert _indexed_docs(fake)[-1]["status"] == "cancelled"
 
-    async def test_duplicate_failure_for_same_action_is_dropped(self, bulk_calls):
+    async def test_duplicate_failure_for_same_action_is_dropped(self):
         """The build task and cancel_action() both report the same failure."""
         rec, fake = await _attached()
         rec.observe("r", "build", "running", "1.0", action_id="b1")
@@ -259,7 +275,7 @@ class TestRecorder:
         await rec.drain()
         assert [d["status"] for d in _indexed_docs(fake)] == ["running", "failed"]
 
-    async def test_gate_rejected_after_success_is_not_a_new_run(self, bulk_calls):
+    async def test_gate_rejected_after_success_is_not_a_new_run(self):
         rec, fake = await _attached()
         rec.observe("r", "test", "running", "1.0", action_id="t1")
         rec.observe("r", "test", "success", "1.0", action_id="t1", log_lines=["ok"])
@@ -267,7 +283,7 @@ class TestRecorder:
         await rec.drain()
         assert [d["status"] for d in _indexed_docs(fake)] == ["running", "success"]
 
-    async def test_failure_without_a_start_is_recorded(self, bulk_calls):
+    async def test_failure_without_a_start_is_recorded(self):
         """E.g. 'no host available' fails the pipeline before any stage runs."""
         rec, fake = await _attached()
         rec.observe("r", "build", "failed", "1.0")
@@ -276,7 +292,7 @@ class TestRecorder:
         assert len(docs) == 1 and docs[0]["status"] == "failed"
         assert docs[0]["duration_seconds"] == 0
 
-    async def test_running_reannounced_with_action_id_enriches_the_same_run(self, bulk_calls):
+    async def test_running_reannounced_with_action_id_enriches_the_same_run(self):
         rec, fake = await _attached()
         rec.observe("r", "test", "running", "1.0")                  # pipeline start
         rec.observe("r", "test", "running", "1.0", action_id="t1")  # stage start
@@ -286,17 +302,16 @@ class TestRecorder:
         assert len({d["run_id"] for d in docs}) == 1
         assert docs[-1]["action_id"] == "t1"
 
-    async def test_new_run_interrupts_a_still_open_one(self, bulk_calls):
+    async def test_new_run_interrupts_a_still_open_one(self):
         rec, fake = await _attached()
         rec.observe("r", "deploy", "running", "1.0", action_id="d1")
         rec.observe("r", "deploy", "running", "1.1", action_id="d2")
         await rec.drain()
-        docs = _indexed_docs(fake)
-        statuses = {(d["action_id"], d["status"]) for d in docs}
+        statuses = {(d["action_id"], d["status"]) for d in _indexed_docs(fake)}
         assert ("d1", "interrupted") in statuses
         assert ("d2", "running") in statuses
 
-    async def test_log_source_fills_missing_logs(self, bulk_calls):
+    async def test_log_source_fills_missing_logs(self):
         calls = []
 
         def source(repo, stage, action_id):
@@ -312,7 +327,7 @@ class TestRecorder:
         assert final["log_line_count"] == 2
         assert final["error_excerpt"] == "ERROR boom"
 
-    async def test_long_logs_keep_the_tail(self, bulk_calls):
+    async def test_long_logs_keep_the_tail(self):
         rec, fake = await _attached(max_log_lines=100, log_chunk_lines=50)
         rec.observe("r", "build", "running", "1.0", action_id="b1")
         rec.observe("r", "build", "success", "1.0", action_id="b1",
@@ -322,11 +337,11 @@ class TestRecorder:
         assert final["log_line_count"] == 250
         assert final["log_stored_lines"] == 100
         assert final["log_truncated"] is True
-        starts = [a["_source"]["line_start"] for a in bulk_calls[0]]
-        assert starts == [150, 200]
-        assert bulk_calls[0][0]["_source"]["message"].split("\n")[0] == "l150"
+        (chunks,) = _log_batches(fake)
+        assert [c["line_start"] for c in chunks] == [150, 200]
+        assert chunks[0]["_msg"].split("\n")[0] == "l150"
 
-    async def test_observe_pipeline_picks_the_stage_action_id(self, bulk_calls):
+    async def test_observe_pipeline_picks_the_stage_action_id(self):
         from backend.pipeline_state import _UNSET
         rec, fake = await _attached()
         rec.observe_pipeline("r", "qa", "running", "1.0",
@@ -335,7 +350,7 @@ class TestRecorder:
         assert _indexed_docs(fake)[0]["action_id"] == "q1"
         assert _indexed_docs(fake)[0]["stage"] == "qa"
 
-    async def test_trigger_context_reaches_background_tasks(self, bulk_calls):
+    async def test_trigger_context_reaches_background_tasks(self):
         rec, fake = await _attached()
         run_history.set_trigger("auto", actor="auto-build")
         pipeline_id = run_history.begin_pipeline()
@@ -356,32 +371,37 @@ class TestRecorder:
         run_history.set_trigger("bogus")
         assert run_history._trigger_var.get() == "manual"
 
-    async def test_cleanup_deletes_by_timestamp_on_both_indices(self):
-        rec, fake = await _attached(retention_days=30)
-        await rec.cleanup()
-        indices = [c.kwargs["index"] for c in fake._client.delete_by_query.await_args_list]
-        assert indices == ["test-pipeline-runs", "test-pipeline-run-logs"]
-        body = fake._client.delete_by_query.await_args.kwargs["body"]
-        assert "lt" in body["query"]["range"]["timestamp"]
+    async def test_nothing_is_ever_deleted(self):
+        """Retention is VictoriaLogs' own: the recorder only appends."""
+        assert not hasattr(RunHistoryRecorder, "cleanup")
 
 
 # ---------------------------------------------------------------------------
 # Queries
 # ---------------------------------------------------------------------------
 
+def _answer(count=0, runs=(), logs=(), matching=()):
+    """Fake query results keyed on the shape of the LogsQL asked."""
+    async def query(q, **kwargs):
+        if q.startswith('{kind="pipeline_run_log"'):
+            if "stats by (run_id)" in q:
+                return [{"run_id": r} for r in matching]
+            return list(logs)
+        if q.endswith("| stats count() as n"):
+            return [{"n": str(count)}]
+        return list(runs)
+    return AsyncMock(side_effect=query)
+
+
 class TestQueries:
     async def test_list_runs_paginates_and_sorts(self):
         rec, fake = await _attached()
-        fake._client.search = AsyncMock(return_value={"hits": {
-            "total": {"value": 42},
-            "hits": [{"_source": {"run_id": "x", "status": "success"}}],
-        }})
+        fake.client.query = _answer(count=42, runs=[{"run_id": "x", "status": "success"}])
         result = await rec.list_runs(repo="r", page=3, page_size=10)
-        body = fake._client.search.await_args.kwargs["body"]
-        assert body["from"] == 20 and body["size"] == 10
-        assert body["sort"] == [{"started_at": {"order": "desc"}}]
-        assert result == {"runs": [{"run_id": "x", "status": "success"}],
-                          "total": 42, "page": 3, "page_size": 10}
+        page_query = _queries(fake)[1]
+        assert page_query.endswith("| sort by (started_ms desc) offset 20 limit 10")
+        assert result["total"] == 42 and (result["page"], result["page_size"]) == (3, 10)
+        assert result["runs"][0]["run_id"] == "x" and result["runs"][0]["status"] == "success"
 
     async def test_list_runs_page_size_is_capped(self):
         rec, fake = await _attached()
@@ -390,77 +410,116 @@ class TestQueries:
 
     async def test_list_runs_text_query_searches_logs_first(self):
         rec, fake = await _attached()
-        fake._client.search = AsyncMock(side_effect=[
-            {"aggregations": {"runs": {"buckets": [{"key": "run-1"}]}}},
-            {"hits": {"total": {"value": 0}, "hits": []}},
-        ])
+        fake.client.query = _answer(matching=["run-1"])
         await rec.list_runs(q="OOMKilled")
-        log_call, run_call = fake._client.search.await_args_list
-        assert log_call.kwargs["index"] == "test-pipeline-run-logs"
-        should = run_call.kwargs["body"]["query"]["bool"]["should"]
-        assert {"terms": {"run_id": ["run-1"]}} in should
+        log_query, *run_queries = _queries(fake)
+        assert log_query.startswith('{kind="pipeline_run_log"}')
+        assert '_msg:i("OOMKilled")' in log_query
+        assert all('run_id:in("run-1")' in q for q in run_queries)
 
     async def test_stale_running_run_is_flagged(self):
         rec, fake = await _attached()
-        fake._client.search = AsyncMock(return_value={"hits": {
-            "total": 1, "hits": [{"_source": {"run_id": "gone", "status": "running"}}],
-        }})
+        fake.client.query = _answer(count=1, runs=[{"run_id": "gone", "status": "running"}])
         result = await rec.list_runs()
         assert result["runs"][0]["status_note"] == "not running in this process"
 
     async def test_get_run_returns_log_window(self):
         rec, fake = await _attached()
-        fake._client.get = AsyncMock(return_value={"found": True, "_source": {
-            "run_id": "abc", "log_line_count": 250, "log_stored_lines": 250,
-            "log_truncated": False,
-        }})
-        fake._client.search = AsyncMock(return_value={"hits": {"hits": [
-            {"_source": {"line_start": 200, "line_end": 250,
-                         "message": "\n".join(f"l{i}" for i in range(200, 250))}},
-        ]}})
+        run = {"run_id": "abc", "repo": "app", "log_line_count": "250", "log_stored_lines": "250",
+               "log_truncated": "false"}
+        chunk = {"line_start": "200", "_msg": "\n".join(f"l{i}" for i in range(200, 250))}
+        fake.client.query = AsyncMock(side_effect=[[run], [chunk]])
         result = await rec.get_run("abc", log_offset=-10, log_limit=5)
         assert result["logs"]["offset"] == 240
         assert result["logs"]["lines"] == ["l240", "l241", "l242", "l243", "l244"]
-        filters = fake._client.search.await_args.kwargs["body"]["query"]["bool"]["filter"]
-        assert {"range": {"line_start": {"lt": 245}}} in filters
-        assert {"range": {"line_end": {"gt": 240}}} in filters
+        run_query, chunk_query = _queries(fake)
+        assert 'run_id:="abc"' in run_query and "last 1 by (_time, seq)" in run_query
+        assert "line_start:<245 line_end:>240" in chunk_query
+        # Every chunk of the window, whatever the chunk size
+        assert "limit" not in chunk_query
 
     async def test_get_run_spanning_chunks(self):
         rec, fake = await _attached()
-        fake._client.get = AsyncMock(return_value={"_source": {
-            "run_id": "abc", "log_line_count": 4, "log_stored_lines": 4,
-        }})
-        fake._client.search = AsyncMock(return_value={"hits": {"hits": [
-            {"_source": {"line_start": 0, "message": "a\nb"}},
-            {"_source": {"line_start": 2, "message": "c\nd"}},
-        ]}})
+        run = {"run_id": "abc", "log_line_count": "4", "log_stored_lines": "4"}
+        chunks = [{"line_start": "0", "_msg": "a\nb"}, {"line_start": "2", "_msg": "c\nd"}]
+        fake.client.query = AsyncMock(side_effect=[[run], chunks])
         result = await rec.get_run("abc", log_offset=1, log_limit=2)
         assert result["logs"]["lines"] == ["b", "c"]
 
     async def test_get_run_not_found(self):
         rec, fake = await _attached()
-
-        class NotFoundError(Exception):
-            pass
-
-        fake._client.get = AsyncMock(side_effect=NotFoundError("404"))
         assert await rec.get_run("missing") is None
+        queried = fake.client.query.await_count
         assert await rec.get_run("../etc") is None  # rejected before querying
+        assert fake.client.query.await_count == queried
 
     async def test_search_logs_returns_matching_lines(self):
         rec, fake = await _attached()
-        fake._client.search = AsyncMock(return_value={"hits": {"hits": [
-            {"_source": {"run_id": "r1", "repo": "app", "stage": "build",
-                         "line_start": 0, "message": "ok\nOOMKilled worker\nok"}},
-        ]}})
+        fake.client.query = _answer(logs=[{"run_id": "r1", "repo": "app", "stage": "build",
+                                           "line_start": "0", "_msg": "ok\nOOMKilled worker\nok",
+                                           "_time": "2026-01-01T00:00:00Z"}])
         hits = await rec.search_logs("oomkilled", repo="app")
-        assert hits[0]["run_id"] == "r1"
+        assert hits[0]["run_id"] == "r1" and hits[0]["timestamp"] == "2026-01-01T00:00:00Z"
         assert hits[0]["lines"] == ["OOMKilled worker"]
+
+    async def test_log_search_is_time_bounded_and_newest_first(self):
+        from datetime import datetime, timezone
+        rec, fake = await _attached()
+        fake.client.query = _answer()
+        since = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        await rec.list_runs(q="OOMKilled", since=since)
+        log_call = fake.client.query.await_args_list[0]
+        assert log_call.kwargs["start"] == since
+        assert "sort by (latest desc)" in log_call.args[0]
 
     async def test_queries_require_attachment(self):
         rec = RunHistoryRecorder()
         with pytest.raises(RuntimeError):
             await rec.list_runs()
+
+
+class TestAgainstVictoriaLogs:
+    """Append-only history, written and read back by a real VictoriaLogs."""
+
+    async def test_lifecycle(self, vlogs):
+        from backend.config import VictoriaLogsConfig
+        from backend.log_store import LogStore
+
+        store = LogStore(VictoriaLogsConfig(url=vlogs))
+        repo = f"repo-{uuid.uuid4().hex[:8]}"
+        rec = RunHistoryRecorder()
+        await rec.attach(store, _settings(log_chunk_lines=10))
+        run_history.set_trigger("manual", actor="tester")
+        rec.observe(repo, "build", "running", "1.2.3", action_id="a1")
+        await rec.drain()
+        rec.observe(repo, "build", "failed", "1.2.3", action_id="a1",
+                    log_lines=[f"line {i}" for i in range(25)] + ["ERROR: kaboom", "Commit: abcdef1234"])
+        rec.observe(repo, "test", "running", "1.2.3", action_id="t1")
+        await rec.drain()
+        await store.client.flush()
+
+        runs = (await rec.list_runs(repo=repo))["runs"]
+        assert [(r["stage"], r["status"]) for r in runs] == [("test", "running"), ("build", "failed")]
+        build = runs[1]
+        assert build["log_line_count"] == 27 and build["commit"] == "abcdef1234"
+        assert (await rec.list_runs(repo=repo, status="failed"))["total"] == 1
+        assert (await rec.list_runs(repo=repo, status="running"))["total"] == 1
+        assert (await rec.list_runs(repo=repo, q="kaboom"))["total"] == 1      # error excerpt
+        assert (await rec.list_runs(repo=repo, q="line"))["total"] == 1        # log chunks
+        got = await rec.get_run(build["run_id"], log_offset=-2)
+        assert got["logs"]["lines"] == ["ERROR: kaboom", "Commit: abcdef1234"]
+        got = await rec.get_run(build["run_id"], log_offset=8, log_limit=4)
+        assert got["logs"]["lines"] == ["line 8", "line 9", "line 10", "line 11"]
+        assert (await rec.search_logs("kaboom", repo=repo))[0]["lines"] == ["ERROR: kaboom"]
+        assert repo in await rec.list_repos()
+
+        # A restart closes the run left open, by appending its final state
+        restarted = RunHistoryRecorder()
+        await restarted.attach(store, _settings())
+        await store.client.flush()
+        runs = (await restarted.list_runs(repo=repo))["runs"]
+        assert [(r["stage"], r["status"]) for r in runs] == [("test", "interrupted"), ("build", "failed")]
+        await store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -629,49 +688,24 @@ class TestRedaction:
     def test_redact_secrets(self, raw, expected):
         assert run_history.redact_secrets(raw) == expected
 
-    async def test_stored_logs_and_excerpt_are_redacted(self, bulk_calls):
+    async def test_stored_logs_and_excerpt_are_redacted(self):
         rec, fake = await _attached()
         rec.observe("r", "deploy", "running", "1.0", action_id="d9")
         rec.observe("r", "deploy", "failed", "1.0", action_id="d9",
                     log_lines=["export REGISTRY_PASSWORD=topsecret", "ERROR: login failed"])
         await rec.drain()
         final = _indexed_docs(fake)[-1]
-        assert "topsecret" not in (final["error_excerpt"] or "")
-        (actions,) = bulk_calls
-        assert "topsecret" not in actions[0]["_source"]["message"]
+        assert "topsecret" not in (final.get("error_excerpt") or "")
+        (chunks,) = _log_batches(fake)
+        assert "topsecret" not in chunks[0]["_msg"]
 
-    async def test_cancel_marker_anywhere_in_log(self, bulk_calls):
+    async def test_cancel_marker_anywhere_in_log(self):
         rec, fake = await _attached()
         rec.observe("r", "build", "running", "1.0", action_id="b9")
         lines = ["[Cancellation requested...]"] + [f"cleanup {i}" for i in range(100)]
         rec.observe("r", "build", "failed", "1.0", action_id="b9", log_lines=lines)
         await rec.drain()
         assert _indexed_docs(fake)[-1]["status"] == "cancelled"
-
-
-class TestQueryFixes:
-    async def test_log_search_is_time_bounded_and_newest_first(self):
-        from datetime import datetime, timezone
-        rec, fake = await _attached()
-        fake._client.search = AsyncMock(side_effect=[
-            {"aggregations": {"runs": {"buckets": []}}},
-            {"hits": {"total": {"value": 0}, "hits": []}},
-        ])
-        since = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        await rec.list_runs(q="OOMKilled", since=since)
-        body = fake._client.search.await_args_list[0].kwargs["body"]
-        assert {"range": {"timestamp": {"gte": since.isoformat()}}} in body["query"]["bool"]["filter"]
-        assert body["aggs"]["runs"]["terms"]["order"] == {"latest": "desc"}
-
-    async def test_get_run_requests_enough_chunks_for_the_window(self):
-        rec, fake = await _attached()
-        fake._client.get = AsyncMock(return_value={"_source": {
-            "run_id": "abc", "log_line_count": 20000, "log_stored_lines": 20000,
-        }})
-        fake._client.search = AsyncMock(return_value={"hits": {"hits": []}})
-        await rec.get_run("abc", log_offset=0, log_limit=20000)
-        # Small chunks (log_chunk_lines=10) need up to 2000 documents.
-        assert fake._client.search.await_args.kwargs["body"]["size"] >= 2000
 
 
 class TestCancelWiring:

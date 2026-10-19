@@ -1,16 +1,21 @@
-"""Persistent pipeline run history and build logs in OpenSearch.
+"""Persistent pipeline run history and build logs in VictoriaLogs.
 
 ``pipeline_state`` only keeps the *current* state of each repository and the
 last few hundred log lines per stage, so "what was deployed before the outage"
 is lost as soon as the next run starts.  This module records every
-build / test / qa / deploy run as its own document and keeps the full log next
-to it, chunked so long build logs stay searchable:
+build / test / qa / deploy run and keeps its full log next to it, chunked so
+long build logs stay searchable. Both are append-only, like everything in
+VictoriaLogs:
 
-* ``<prefix>-pipeline-runs``     one document per stage run (repo, stage,
-                                 version, commit, trigger, actor, timings,
-                                 status, error excerpt);
-* ``<prefix>-pipeline-run-logs`` the run's log, ``chunk_lines`` lines per
-                                 document, keyed by ``run_id``.
+* ``kind=pipeline_run``     one record per state of a stage run (repo, stage,
+                            version, commit, trigger, actor, timings, status,
+                            error excerpt). A run is written when it starts and
+                            again when it ends; its current state is its latest
+                            record (``_time``, then ``seq``).
+* ``kind=pipeline_run_log`` the run's log, ``chunk_lines`` lines per record,
+                            keyed by ``run_id``, stamped with the run's start.
+
+Retention is VictoriaLogs' own (-retentionPeriod).
 
 The recorder is fed from the existing pipeline code paths through a single
 call, :meth:`RunHistoryRecorder.observe`, which receives the same
@@ -27,12 +32,18 @@ tool that started a run only has to declare itself once.
 
 import asyncio
 import contextvars
+import itertools
 import re
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import structlog
+
+from shared.victorialogs import (
+    KIND_PIPELINE_RUN, KIND_PIPELINE_RUN_LOG, any_of, exact, integer, num,
+    stream, text_filter,
+)
 
 logger = structlog.get_logger()
 
@@ -49,13 +60,26 @@ TRIGGERS = ("manual", "auto", "webhook", "mcp")
 _CANCEL_MARKER = "[Cancellation requested...]"
 
 MAX_PAGE_SIZE = 100
-MAX_FROM = 10000                 # OpenSearch default index.max_result_window
+MAX_FROM = 10000                 # deepest offset of a run list page
 MAX_LOG_WINDOW = 20000           # lines returned by a single get_run call
 MAX_QUERY_LENGTH = 512
+MAX_MATCHING_RUNS = 500          # runs a log full-text search can select
 ERROR_EXCERPT_LINES = 25
 ERROR_EXCERPT_CHARS = 4000
-CLEANUP_INTERVAL = timedelta(hours=24)
 _FINISHED_MEMORY = 512           # action ids remembered to drop duplicate closes
+
+# Record fields of a run and how to read them back (VictoriaLogs returns
+# strings and omits empty values).
+_RUN_FIELDS: Dict[str, str] = {
+    "run_id": "str", "pipeline_id": "str", "repo": "str", "stage": "str",
+    "version": "str", "commit": "str", "trigger": "str", "actor": "str",
+    "action_id": "str", "status": "str", "timestamp": "str", "started_at": "str",
+    "finished_at": "str", "duration_seconds": "float", "error_excerpt": "str",
+    "log_line_count": "int", "log_stored_lines": "int", "log_truncated": "bool",
+}
+# Orders the records of one run written within the same instant.
+_SEQ = itertools.count()
+_LATEST_PER_RUN = "last 1 by (_time, seq) partition by (run_id)"
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _COMMIT_RE = re.compile(r"(?i)\b(?:commit|HEAD is now at)[:\s]+([0-9a-f]{7,40})\b")
@@ -81,60 +105,6 @@ _SECRET_PATTERNS = (
         r"|private[_-]?key)[A-Z0-9_.-]*\s*[=:]\s*)(?!\[REDACTED\])(\"[^\"]*\"|'[^']*'|[^\s\"']+)"),
      r"\1[REDACTED]"),
 )
-
-# Operators allowed in history full-text queries (same allow-list rationale as
-# opensearch_client.SIMPLE_QUERY_FLAGS: no fuzzy, slop or regexp).
-_SIMPLE_QUERY_FLAGS = "AND|OR|NOT|PHRASE|PRECEDENCE|PREFIX|WHITESPACE|ESCAPE"
-
-_INDEX_SETTINGS = {
-    "number_of_shards": 1,
-    "number_of_replicas": 0,
-    "index.refresh_interval": "1s",
-}
-
-RUNS_INDEX_MAPPING = {
-    "mappings": {
-        "properties": {
-            "run_id": {"type": "keyword"},
-            "pipeline_id": {"type": "keyword"},
-            "repo": {"type": "keyword"},
-            "stage": {"type": "keyword"},
-            "version": {"type": "keyword"},
-            "commit": {"type": "keyword"},
-            "trigger": {"type": "keyword"},
-            "actor": {"type": "keyword"},
-            "action_id": {"type": "keyword"},
-            "status": {"type": "keyword"},
-            "timestamp": {"type": "date"},
-            "started_at": {"type": "date"},
-            "finished_at": {"type": "date"},
-            "duration_seconds": {"type": "float"},
-            "error_excerpt": {"type": "text", "analyzer": "standard"},
-            "log_line_count": {"type": "integer"},
-            "log_stored_lines": {"type": "integer"},
-            "log_truncated": {"type": "boolean"},
-        }
-    },
-    "settings": _INDEX_SETTINGS,
-}
-
-LOGS_INDEX_MAPPING = {
-    "mappings": {
-        "properties": {
-            "run_id": {"type": "keyword"},
-            "repo": {"type": "keyword"},
-            "stage": {"type": "keyword"},
-            "version": {"type": "keyword"},
-            "timestamp": {"type": "date"},
-            "chunk": {"type": "integer"},
-            "line_start": {"type": "integer"},
-            "line_end": {"type": "integer"},
-            "message": {"type": "text", "analyzer": "standard"},
-        }
-    },
-    "settings": _INDEX_SETTINGS,
-}
-
 
 # ── Trigger context ─────────────────────────────────────────────────────────
 
@@ -257,6 +227,12 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
     return parsed
 
 
+def _epoch_ms(value: datetime) -> int:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return int(value.timestamp() * 1000)
+
+
 def build_runs_query(
     repo: Optional[str] = None,
     stage: Optional[str] = None,
@@ -266,44 +242,72 @@ def build_runs_query(
     until: Optional[datetime] = None,
     run_ids: Optional[List[str]] = None,
     text: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Build the bool query used by list_runs (pure, unit-tested)."""
-    filters: List[Dict[str, Any]] = []
-    if repo:
-        filters.append({"term": {"repo": repo}})
+) -> str:
+    """LogsQL selecting the current state of the matching runs (pure, unit-tested).
+
+    Fields a run never changes (repo, stage) filter its records; the others
+    filter its latest record only, since its earlier ones still say
+    "running".
+    """
+    parts = [stream(KIND_PIPELINE_RUN, repo=repo)]
     if stage:
-        filters.append({"term": {"stage": normalize_stage(stage) or stage}})
+        parts.append(exact("stage", normalize_stage(stage) or stage))
+    query = " ".join(parts) + f" | {_LATEST_PER_RUN}"
+    after: List[str] = []
     if status:
-        filters.append({"term": {"status": status}})
+        after.append(exact("status", status))
     if trigger:
-        filters.append({"term": {"trigger": trigger}})
+        after.append(exact("trigger", trigger))
     if since or until:
-        window: Dict[str, str] = {}
-        if since:
-            window["gte"] = since.isoformat()
-        if until:
-            window["lte"] = until.isoformat()
-        filters.append({"range": {"started_at": window}})
-    query: Dict[str, Any] = {"bool": {"filter": filters}}
+        low = _epoch_ms(since) if since else "-Inf"
+        high = _epoch_ms(until) if until else "Inf"
+        after.append(f"started_ms:range[{low}, {high}]")
     if text:
         # A run matches a free-text query through its error excerpt, its
         # metadata, or any of its log chunks (run_ids resolved beforehand).
-        should: List[Dict[str, Any]] = [
-            {"simple_query_string": {
-                "query": text,
-                "fields": ["error_excerpt"],
-                "default_operator": "and",
-                "flags": _SIMPLE_QUERY_FLAGS,
-            }},
-            {"term": {"version": text}},
-            {"term": {"commit": text.lower()}},
-            {"term": {"run_id": text}},
-        ]
+        alternatives = [exact("version", text), exact("commit", text.lower()), exact("run_id", text)]
+        excerpt = text_filter(text, "error_excerpt", default_op="AND")
+        if excerpt:
+            alternatives.insert(0, excerpt)
         if run_ids:
-            should.append({"terms": {"run_id": run_ids}})
-        query["bool"]["should"] = should
-        query["bool"]["minimum_should_match"] = 1
+            alternatives.append(any_of("run_id", run_ids))
+        after.append("(" + " OR ".join(alternatives) + ")")
+    if after:
+        query += " | filter " + " ".join(after)
     return query
+
+
+def run_from_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """A run record as the API returns it: every field, typed, None when empty."""
+    run: Dict[str, Any] = {}
+    for name, kind in _RUN_FIELDS.items():
+        value = row.get(name)
+        if value is None or value == "":
+            run[name] = False if kind == "bool" else (0 if kind == "int" else None)
+        elif kind == "float":
+            run[name] = num(value)
+        elif kind == "int":
+            run[name] = integer(value)
+        elif kind == "bool":
+            run[name] = str(value).lower() == "true"
+        else:
+            run[name] = value
+    return run
+
+
+def run_row(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """The record appended for one state of a run."""
+    started = _parse_time(doc.get("started_at"))
+    row = {key: value for key, value in doc.items() if key in _RUN_FIELDS and value is not None}
+    row.update({
+        "_time": _now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        "_msg": " ".join(str(doc.get(k) or "") for k in ("repo", "stage", "status", "version")).strip(),
+        "kind": KIND_PIPELINE_RUN,
+        "seq": next(_SEQ),
+    })
+    if started:
+        row["started_ms"] = _epoch_ms(started)
+    return row
 
 
 def _matching_lines(message: str, text: str, limit: int = 5) -> List[str]:
@@ -337,14 +341,11 @@ LogSource = Callable[[str, str, Optional[str]], Optional[List[str]]]
 
 
 class RunHistoryRecorder:
-    """Records pipeline stage runs and their logs in OpenSearch."""
+    """Records pipeline stage runs and their logs in VictoriaLogs."""
 
     def __init__(self):
-        self._client = None                 # AsyncOpenSearch, set by attach()
-        self.runs_index = "pulsarcd-pipeline-runs"
-        self.logs_index = "pulsarcd-pipeline-run-logs"
+        self._client = None                 # VictoriaLogsClient, set by attach()
         self.enabled = True
-        self.retention_days = 90
         self.max_log_lines = 20000
         self.chunk_size = 200
         self._open: Dict[Tuple[str, str], _OpenRun] = {}
@@ -352,61 +353,47 @@ class RunHistoryRecorder:
         self._tails: Dict[str, asyncio.Task] = {}
         self._tasks: set = set()
         self._log_source: Optional[LogSource] = None
-        self._last_cleanup: Optional[datetime] = None
 
     # ── Wiring ──
 
-    def configure(self, index_prefix: str = "pulsarcd", config: Any = None) -> None:
-        """Apply index names and RunHistoryConfig values (no I/O)."""
-        self.runs_index = f"{index_prefix}-pipeline-runs"
-        self.logs_index = f"{index_prefix}-pipeline-run-logs"
+    def configure(self, config: Any = None) -> None:
+        """Apply RunHistoryConfig values (no I/O)."""
         if config is not None:
             self.enabled = bool(getattr(config, "enabled", True))
-            self.retention_days = _clamp(getattr(config, "retention_days", 90), 1, 3650, 90)
             self.max_log_lines = _clamp(getattr(config, "max_log_lines", 20000), 100, 1_000_000, 20000)
             self.chunk_size = _clamp(getattr(config, "log_chunk_lines", 200), 10, 5000, 200)
 
-    async def attach(self, opensearch: Any, settings: Any,
+    async def attach(self, logstore: Any, settings: Any,
                      log_source: Optional[LogSource] = None) -> None:
-        """Bind to the application's OpenSearch client and create the indices.
+        """Bind to the application's VictoriaLogs client.
 
         Failures are logged and leave the recorder detached: deployments keep
         working, they are just not recorded.
         """
-        self.configure(settings.opensearch.index_prefix, getattr(settings, "run_history", None))
+        self.configure(getattr(settings, "run_history", None))
         self._log_source = log_source
         if not self.enabled:
             logger.info("Pipeline run history disabled")
             return
-        try:
-            await opensearch._ensure_index(self.runs_index, RUNS_INDEX_MAPPING)
-            await opensearch._ensure_index(self.logs_index, LOGS_INDEX_MAPPING)
-            self._client = opensearch._client
-            await self._mark_interrupted()
-            logger.info("Pipeline run history enabled", runs_index=self.runs_index,
-                        logs_index=self.logs_index, retention_days=self.retention_days)
-        except Exception as e:
-            self._client = None
-            logger.error("Pipeline run history unavailable", error=str(e))
+        self._client = logstore.client
+        await self._mark_interrupted()
+        logger.info("Pipeline run history enabled")
 
     @property
     def available(self) -> bool:
         return self.enabled and self._client is not None
 
     async def _mark_interrupted(self) -> None:
-        """Runs still 'running' at startup were cut short by a restart."""
+        """Runs still 'running' at startup were cut short by a restart.
+
+        Each gets a new, final record; nothing is rewritten.
+        """
         try:
-            await self._client.update_by_query(
-                index=self.runs_index,
-                body={
-                    "query": {"term": {"status": "running"}},
-                    "script": {
-                        "source": "ctx._source.status = 'interrupted'",
-                        "lang": "painless",
-                    },
-                },
-                conflicts="proceed",
-            )
+            rows = await self._client.query(build_runs_query(status="running"))
+            if rows:
+                closed = [run_row({**run_from_row(row), "status": "interrupted"}) for row in rows]
+                await self._client.insert(closed, KIND_PIPELINE_RUN)
+                logger.warning("Pipeline runs interrupted by a restart closed", count=len(closed))
         except Exception as e:
             logger.warning("Could not close interrupted pipeline runs", error=str(e))
 
@@ -582,7 +569,7 @@ class RunHistoryRecorder:
 
     async def _write_run(self, doc: Dict[str, Any]) -> None:
         try:
-            await self._client.index(index=self.runs_index, id=doc["run_id"], body=doc)
+            await self._client.insert([run_row(doc)], KIND_PIPELINE_RUN)
         except Exception as e:
             logger.warning("Pipeline run history: write failed",
                            run_id=doc.get("run_id"), error=str(e))
@@ -591,58 +578,30 @@ class RunHistoryRecorder:
         if lines:
             await self._write_logs(doc, lines, first_line)
         await self._write_run(doc)
-        await self._maybe_cleanup()
 
     async def _write_logs(self, doc: Dict[str, Any], lines: List[str], first_line: int) -> None:
-        from opensearchpy import helpers
-
-        actions = []
+        rows = []
         for number, (line_start, chunk) in enumerate(chunk_lines(lines, self.chunk_size, first_line)):
-            actions.append({
-                "_index": self.logs_index,
-                "_id": f"{doc['run_id']}-{number:05d}",
-                "_source": {
-                    "run_id": doc["run_id"],
-                    "repo": doc["repo"],
-                    "stage": doc["stage"],
-                    "version": doc.get("version"),
-                    "timestamp": doc["started_at"],
-                    "chunk": number,
-                    "line_start": line_start,
-                    "line_end": line_start + len(chunk),
-                    "message": "\n".join(strip_ansi(line) for line in chunk),
-                },
-            })
+            row = {
+                # A chunk is stamped with its run's start: a run's log lies
+                # in the time window the run does.
+                "_time": doc["started_at"],
+                "_msg": "\n".join(strip_ansi(line) for line in chunk),
+                "kind": KIND_PIPELINE_RUN_LOG,
+                "run_id": doc["run_id"],
+                "repo": doc["repo"],
+                "stage": doc["stage"],
+                "version": doc.get("version"),
+                "chunk": number,
+                "line_start": line_start,
+                "line_end": line_start + len(chunk),
+            }
+            rows.append({key: value for key, value in row.items() if value is not None})
         try:
-            _, failed = await helpers.async_bulk(self._client, actions, raise_on_error=False)
-            if failed:
-                logger.warning("Pipeline run history: some log chunks failed",
-                               run_id=doc["run_id"], failed=len(failed))
+            await self._client.insert(rows, KIND_PIPELINE_RUN_LOG)
         except Exception as e:
             logger.warning("Pipeline run history: log write failed",
                            run_id=doc["run_id"], error=str(e))
-
-    async def _maybe_cleanup(self) -> None:
-        now = _now()
-        if self._last_cleanup and now - self._last_cleanup < CLEANUP_INTERVAL:
-            return
-        self._last_cleanup = now
-        await self.cleanup()
-
-    async def cleanup(self) -> None:
-        """Delete runs and logs older than the retention period."""
-        cutoff = (_now() - timedelta(days=self.retention_days)).isoformat()
-        for index in (self.runs_index, self.logs_index):
-            try:
-                result = await self._client.delete_by_query(
-                    index=index,
-                    body={"query": {"range": {"timestamp": {"lt": cutoff}}}},
-                    conflicts="proceed",
-                )
-                logger.info("Pipeline run history cleaned up", index=index,
-                            deleted=(result or {}).get("deleted", 0))
-            except Exception as e:
-                logger.warning("Pipeline run history cleanup failed", index=index, error=str(e))
 
     # ── Queries ──
 
@@ -650,42 +609,27 @@ class RunHistoryRecorder:
         if not self.available:
             raise RuntimeError("Pipeline run history is not available")
 
+    @staticmethod
+    def _log_scope(repo: Optional[str], stage: Optional[str]) -> str:
+        parts = [stream(KIND_PIPELINE_RUN_LOG, repo=repo)]
+        if stage:
+            parts.append(exact("stage", normalize_stage(stage) or stage))
+        return " ".join(parts)
+
     async def _run_ids_matching_logs(self, text: str, repo: Optional[str],
                                      stage: Optional[str],
                                      since: Optional[datetime] = None,
                                      until: Optional[datetime] = None) -> List[str]:
-        filters: List[Dict[str, Any]] = []
-        if repo:
-            filters.append({"term": {"repo": repo}})
-        if stage:
-            filters.append({"term": {"stage": normalize_stage(stage) or stage}})
-        if since or until:
-            # A log chunk's timestamp is its run's started_at.
-            window: Dict[str, str] = {}
-            if since:
-                window["gte"] = since.isoformat()
-            if until:
-                window["lte"] = until.isoformat()
-            filters.append({"range": {"timestamp": window}})
-        body = {
-            "size": 0,
-            "timeout": "30s",
-            "query": {"bool": {
-                "filter": filters,
-                "must": [{"simple_query_string": {
-                    "query": text, "fields": ["message"],
-                    "default_operator": "and", "flags": _SIMPLE_QUERY_FLAGS,
-                }}],
-            }},
-            # Most recent runs first, so a broad query keeps the newest matches.
-            "aggs": {"runs": {
-                "terms": {"field": "run_id", "size": 500, "order": {"latest": "desc"}},
-                "aggs": {"latest": {"max": {"field": "timestamp"}}},
-            }},
-        }
-        resp = await self._client.search(index=self.logs_index, body=body)
-        buckets = resp.get("aggregations", {}).get("runs", {}).get("buckets", [])
-        return [b["key"] for b in buckets]
+        words = text_filter(text, default_op="AND")
+        if not words:
+            return []
+        # A log chunk's _time is its run's started_at. Most recent runs
+        # first, so a broad query keeps the newest matches.
+        rows = await self._client.query(
+            f"{self._log_scope(repo, stage)} {words} | stats by (run_id) max(_time) as latest "
+            f"| sort by (latest desc) limit {MAX_MATCHING_RUNS}",
+            start=since, end=until)
+        return [row["run_id"] for row in rows if row.get("run_id")]
 
     async def list_runs(
         self,
@@ -703,28 +647,21 @@ class RunHistoryRecorder:
         self._require()
         page = _clamp(page, 1, 100000, 1)
         page_size = _clamp(page_size, 1, MAX_PAGE_SIZE, 20)
-        start = min((page - 1) * page_size, MAX_FROM - page_size)
+        start = max(0, min((page - 1) * page_size, MAX_FROM - page_size))
         text = (q or "").strip()[:MAX_QUERY_LENGTH] or None
         run_ids = await self._run_ids_matching_logs(text, repo, stage, since, until) if text else None
-        body = {
-            "from": start,
-            "size": page_size,
-            "timeout": "30s",
-            "track_total_hits": True,
-            "sort": [{"started_at": {"order": "desc"}}],
-            "query": build_runs_query(repo, stage, status, trigger, since, until, run_ids, text),
-        }
-        resp = await self._client.search(index=self.runs_index, body=body)
-        hits = resp.get("hits", {})
-        total = hits.get("total", 0)
-        if isinstance(total, dict):
-            total = total.get("value", 0)
-        runs = [h.get("_source", {}) for h in hits.get("hits", [])]
+        query = build_runs_query(repo, stage, status, trigger, since, until, run_ids, text)
+        totals, rows = await asyncio.gather(
+            self._client.query(f"{query} | stats count() as n"),
+            self._client.query(f"{query} | sort by (started_ms desc) offset {start} limit {page_size}"),
+        )
+        runs = [run_from_row(row) for row in rows]
         # Overlay in-memory state for runs still open in this process.
         open_ids = {r.doc["run_id"] for r in self._open.values()}
         for run in runs:
             if run.get("status") == "running" and run.get("run_id") not in open_ids:
                 run["status_note"] = "not running in this process"
+        total = integer(totals[0].get("n")) if totals else 0
         return {"runs": runs, "total": total, "page": page, "page_size": page_size}
 
     async def get_run(self, run_id: str, log_offset: int = 0,
@@ -737,15 +674,11 @@ class RunHistoryRecorder:
         self._require()
         if not _RUN_ID_RE.match(run_id or ""):
             return None
-        try:
-            resp = await self._client.get(index=self.runs_index, id=run_id)
-        except Exception as e:
-            if "notfound" in type(e).__name__.lower() or "404" in str(e):
-                return None
-            raise
-        if not resp or not resp.get("found", True):
+        rows = await self._client.query(
+            f"{stream(KIND_PIPELINE_RUN)} {exact('run_id', run_id)} | {_LATEST_PER_RUN}")
+        if not rows:
             return None
-        run = resp.get("_source", {})
+        run = run_from_row(rows[0])
         stored = int(run.get("log_stored_lines") or 0)
         total = int(run.get("log_line_count") or 0)
         first_stored = total - stored
@@ -761,21 +694,12 @@ class RunHistoryRecorder:
 
         lines: List[str] = []
         if stored and end > log_offset:
-            body = {
-                # Every chunk holds at least one line of the window.
-                "size": min(MAX_FROM, end - log_offset),
-                "sort": [{"chunk": {"order": "asc"}}],
-                "query": {"bool": {"filter": [
-                    {"term": {"run_id": run_id}},
-                    {"range": {"line_start": {"lt": end}}},
-                    {"range": {"line_end": {"gt": log_offset}}},
-                ]}},
-            }
-            resp = await self._client.search(index=self.logs_index, body=body)
-            for hit in resp.get("hits", {}).get("hits", []):
-                src = hit.get("_source", {})
-                chunk = (src.get("message") or "").split("\n")
-                chunk_start = int(src.get("line_start", 0))
+            chunks = await self._client.query(
+                f"{stream(KIND_PIPELINE_RUN_LOG, repo=run.get('repo'))} {exact('run_id', run_id)} "
+                f"line_start:<{end} line_end:>{log_offset} | sort by (chunk) | fields _msg, line_start")
+            for chunk_row in chunks:
+                chunk = (chunk_row.get("_msg") or "").split("\n")
+                chunk_start = integer(chunk_row.get("line_start"))
                 lo = max(0, log_offset - chunk_start)
                 hi = max(0, end - chunk_start)
                 lines.extend(chunk[lo:hi])
@@ -795,49 +719,29 @@ class RunHistoryRecorder:
         """Full-text search across stored run logs; returns matching lines per chunk."""
         self._require()
         text = (q or "").strip()[:MAX_QUERY_LENGTH]
-        if not text:
+        words = text_filter(text, default_op="AND") if text else None
+        if not words:
             return []
         limit = _clamp(limit, 1, 100, 20)
-        filters: List[Dict[str, Any]] = []
-        if repo:
-            filters.append({"term": {"repo": repo}})
-        if stage:
-            filters.append({"term": {"stage": normalize_stage(stage) or stage}})
-        body = {
-            "size": limit,
-            "timeout": "30s",
-            "sort": [{"timestamp": {"order": "desc"}}, {"chunk": {"order": "asc"}}],
-            "query": {"bool": {
-                "filter": filters,
-                "must": [{"simple_query_string": {
-                    "query": text, "fields": ["message"],
-                    "default_operator": "and", "flags": _SIMPLE_QUERY_FLAGS,
-                }}],
-            }},
-        }
-        resp = await self._client.search(index=self.logs_index, body=body)
-        out = []
-        for hit in resp.get("hits", {}).get("hits", []):
-            src = hit.get("_source", {})
-            out.append({
-                "run_id": src.get("run_id"),
-                "repo": src.get("repo"),
-                "stage": src.get("stage"),
-                "version": src.get("version"),
-                "timestamp": src.get("timestamp"),
-                "line_start": src.get("line_start"),
-                "lines": _matching_lines(src.get("message") or "", text),
-            })
-        return out
+        rows = await self._client.query(
+            f"{self._log_scope(repo, stage)} {words} | sort by (_time desc, chunk) limit {limit} "
+            "| fields _time, _msg, run_id, repo, stage, version, line_start")
+        return [{
+            "run_id": row.get("run_id"),
+            "repo": row.get("repo"),
+            "stage": row.get("stage"),
+            "version": row.get("version"),
+            "timestamp": row.get("_time"),
+            "line_start": integer(row.get("line_start")),
+            "lines": _matching_lines(row.get("_msg") or "", text),
+        } for row in rows]
 
     async def list_repos(self) -> List[str]:
         """Repositories that have at least one recorded run."""
         self._require()
-        resp = await self._client.search(index=self.runs_index, body={
-            "size": 0,
-            "aggs": {"repos": {"terms": {"field": "repo", "size": 500, "order": {"_key": "asc"}}}},
-        })
-        return [b["key"] for b in resp.get("aggregations", {}).get("repos", {}).get("buckets", [])]
+        rows = await self._client.query(
+            f"{stream(KIND_PIPELINE_RUN)} | stats by (repo) count() as n | sort by (repo)")
+        return [row["repo"] for row in rows if row.get("repo")]
 
 
 recorder = RunHistoryRecorder()

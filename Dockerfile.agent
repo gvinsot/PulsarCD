@@ -40,7 +40,7 @@ COPY agent/ ./agent/
 # Environment variables (override at runtime)
 ENV AGENT_AGENT_ID=agent-default
 ENV AGENT_BACKEND_URL=http://localhost:8000
-ENV AGENT_OPENSEARCH__HOSTS=["http://localhost:9200"]
+ENV AGENT_VICTORIALOGS__URL=http://localhost:9428
 ENV AGENT_DOCKER_URL=unix:///var/run/docker.sock
 ENV AGENT_LOG_LEVEL=INFO
 

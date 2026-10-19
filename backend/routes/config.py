@@ -19,7 +19,7 @@ router = APIRouter()
 async def get_config() -> Dict[str, Any]:
     """Get current configuration (for debugging).
 
-    Returns the loaded configuration including hosts, opensearch settings,
+    Returns the loaded configuration including hosts, VictoriaLogs settings,
     and collector settings. Useful for verifying environment variables
     are being parsed correctly.
     """
@@ -53,16 +53,14 @@ async def get_config() -> Dict[str, Any]:
             "active_clients": active_clients,
             "discovered_nodes": list(api.collector._discovered_nodes.keys()) if hasattr(api.collector, '_discovered_nodes') else [],
         },
-        "opensearch": {
-            "hosts": api.settings.opensearch.hosts,
-            "index_prefix": api.settings.opensearch.index_prefix,
-            "has_auth": bool(api.settings.opensearch.username),
+        "victorialogs": {
+            "url": api.settings.victorialogs.url,
+            "has_auth": bool(api.settings.victorialogs.username),
         },
         "collector": {
             "log_interval_seconds": api.settings.collector.log_interval_seconds,
             "metrics_interval_seconds": api.settings.collector.metrics_interval_seconds,
             "log_lines_per_fetch": api.settings.collector.log_lines_per_fetch,
-            "retention_days": api.settings.collector.retention_days,
         },
         "ai": {
             "model": api.settings.pulsar_config.llm.model if api.settings.pulsar_config else api.settings.ai.model,
