@@ -22,7 +22,7 @@ from fastapi.responses import StreamingResponse
 from ..deploy_rollback import deploy_stage_with_rollback
 from .. import run_history
 from ..background_actions import BackgroundAction
-from ..pipeline_runner import _notify_agent_failure, _set_pipeline
+from ..pipeline_runner import _get_build_deployer, _notify_agent_failure, _set_pipeline
 from .. import api
 
 logger = structlog.get_logger()
@@ -68,11 +68,12 @@ async def build_stack(
         if not is_valid:
             raise HTTPException(status_code=400, detail=error_msg)
 
-    deployer, host_name = api._get_deployer_and_host()
+    deployer, host_name = await _get_build_deployer(repo_name)
 
     # Create background action
     action_id = str(uuid.uuid4())[:8]
     action = BackgroundAction(action_id, "build", repo_name)
+    action.host = host_name
     api._background_actions[action_id] = action
 
     # Update pipeline state so all browsers see the build
@@ -231,11 +232,12 @@ async def test_stack(
         if not is_valid:
             raise HTTPException(status_code=400, detail=error_msg)
 
-    deployer, host_name = api._get_deployer_and_host()
+    deployer, host_name = await _get_build_deployer(repo_name)
 
     # Create background action
     action_id = str(uuid.uuid4())[:8]
     action = BackgroundAction(action_id, "test", repo_name)
+    action.host = host_name
     api._background_actions[action_id] = action
 
     # Use tag version if provided, otherwise keep previous version

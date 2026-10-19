@@ -217,10 +217,11 @@ async def build_stack(
         )
     version = version.lstrip("v")
 
-    deployer, host_name = _get_deployer_and_host()
+    deployer, host_name = await _get_build_deployer(repo_name)
 
     action_id = str(uuid.uuid4())[:8]
     action = BackgroundAction(action_id, "build", repo_name)
+    action.host = host_name
     _background_actions[action_id] = action
 
     _set_pipeline(repo_name, "build", "running", version, build_id=action_id)
@@ -456,10 +457,11 @@ async def test_stack(
         if not is_valid:
             return json.dumps({"error": error_msg})
 
-    deployer, host_name = _get_deployer_and_host()
+    deployer, host_name = await _get_build_deployer(repo_name)
 
     action_id = str(uuid.uuid4())[:8]
     action = BackgroundAction(action_id, "test", repo_name)
+    action.host = host_name
     _background_actions[action_id] = action
 
     resolved_version = tag.lstrip('v') if tag else (version or pipeline_state.get_legacy(repo_name).get("version", ""))
@@ -1785,6 +1787,15 @@ def _get_deployer_and_host():
         host_name, host_client = next(iter(collector.clients.items()))
 
     return StackDeployer(settings.github, host_client), host_name
+
+
+async def _get_build_deployer(repo_name: str):
+    """Deployer and host label for a build or test (see build_hosts.py)."""
+    from .api import settings
+    from .build_hosts import pick_build_deployer
+
+    deployer, host_name = _get_deployer_and_host()
+    return await pick_build_deployer(repo_name, deployer, host_name, getattr(settings, "github", None))
 
 
 def get_mcp_read_app():
