@@ -18,6 +18,8 @@ logger = structlog.get_logger()
 # across all StackDeployer instances; no local persistent state is needed.
 file_lock = asyncio.Lock()
 status = {"enabled": False, "last_success": None, "last_error": None, "files": 0}
+_FILE_OPERATION_TIMEOUT = 60
+_SSH_CLEANUP_TIMEOUT = 2
 
 
 async def file_operation(deployer, operation, **kwargs):
@@ -29,9 +31,28 @@ async def file_operation(deployer, operation, **kwargs):
         client = await deployer._get_ssh_client()
         connection = await client.connect() if client else None
         if connection:
-            result = await connection.run(command, input=json.dumps(request),
-                                          check=False, timeout=60)
-            output, returncode = result.stdout, result.exit_status
+            # Keep a process handle before sending sensitive input. Cancelling
+            # connection.run() only cancels its waiter: the remote write could
+            # otherwise outlive the save lock and overwrite a later save.
+            process = await connection.create_process(command)
+            try:
+                output, _ = await asyncio.wait_for(
+                    process.communicate(json.dumps(request)), timeout=_FILE_OPERATION_TIMEOUT)
+                returncode = process.exit_status
+            except BaseException:
+                try:
+                    process.kill()
+                    await asyncio.wait_for(process.wait_closed(), timeout=_SSH_CLEANUP_TIMEOUT)
+                except Exception:
+                    # A lost connection cannot confirm remote termination.
+                    # Preserve the original error without exposing its text.
+                    pass
+                raise
+            finally:
+                try:
+                    process.close()
+                except Exception:
+                    pass
         else:
             if deployer.host_client is not None and not client:
                 raise BackupError("Recovery requires the configured build-host SSH connection")
@@ -47,7 +68,7 @@ async def file_operation(deployer, operation, **kwargs):
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
             try:
                 stdout, _ = await asyncio.wait_for(
-                    process.communicate(json.dumps(request).encode()), timeout=60)
+                    process.communicate(json.dumps(request).encode()), timeout=_FILE_OPERATION_TIMEOUT)
             except BaseException:
                 process.kill()
                 await process.wait()
@@ -80,6 +101,8 @@ async def read_env(deployer, resource):
 
 
 async def save_env(deployer, repo_name, content, actor="operator", env="prod"):
+    from .build_hosts import replicate_env
+
     resource = env_resource(repo_name, env)
     async with file_lock:
         vault = await asyncio.to_thread(get_vault)
@@ -94,11 +117,22 @@ async def save_env(deployer, repo_name, content, actor="operator", env="prod"):
         await file_operation(deployer, "write", resource=resource,
                              content=base64.b64encode(content).decode(),
                              expected=None if previous is None else base64.b64encode(previous).decode())
+        backup_status_unconfirmed = False
         if vault:
             try:
                 await asyncio.to_thread(vault.mark_applied, revision)
             except BackupError:
-                raise BackupError("File written and backed up, but application status is unconfirmed") from None
+                backup_status_unconfirmed = True
+        # Keep the lock until replication completes: a later save or pre-build
+        # sync must not be overtaken by copies from an earlier save.
+        try:
+            await replicate_env(deployer, resource, content)
+        except BackupError as exc:
+            if backup_status_unconfirmed:
+                raise BackupError(str(exc) + " Encrypted backup application status is also unconfirmed.") from None
+            raise
+        if backup_status_unconfirmed:
+            raise BackupError("File written and backed up, but application status is unconfirmed")
         return revision
 
 

@@ -4,6 +4,38 @@ PulsarCD peut conserver dans PostgreSQL des versions chiffrées des `.env`
 présents sous le répertoire des dépôts et des fichiers du répertoire SSH monté
 dans le backend. Cette fonctionnalité ne sauvegarde pas `/data`.
 
+## Réplication sur les serveurs de build
+
+Chaque enregistrement de `devops/.env` ou `devops/.env.qa` via l'éditeur web
+ou le MCP écrit d'abord le fichier sur l'hôte principal (`github.ssh_host`),
+puis réplique ce fichier sur tous les serveurs supplémentaires configurés dans
+`github.build_hosts`. L'adresse du principal est exclue et les adresses répétées
+ne reçoivent qu'une copie. Les autres nœuds Swarm ne sont pas concernés.
+
+Les copies passent par SSH sur stdin, sans contenu dans les arguments de
+commande ni dans les logs. Le remplacement est atomique avec des permissions
+`0600`. Cette réplication fonctionne indépendamment des sauvegardes chiffrées
+PostgreSQL décrites ci-dessous.
+
+La modale indique le nœud principal qui lit le fichier (son nom réel, pas son
+alias SSH) et les cibles configurées pour la réplication à l'enregistrement.
+Ces cibles ne constituent pas une vérification de l'état actuel des copies.
+Si le fichier n'existe pas encore, la modale indique où il sera créé. Sans
+serveur secondaire configuré, elle le signale explicitement.
+
+Le succès confirme l'enregistrement et la réplication sur toutes les cibles.
+Si une copie échoue, le fichier reste enregistré sur le principal et les copies
+réussies sont conservées ; la modale reste ouverte et indique les serveurs en
+échec. Enregistrer de nouveau relance la réplication, même avec un contenu
+inchangé. La synchronisation depuis le principal avant un build ou un test sur
+un secondaire reste également active.
+
+Le principal reste la référence : il n'y a pas de bascule automatique en cas
+de perte de ce serveur. Les changements effectués directement par SSH ne sont
+pas répliqués immédiatement ; ils sont repris à la prochaine synchronisation
+avant build/test ou à un nouvel enregistrement via PulsarCD. Cette réplication
+ne fournit pas d'historique et ne remplace pas une sauvegarde indépendante.
+
 ## Activation
 
 Configurer dans le `devops/.env` de **PulsarCD** :
@@ -57,14 +89,6 @@ une ancienne version exige sa clé d'origine. Un changement de clé inattendu
 provoque un échec d'authentification des versions existantes et bloque le relevé.
 
 ## Ce qui est sauvegardé
-
-La barre supérieure de l'éditeur `.env` / `.env.qa` affiche le nom du nœud
-qui lit le fichier (renvoyé par l'hôte de build, pas son alias SSH). Si le fichier
-n'existe pas encore, elle indique le nœud où il sera créé à l'enregistrement.
-PulsarCD écrit ces fichiers sur ce seul nœud : il ne les réplique pas sur les
-autres nœuds Swarm. Les sauvegardes chiffrées PostgreSQL restent distinctes de
-ces fichiers, et une éventuelle réplication externe du système de fichiers
-n'est pas détectée par l'éditeur.
 
 - Toute écriture par l'éditeur web ou le MCP sauvegarde d'abord le fichier
   existant, puis la nouvelle version. Celle-ci est `pending` jusqu'au remplacement

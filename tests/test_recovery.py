@@ -259,15 +259,102 @@ async def test_pipeline_stops_when_backup_fails(deployer, monkeypatch, method):
 
 async def test_secret_content_is_only_sent_on_stdin(deployer, monkeypatch):
     from types import SimpleNamespace
-    from unittest.mock import AsyncMock
-    connection = SimpleNamespace(run=AsyncMock(return_value=SimpleNamespace(
-        stdout='{"written":true}', exit_status=0)))
+    from unittest.mock import AsyncMock, MagicMock
+    process = SimpleNamespace(
+        communicate=AsyncMock(return_value=('{"written":true}', "")),
+        exit_status=0, close=MagicMock(), kill=MagicMock())
+    connection = SimpleNamespace(create_process=AsyncMock(return_value=process))
     client = SimpleNamespace(connect=AsyncMock(return_value=connection))
     deployer._get_ssh_client = AsyncMock(return_value=client)
     encoded = base64.b64encode(b"SECRET=do-not-log-me\n").decode()
     await recovery.file_operation(deployer, "write", resource="repo/devops/.env",
                                   content=encoded, expected=None)
-    call = connection.run.call_args
+    call = connection.create_process.call_args
     assert "do-not-log-me" not in call.args[0]
     assert encoded not in call.args[0]
-    assert json.loads(call.kwargs["input"])["content"] == encoded
+    assert not call.kwargs
+    assert json.loads(process.communicate.call_args.args[0])["content"] == encoded
+    process.close.assert_called_once()
+    process.kill.assert_not_called()
+
+
+@pytest.mark.parametrize("interruption", ["cancel", "timeout"])
+async def test_remote_file_process_is_stopped_before_interruption_returns(
+        deployer, monkeypatch, interruption):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    started = asyncio.Event()
+    waiting_for_exit = asyncio.Event()
+    remote_exited = asyncio.Event()
+    order = []
+
+    async def communicate(_input):
+        started.set()
+        await asyncio.Event().wait()
+
+    async def wait_closed():
+        waiting_for_exit.set()
+        await remote_exited.wait()
+        order.append("exited")
+
+    process = SimpleNamespace(
+        communicate=communicate, wait_closed=wait_closed,
+        kill=MagicMock(side_effect=lambda: order.append("kill")),
+        close=MagicMock(side_effect=lambda: order.append("close")))
+    connection = SimpleNamespace(create_process=AsyncMock(return_value=process), close=MagicMock())
+    deployer._get_ssh_client = AsyncMock(return_value=SimpleNamespace(
+        connect=AsyncMock(return_value=connection)))
+    if interruption == "timeout":
+        monkeypatch.setattr(recovery, "_FILE_OPERATION_TIMEOUT", 0.02)
+
+    task = asyncio.create_task(recovery.file_operation(
+        deployer, "write", resource="repo/devops/.env", content="WA==", expected=None))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1)
+        if interruption == "cancel":
+            task.cancel()
+        await asyncio.wait_for(waiting_for_exit.wait(), timeout=1)
+        assert not task.done()
+        assert order == ["kill"]
+    finally:
+        remote_exited.set()
+        with pytest.raises(asyncio.CancelledError if interruption == "cancel" else BackupError):
+            await asyncio.wait_for(task, timeout=1)
+
+    assert order == ["kill", "exited", "close"]
+    connection.close.assert_not_called()
+
+
+@pytest.mark.parametrize("cleanup_failure", ["kill", "wait", "unresponsive"])
+async def test_remote_file_process_cleanup_is_bounded_and_keeps_errors_private(
+        deployer, monkeypatch, cleanup_failure, capsys, caplog):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    secret = "private-remote-file-error"
+
+    async def wait_closed():
+        if cleanup_failure == "wait":
+            raise RuntimeError(secret)
+        await asyncio.Event().wait()
+
+    process = SimpleNamespace(
+        communicate=AsyncMock(side_effect=RuntimeError(secret)), wait_closed=wait_closed,
+        kill=MagicMock(side_effect=RuntimeError(secret) if cleanup_failure == "kill" else None),
+        close=MagicMock())
+    connection = SimpleNamespace(create_process=AsyncMock(return_value=process), close=MagicMock())
+    deployer._get_ssh_client = AsyncMock(return_value=SimpleNamespace(
+        connect=AsyncMock(return_value=connection)))
+    monkeypatch.setattr(recovery, "_SSH_CLEANUP_TIMEOUT", 0.02)
+
+    with pytest.raises(BackupError) as exc:
+        await asyncio.wait_for(recovery.file_operation(
+            deployer, "write", resource="repo/devops/.env", content="WA==", expected=None), timeout=1)
+
+    assert secret not in str(exc.value)
+    output = capsys.readouterr()
+    assert secret not in output.out + output.err + caplog.text
+    process.kill.assert_called_once()
+    process.close.assert_called_once()
+    connection.close.assert_not_called()

@@ -76,10 +76,13 @@ function renderStackEnvStorage(file) {
     } else if (file.error || !storage?.node) {
         status.textContent = 'Storage node unavailable';
     } else {
+        const replicas = storage.replica_targets || [];
         status.textContent = (storage.exists
-            ? `Stored on: ${storage.node}`
-            : `File not created yet · Save target: ${storage.node}`)
-            + ' · PulsarCD saves to this node only (no automatic file replication).';
+            ? `Primary storage: ${storage.node}`
+            : `File not created yet · Save target: ${storage.node} (primary)`)
+            + (replicas.length
+                ? ` · Each save replicates to: ${replicas.join(', ')}.`
+                : ' · No secondary build servers configured.');
     }
 }
 
@@ -164,6 +167,7 @@ async function saveStackEnv() {
         // reported to the user) or failed to parse.
         if (result && result.success) {
             const file = state.files[env];
+            const savedMessage = result.message || `${STACK_ENV_FILES[env].name} saved successfully.`;
             file.content = file.saved = content;
             if (file.storage) file.storage.exists = true;
             if (stackEnvState === state && state.active === env) renderStackEnvStorage(file);
@@ -171,10 +175,10 @@ async function saveStackEnv() {
             const unsaved = Object.entries(state.files).find(
                 ([name, f]) => name !== env && !f.error && f.content !== f.saved);
             if (unsaved) {
-                showNotification('warning', `${STACK_ENV_FILES[env].name} saved; `
-                    + `${STACK_ENV_FILES[unsaved[0]].name} still has unsaved changes`);
+                showNotification('warning', `${savedMessage} `
+                    + `${STACK_ENV_FILES[unsaved[0]].name} still has unsaved changes.`);
             } else {
-                showNotification('success', `${STACK_ENV_FILES[env].name} saved successfully`);
+                showNotification('success', savedMessage);
                 closeStackEnvModal();
             }
         } else if (result) {

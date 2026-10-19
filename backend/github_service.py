@@ -1760,8 +1760,8 @@ class StackDeployer:
     async def get_env_file_details(self, repo_name: str, env: str = "prod") -> tuple[bool, dict | str]:
         """Read the file and identify its storage node in the same SSH operation.
 
-        Env writes target only this host; Swarm distributes service variables,
-        not copies of these files. External filesystem replication is unknown.
+        This host is the source of truth. replica_targets lists configured
+        save destinations, not a claim that their files are already in sync.
         """
         try:
             repo_name = _validate_repo_name(repo_name)
@@ -1771,6 +1771,7 @@ class StackDeployer:
 
         from .recovery import file_operation, env_resource
         from .backup_vault import BackupError
+        from .build_hosts import env_replica_targets
         try:
             resource = env_resource(repo_name, env)
         except ValueError as e:
@@ -1784,6 +1785,7 @@ class StackDeployer:
                     "node": response["hostname"],
                     "exists": encoded is not None,
                     "resource": resource,
+                    "replica_targets": [label for label, _ in env_replica_targets(self.config)],
                 },
             }
         except (BackupError, UnicodeError):
@@ -1811,12 +1813,17 @@ class StackDeployer:
             return False, "Environment content must be text, at most 4 MiB"
         from .recovery import save_env, ENV_FILES
         from .backup_vault import BackupError
+        from .build_hosts import env_replica_targets
         if env not in ENV_FILES:
             return False, "Unknown environment: expected 'prod' or 'qa'"
         try:
             revision = await save_env(self, repo_name, content.encode("utf-8"), actor=actor, env=env)
-            return True, ("File saved and encrypted backup recorded" if revision
-                          else "File saved (encrypted backup is disabled)")
+            message = ("File saved and encrypted backup recorded" if revision
+                       else "File saved (encrypted backup is disabled)")
+            targets = env_replica_targets(self.config)
+            if targets:
+                message += "; replicated to: " + ", ".join(label for label, _ in targets)
+            return True, message
         except BackupError as exc:
             return False, str(exc)
 

@@ -1,6 +1,6 @@
 """Env storage metadata comes from the host reading the selected file."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -33,7 +33,7 @@ def test_editor_reports_selected_file_storage(client, auth_headers, monkeypatch,
     assert response.json() == {
         "content": "", "repo": "repo", "env": env,
         "storage": {"node": "build-node-2", "exists": exists,
-                    "resource": f"repo/devops/{filename}"},
+                    "resource": f"repo/devops/{filename}", "replica_targets": []},
     }
 
 
@@ -41,16 +41,20 @@ async def test_ssh_alias_is_not_reported_as_actual_node(monkeypatch):
     from types import SimpleNamespace
     import json
 
-    run = AsyncMock(return_value=SimpleNamespace(
-        exit_status=0, stdout=json.dumps({"hostname": "worker-3", "content": "WD0xCg=="})))
-    deployer = StackDeployer(GitHubConfig(ssh_host="dockerhost"))
+    process = SimpleNamespace(
+        exit_status=0, close=MagicMock(),
+        communicate=AsyncMock(return_value=(
+            json.dumps({"hostname": "worker-3", "content": "WD0xCg=="}), "")))
+    deployer = StackDeployer(GitHubConfig(ssh_host="dockerhost", build_hosts=(
+        "primary=dockerhost,server-c=192.168.1.34,duplicate=192.168.1.34,server-d=192.168.1.92")))
     deployer._ssh_client = SimpleNamespace(connect=AsyncMock(
-        return_value=SimpleNamespace(run=run)))
+        return_value=SimpleNamespace(create_process=AsyncMock(return_value=process))))
     success, details = await deployer.get_env_file_details("repo", "qa")
     assert success
     assert details["storage"]["node"] == "worker-3"
+    assert details["storage"]["replica_targets"] == ["server-c", "server-d"]
     assert details["content"] == "X=1\n"
-    request = json.loads(run.call_args.kwargs["input"])
+    request = json.loads(process.communicate.call_args.args[0])
     assert request["resource"] == "repo/devops/.env.qa"
     # Preserve the API used by MCP callers, which only need file content.
     assert await deployer.get_env_file("repo", "qa") == (True, "X=1\n")

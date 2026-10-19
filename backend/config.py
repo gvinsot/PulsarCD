@@ -214,7 +214,8 @@ class GitHubConfig(BaseModel):
     # Extra hosts that run builds and tests besides ssh_host, as
     # "label=address,..." (a bare address is its own label). They must be
     # clones of ssh_host: same SSH user/key, repos_path and tooling. Deploys
-    # stay on ssh_host. See backend/build_hosts.py.
+    # stay on ssh_host. Env saves replicate to these hosts as well.
+    # See backend/build_hosts.py.
     build_hosts: Optional[str] = None
     # Docker registry configuration for push operations
     registry_url: Optional[str] = None

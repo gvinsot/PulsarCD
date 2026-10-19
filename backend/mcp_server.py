@@ -1593,13 +1593,21 @@ async def set_stack_env(
     missing = [k for k in unset if k not in removed]
 
     if not updated and not added and not removed:
+        message = (f"No variable matched: {', '.join(missing)}" if missing
+                   else "Nothing to change")
+        # Retrying an unset after partial replication must still repair the
+        # replicas, even though the primary no longer contains that key.
+        from .build_hosts import env_replica_targets
+        if env_replica_targets(settings.github):
+            success, message = await deployer.save_env_file(repo_name, content, actor="mcp", env=env)
+            if not success:
+                return json.dumps({"error": message})
         return json.dumps({
             "success": True,
             "repo": repo_name,
             "env": env,
             "unchanged": True,
-            "message": (f"No variable matched: {', '.join(missing)}" if missing
-                        else "Nothing to change"),
+            "message": message,
         })
 
     success, message = await deployer.save_env_file(repo_name, new_content, actor="mcp", env=env)

@@ -17,11 +17,12 @@ Choosing a host for a build or a test:
   unless that host runs clearly more jobs than the least loaded one;
 * otherwise the least loaded host wins, the primary on a tie.
 
-The primary stays the single source of truth for ``.env`` files: before a
-build or test on another host, the repo's ``.env`` / ``.env.qa`` files are
-copied over from the primary (``sync_repo_envs``), so editing them in the UI
-needs no fan-out. All state here is in memory: a restart only costs a build
-without cache.
+The primary stays the single source of truth for ``.env`` files. Editor/MCP
+saves replicate the edited file to every configured secondary. Before a
+build or test, the repo's ``.env`` / ``.env.qa`` files are also copied from
+the primary (``sync_repo_envs``), catching up after failed replication or
+manual edits. Host selection state is in memory: a restart only costs a
+build without cache.
 """
 
 import asyncio
@@ -37,6 +38,8 @@ logger = structlog.get_logger()
 _HEALTH_TTL = 30
 # Seconds allowed for an SSH connection plus a trivial command.
 _HEALTH_TIMEOUT = 8
+# Bound the save delay when a secondary is unavailable, including SSH connect.
+_ENV_REPLICATION_TIMEOUT = 15
 # A repo leaves its usual host only when that host runs this many more jobs
 # than the least loaded one: a cold layer cache costs more than a short wait.
 _AFFINITY_SLACK = 1
@@ -72,6 +75,54 @@ def deployer_for(github_config, address: str, env_source=None):
     deployer = StackDeployer(github_config.model_copy(update={"ssh_host": address}))
     deployer.env_source = env_source
     return deployer
+
+
+def env_replica_targets(github_config) -> List[Tuple[str, str]]:
+    """Configured secondaries, once per address, excluding the primary."""
+    seen = {getattr(github_config, "ssh_host", None)}
+    targets = []
+    for label, address in parse_build_hosts(getattr(github_config, "build_hosts", None)):
+        if address not in seen:
+            seen.add(address)
+            targets.append((label, address))
+    return targets
+
+
+async def replicate_env(source, resource: str, content: bytes) -> None:
+    """Replicate one saved file; the caller must hold recovery.file_lock.
+
+    Attempt every secondary, even after a failure. Never log exception text:
+    it may contain credentials. A partial failure leaves the primary and
+    successful replicas saved, and can be retried with the same content.
+    """
+    from .backup_vault import BackupError
+    from .recovery import file_operation, read_env
+
+    async def copy_to(address):
+        target = deployer_for(source.config, address)
+        current = await read_env(target, resource)
+        if current != content:
+            await file_operation(
+                target, "write", resource=resource,
+                content=base64.b64encode(content).decode(),
+                expected=None if current is None else base64.b64encode(current).decode(),
+            )
+
+    async def replicate(label, address):
+        try:
+            await asyncio.wait_for(copy_to(address), timeout=_ENV_REPLICATION_TIMEOUT)
+        except Exception:
+            logger.warning("Environment replication failed", resource=resource, host=label)
+            return label
+        return None
+
+    results = await asyncio.gather(*(
+        replicate(label, address) for label, address in env_replica_targets(source.config)
+    ))
+    failed = [label for label in results if label is not None]
+    if failed:
+        raise BackupError("File saved on the primary, but replication failed on: "
+                          + ", ".join(failed) + ". Save again to retry.")
 
 
 async def _is_reachable(deployer, address: str) -> bool:

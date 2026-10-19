@@ -1835,7 +1835,7 @@ class TestStackEnvNeverReturnsValues:
     SECRETS = ("hunter2-hunter2", "ghp_realtoken")
 
     @pytest.fixture
-    def env_file(self, monkeypatch):
+    def env_file(self, monkeypatch, client):
         from backend.github_service import StackDeployer
 
         state = {"content": (
@@ -1902,6 +1902,29 @@ class TestStackEnvNeverReturnsValues:
         assert payload["removed"] == ["REGISTRY_TOKEN"]
         assert "REGISTRY_TOKEN" not in env_file["content"]
         assert "TRAEFIK_HOST=logs.example.org" in env_file["content"]
+
+    async def test_retry_unset_replicates_when_primary_key_is_already_removed(self, env_file, monkeypatch):
+        from backend.github_service import StackDeployer
+        from backend.mcp_server import set_stack_env
+
+        monkeypatch.setattr(api_module.settings.github, "build_hosts", "server-c=192.168.1.34")
+        attempts = []
+
+        async def save(self, repo_name, content, actor="operator", env="prod"):
+            env_file["content"] = content
+            attempts.append(content)
+            if len(attempts) == 1:
+                return False, "File saved on the primary, but replication failed on: server-c. Save again to retry."
+            return True, "File saved; replicated to: server-c"
+
+        monkeypatch.setattr(StackDeployer, "save_env_file", save)
+        first = json.loads(await set_stack_env("myrepo", unset=["REGISTRY_TOKEN"]))
+        assert "replication failed" in first["error"]
+        assert "REGISTRY_TOKEN" not in env_file["content"]
+        retry = json.loads(await set_stack_env("myrepo", unset=["REGISTRY_TOKEN"]))
+        assert retry["success"] and retry["unchanged"]
+        assert len(attempts) == 2 and attempts[0] == attempts[1]
+        assert "replicated to: server-c" in retry["message"]
 
     @pytest.mark.parametrize("value", ["a\nINJECTED=1", "a\rINJECTED=1"])
     async def test_a_newline_in_a_value_cannot_declare_another_variable(self, env_file, value):
