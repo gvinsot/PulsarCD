@@ -564,6 +564,26 @@ class PipelineStateManager:
             self._save()
             logger.info("Pipeline state reset", repo=repo_name)
 
+    def reset_after_stack_removal(self, repo_name: str):
+        """Clear runtime results while retaining the build and project settings.
+
+        Removing services does not remove built images or change transition
+        policies. Historical test/deploy results must no longer describe the
+        current stack, including after a backend restart.
+        """
+        entry = self.get(repo_name)
+        if entry is None:
+            return
+        for stage in ("test", "qa", "deploy"):
+            entry.stages[stage] = StageState()
+        entry.current_stage = None
+        entry.overall_status = "idle"
+        entry.gates = []
+        entry.last_deployed_at = None
+        entry.status_reason = None
+        entry.last_rollback = None
+        self._save()
+
     def find_repo_by_stack(self, stack_name: str) -> Optional[str]:
         """Reverse-lookup: find repo_name from a Docker stack name."""
         for repo_name, entry in self._state.items():

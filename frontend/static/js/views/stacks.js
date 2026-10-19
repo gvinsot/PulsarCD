@@ -716,6 +716,11 @@ function renderStacksList() {
             testStep = effectiveHadTest && cs >= 2 ? 'success' : (cs >= 2 ? 'idle' : 'pending');
             qaStep = _qa(cs >= 3 ? 'success' : 'pending');
             deployStep = cs >= 4 ? 'success' : 'pending';
+        } else if (pipeline && pipeline.status === 'idle' && !isDeployed) {
+            // After removal only the build result survives. Do not infer test
+            // success from an image tag or turn cleared stages into pending ones.
+            const bs = pipeline.stages && pipeline.stages.build;
+            buildStep = skipBuild ? 'skipped' : (bs ? bs.status : 'idle');
         } else if (hasUpdate) {
             versionStep = 'success'; buildStep = skipBuild ? 'skipped' : 'success'; testStep = 'success';
             qaStep = _qa('pending'); deployStep = 'pending';
@@ -1196,6 +1201,7 @@ async function removeDeployedStack(stackName) {
         
         if (result && result.success) {
             showNotification('success', result.message);
+            await refreshStacks(); // Reload versions and discard removed containers immediately.
             scheduleStacksStateUpdate(); // Incremental update after stack removal
         } else {
             showNotification('error', result?.message || result?.detail || 'Failed to remove stack');

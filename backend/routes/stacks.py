@@ -364,6 +364,13 @@ _deployed_tags_cache_time = None
 _DEPLOYED_TAGS_CACHE_TTL = 10  # seconds
 
 
+def invalidate_deployed_tags_cache():
+    """Force the next read to reflect changes to Swarm services."""
+    global _deployed_tags_cache, _deployed_tags_cache_time
+    _deployed_tags_cache = None
+    _deployed_tags_cache_time = None
+
+
 @router.get("/api/stacks/deployed-tags")
 async def get_stacks_deployed_tags():
     """Get deployed image tags and latest built tags for all stacks."""

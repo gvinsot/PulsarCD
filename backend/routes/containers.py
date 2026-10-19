@@ -394,8 +394,16 @@ async def remove_stack(stack_name: str, host: Optional[str] = Query(default=None
     if success:
         # Reset pipeline state so the stack shows as undeployed
         repo_name = api.pipeline_state.find_repo_by_stack(stack_name)
+        if not repo_name:
+            # Standalone build/test/deploy actions may not have project metadata.
+            repo_name = next((
+                name for name, _ in api.pipeline_state.items()
+                if StackDeployer._repo_to_stack_name(name) == stack_name
+            ), None)
         if repo_name:
-            api.pipeline_state.reset(repo_name)
+            api.pipeline_state.reset_after_stack_removal(repo_name)
+        from .stacks import invalidate_deployed_tags_cache
+        invalidate_deployed_tags_cache()
         return {"success": True, "message": message, "stack_name": stack_name}
     else:
         raise HTTPException(status_code=500, detail=message)
