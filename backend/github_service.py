@@ -1104,7 +1104,7 @@ class StackDeployer:
         self._ssh_client = None
         # Secondary build host only: the deployer whose .env files are copied
         # here before each build/test (see build_hosts.py).
-        self.env_source = None
+        self.env_source: Optional["StackDeployer"] = None
 
     async def _get_ssh_client(self):
         """Get or create SSH client for host commands."""

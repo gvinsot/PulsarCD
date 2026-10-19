@@ -2,13 +2,15 @@
 
 import base64
 import types
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 import backend.api as api
 from backend import build_hosts, recovery
 from backend.background_actions import BackgroundAction
-from tests.test_pipeline_chain import FakeDeployer, _run, env  # noqa: F401  (fixture)
+from backend.pipeline_state import PipelineStateManager
+from tests.test_pipeline_chain import FakeDeployer, _run
 
 
 @pytest.fixture(autouse=True)
@@ -131,8 +133,26 @@ class TestSyncEnvs:
         assert "other/devops/.env" not in files["dst"]
 
 
+@pytest.fixture
+def pipeline_env(monkeypatch, tmp_path):
+    """Isolated pipeline state with a FakeDeployer as the primary (manager-1)."""
+    mgr = PipelineStateManager(data_dir=str(tmp_path))
+    monkeypatch.setattr(api, "pipeline_state", mgr)
+    monkeypatch.setattr(api, "_auto_build_state", {})
+    monkeypatch.setattr(api, "_background_actions", {})
+    monkeypatch.setattr(api, "_buildable_cache", {})
+    llm = MagicMock()
+    llm.evaluate_gate = AsyncMock(return_value=(True, "looks good"))
+    llm.handle_failure = AsyncMock()
+    monkeypatch.setattr(api, "llm_agent", llm)
+    ns = types.SimpleNamespace(state=mgr, deployer=FakeDeployer())
+    monkeypatch.setattr(api, "_get_deployer_and_host", lambda: (ns.deployer, "manager-1"))
+    return ns
+
+
 class TestPipelineRouting:
-    async def test_build_and_test_on_build_host_deploy_on_primary(self, env, monkeypatch):
+    async def test_build_and_test_on_build_host_deploy_on_primary(self, pipeline_env, monkeypatch):
+        env = pipeline_env
         builder = FakeDeployer()
 
         async def pick(repo_name, deployer, host_name, github_config):
@@ -151,7 +171,6 @@ class TestPipelineRouting:
 
 class TestPrepareSecondaryHost:
     def _deployer(self, monkeypatch, primary_ok=True, clone_ok=True):
-        from unittest.mock import AsyncMock
         primary = types.SimpleNamespace(
             _run_command=AsyncMock(return_value=(primary_ok, "git@github.com:me/PulsarCD.git\n")))
         d = build_hosts.deployer_for(_config("c=192.168.1.34"), "192.168.1.34", env_source=primary)
