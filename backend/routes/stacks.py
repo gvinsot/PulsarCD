@@ -332,12 +332,12 @@ async def get_stack_env(repo_name: str, env: str = _ENV_QUERY):
         raise HTTPException(status_code=400, detail="GitHub integration not configured")
 
     deployer = StackDeployer(api.settings.github, None)
-    success, content = await deployer.get_env_file(repo_name, env=env)
+    success, result = await deployer.get_env_file_details(repo_name, env=env)
 
-    if not success:
-        raise HTTPException(status_code=500, detail=content)
+    if not success or not isinstance(result, dict):
+        raise HTTPException(status_code=500, detail=result)
 
-    return {"content": content, "repo": repo_name, "env": env}
+    return {**result, "repo": repo_name, "env": env}
 
 
 @router.put("/api/stacks/{repo_name}/env")

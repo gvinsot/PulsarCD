@@ -67,6 +67,22 @@ const STACK_ENV_FILES = {
 };
 let stackEnvState = null;
 
+function renderStackEnvStorage(file) {
+    const status = document.getElementById('stack-env-storage');
+    const storage = file?.storage;
+    status.title = storage?.resource || '';
+    if (!file) {
+        status.textContent = 'Loading storage node…';
+    } else if (file.error || !storage?.node) {
+        status.textContent = 'Storage node unavailable';
+    } else {
+        status.textContent = (storage.exists
+            ? `Stored on: ${storage.node}`
+            : `File not created yet · Save target: ${storage.node}`)
+            + ' · PulsarCD saves to this node only (no automatic file replication).';
+    }
+}
+
 async function editStackEnv(repoName, qaEnabled = false) {
     // .env contents are secrets: the backend serves them to admins only.
     if (!isAdmin()) {
@@ -95,6 +111,7 @@ async function switchStackEnvTab(env) {
     document.getElementById('stack-env-title').textContent =
         `Edit ${STACK_ENV_FILES[env].name}: ${state.repo}`;
     document.getElementById('stack-env-help').textContent = STACK_ENV_FILES[env].help;
+    renderStackEnvStorage(state.files[env]);
 
     if (!state.files[env]) {
         textarea.value = 'Loading...';
@@ -109,12 +126,13 @@ async function switchStackEnvTab(env) {
         if (stackEnvState !== state) return;
         state.files[env] = error
             ? { error }
-            : { content: data.content || '', saved: data.content || '' };
+            : { content: data.content || '', saved: data.content || '', storage: data.storage };
         if (error) showNotification('error', error);
         if (state.active !== env) return;
     }
 
     const file = state.files[env];
+    renderStackEnvStorage(file);
     if (file.error) {
         textarea.value = `# Could not read the ${STACK_ENV_FILES[env].name} file:\n# ${file.error}\n`;
         textarea.disabled = true;
@@ -147,6 +165,8 @@ async function saveStackEnv() {
         if (result && result.success) {
             const file = state.files[env];
             file.content = file.saved = content;
+            if (file.storage) file.storage.exists = true;
+            if (stackEnvState === state && state.active === env) renderStackEnvStorage(file);
             // Stay open while the other tab still holds unsaved edits.
             const unsaved = Object.entries(state.files).find(
                 ([name, f]) => name !== env && !f.error && f.content !== f.saved);

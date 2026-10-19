@@ -7,6 +7,7 @@ Never emit file content or raw errors on stderr. No shell evaluates file content
 import base64
 import json
 import os
+import socket
 from pathlib import Path, PurePosixPath
 import stat
 import sys
@@ -90,7 +91,8 @@ def handle(request):
     path = safe_path(root, request["resource"])
     if operation == "read":
         content = read_file(path)
-        return {"content": None if content is None else base64.b64encode(content).decode()}
+        return {"content": None if content is None else base64.b64encode(content).decode(),
+                "hostname": socket.gethostname()}
     if operation == "write":
         content = base64.b64decode(request["content"], validate=True)
         if len(content) > MAX_SIZE:

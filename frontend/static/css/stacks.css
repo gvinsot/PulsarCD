@@ -587,6 +587,22 @@
 }
 
 /* Env editor */
+.stack-env-heading {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.stack-env-storage {
+    margin: 6px 0 0;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    line-height: 1.5;
+}
+
+#stack-env-modal .modal-close {
+    flex-shrink: 0;
+}
+
 .env-help-text {
     margin: 0 0 12px 0;
     color: var(--text-muted);

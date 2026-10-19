@@ -1078,7 +1078,10 @@
                 <div id="stack-env-modal" class="modal">
                     <div class="modal-content modal-lg">
                         <div class="modal-header">
-                            <h2 id="stack-env-title">Edit .env</h2>
+                            <div class="stack-env-heading">
+                                <h2 id="stack-env-title">Edit .env</h2>
+                                <p id="stack-env-storage" class="stack-env-storage" role="status" aria-live="polite"></p>
+                            </div>
                             <button class="modal-close" data-click="closeStackEnvModal">&times;</button>
                         </div>
                         <!-- Shown when the stack's QA stage is enabled. Not .tab-btn: the
