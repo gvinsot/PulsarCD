@@ -16,6 +16,8 @@ class BackgroundAction:
         self.id = action_id
         self.action_type = action_type  # "build" or "deploy"
         self.repo_name = repo_name
+        # Label of the build host running it (builds and tests; see build_hosts.py)
+        self.host: Optional[str] = None
         self._status = "running"  # running, completed, failed, cancelled
         self.output_lines: List[str] = []
         self.result: Optional[Dict[str, Any]] = None

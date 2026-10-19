@@ -22,6 +22,7 @@ from typing import List, Optional
 import structlog
 from fastapi import HTTPException
 
+from . import build_hosts
 from . import notifier
 from .config import find_swarm_manager
 from .github_service import StackDeployer
@@ -131,6 +132,17 @@ def _get_deployer_and_host():
         host_name, host_client = next(iter(api.collector.clients.items()))
 
     return StackDeployer(api.settings.github, host_client), host_name
+
+
+async def _get_build_deployer(repo_name: str):
+    """Deployer and host label for a build or test of repo_name.
+
+    Same as _get_deployer_and_host() unless extra build hosts are configured;
+    deploys always use _get_deployer_and_host().
+    """
+    deployer, host_name = api._get_deployer_and_host()
+    return await build_hosts.pick_build_deployer(
+        repo_name, deployer, host_name, getattr(api.settings, "github", None))
 
 
 def invalidate_buildable_cache(repo_name: str = None):
@@ -251,22 +263,27 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
         built_version = version
         build_id = None
         try:
+            # Build and test run on the build host picked for this repo; QA and
+            # deploy stay on the primary (swarm manager) deployer.
+            build_deployer, build_host = await _get_build_deployer(repo_name)
+
             # ── Step 1: Build (skip if no build: in compose) ──
             if buildable:
                 build_id = str(uuid.uuid4())[:8]
                 build_action = BackgroundAction(build_id, "build", repo_name)
+                build_action.host = build_host
                 api._background_actions[build_id] = build_action
                 api.pipeline_state.get_or_create(repo_name).stages["build"].action_id = build_id
 
                 logger.info("Pipeline: starting build", repo=repo_name, action_id=build_id,
                             version=build_version, tag=tag)
-                result = await deployer.build(
+                result = await build_deployer.build(
                     repo_name, ssh_url, version=build_version,
                     tag=tag,
                     output_callback=build_action.append_output,
                     cancel_event=build_action.cancel_event,
                 )
-                result["host"] = host_name
+                result["host"] = build_host
                 result["auto_triggered"] = True
                 build_action.result = result
                 build_action.status = "completed" if result.get("success") else "failed"
@@ -321,18 +338,19 @@ async def _trigger_pipeline(repo_name: str, ssh_url: str, version: str = None, t
             # ── Step 2: Test ──
             test_id = str(uuid.uuid4())[:8]
             test_action = BackgroundAction(test_id, "test", repo_name)
+            test_action.host = build_host
             test_action.task = asyncio.current_task()
             api._background_actions[test_id] = test_action
             _set_pipeline(repo_name, "test", "running", built_version, build_id=build_id, test_id=test_id, deploy_id=None)
 
             logger.info("Pipeline: starting test", repo=repo_name, action_id=test_id, tag=tag)
-            test_result = await deployer.test(
+            test_result = await build_deployer.test(
                 repo_name, ssh_url,
                 tag=(f"v{built_version}" if buildable and built_version else tag),
                 output_callback=test_action.append_output,
                 cancel_event=test_action.cancel_event,
             )
-            test_result["host"] = host_name
+            test_result["host"] = build_host
             test_result["auto_triggered"] = True
             test_action.result = test_result
 

@@ -211,6 +211,11 @@ class GitHubConfig(BaseModel):
     # first connection and every later one is verified against it.  Point this at
     # a managed known_hosts file to verify strictly from the very first connection.
     ssh_known_hosts_path: Optional[str] = "accept-new"
+    # Extra hosts that run builds and tests besides ssh_host, as
+    # "label=address,..." (a bare address is its own label). They must be
+    # clones of ssh_host: same SSH user/key, repos_path and tooling. Deploys
+    # stay on ssh_host. See backend/build_hosts.py.
+    build_hosts: Optional[str] = None
     # Docker registry configuration for push operations
     registry_url: Optional[str] = None
     registry_username: Optional[str] = None
@@ -660,6 +665,7 @@ def load_config() -> Settings:
     load_env(settings.github, "ssh_key_path", "PULSARCD_GITHUB__SSH_KEY_PATH")
     load_env(settings.github, "ssh_known_hosts_path",
              "PULSARCD_GITHUB__SSH_KNOWN_HOSTS_PATH")
+    load_env(settings.github, "build_hosts", "PULSARCD_GITHUB__BUILD_HOSTS")
     load_env(settings.github, "registry_url", "PULSARCD_GITHUB__REGISTRY_URL")
     load_env(settings.github, "registry_username", "PULSARCD_GITHUB__REGISTRY_USERNAME")
     load_env(settings.github, "registry_password", "PULSARCD_GITHUB__REGISTRY_PASSWORD")

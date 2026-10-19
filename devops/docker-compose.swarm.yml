@@ -138,6 +138,9 @@ services:
       - PULSARCD_GITHUB__REPOS_PATH=${PULSARCD_GITHUB__REPOS_PATH:-/home/user/repos}
       - PULSARCD_GITHUB__SSH_HOST=${PULSARCD_GITHUB__SSH_HOST:-dockerhost}
       - PULSARCD_GITHUB__SSH_USER=${PULSARCD_GITHUB__SSH_USER:-user}
+      # Extra build/test hosts, clones of the SSH host above ("label=address,...").
+      # Empty keeps every build on the SSH host. Deploys always stay there.
+      - PULSARCD_GITHUB__BUILD_HOSTS=${PULSARCD_GITHUB__BUILD_HOSTS:-}
       # Which repos to show in Stacks: "all" (default) or "starred"
       - PULSARCD_GITHUB__REPOS_MODE=${PULSARCD_GITHUB__REPOS_MODE:-all}
       # Push webhook (POST /api/webhooks/github). Empty keeps it disabled (404)

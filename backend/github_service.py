@@ -1101,6 +1101,9 @@ class StackDeployer:
         self.config = config
         self.host_client = host_client
         self._ssh_client = None
+        # Secondary build host only: the deployer whose .env files are copied
+        # here before each build/test (see build_hosts.py).
+        self.env_source = None
 
     async def _get_ssh_client(self):
         """Get or create SSH client for host commands."""
@@ -1152,6 +1155,42 @@ class StackDeployer:
         in-flight request. Use :func:`close_shared_ssh_clients` at shutdown.
         """
         self._ssh_client = None
+
+    async def _prepare_secondary_host(self, repo_name: str, output_callback=None) -> None:
+        """On a secondary build host, catch up with the primary before a build/test.
+
+        Registry login, the PulsarCD clone whose scripts every build runs
+        (updated from the primary's origin), then the repo's .env files.
+        No-op on the primary.
+        """
+        if self.env_source is None:
+            return
+        host = self.config.ssh_host
+        try:
+            await self._catch_up_with_primary(repo_name, output_callback)
+        except Exception as e:
+            # build()/test() only put the error in the result: show it in the live log too
+            if output_callback:
+                output_callback(f"[PulsarCD] Build host {host} not ready: {e}")
+            raise
+
+    async def _catch_up_with_primary(self, repo_name: str, output_callback=None) -> None:
+        host = self.config.ssh_host
+        await self._ensure_docker_login()
+        if repo_name != "PulsarCD":
+            scripts_repo = f"{self.config.repos_path}/PulsarCD"
+            ok, origin = await self.env_source._run_command(
+                f"git -C {_shell_quote_path(scripts_repo)} remote get-url origin")
+            if not ok:
+                raise RuntimeError("Cannot read the PulsarCD clone's origin on the primary host")
+            ok, msg = await self._ensure_repo_cloned("PulsarCD", origin.strip())
+            if not ok:
+                raise RuntimeError(f"Cannot update PulsarCD scripts on build host {host}: {msg}")
+        from .build_hosts import sync_repo_envs
+        written = await sync_repo_envs(self.env_source, self, repo_name)
+        if output_callback:
+            output_callback(f"[PulsarCD] Build host {host}: scripts up to date, "
+                            f"{written} .env file(s) refreshed from the primary host")
 
     async def _ensure_git_configured(self) -> None:
         """Ensure git is configured with user name and email."""
@@ -1448,14 +1487,17 @@ class StackDeployer:
             # Ensure docker is logged in to registry
             await self._ensure_docker_login()
 
-            from .recovery import snapshot_envs
-            await snapshot_envs(self, repo_name)
-            
+            # A secondary build host only holds copies of the primary's .env files
+            if self.env_source is None:
+                from .recovery import snapshot_envs
+                await snapshot_envs(self, repo_name)
+
             # Ensure repo is cloned
             clone_success, clone_msg = await self._ensure_repo_cloned(repo_name, ssh_url)
             if not clone_success:
                 result["output"] = clone_msg
                 return result
+            await self._prepare_secondary_host(repo_name, output_callback)
 
             # Run build script with optional branch and commit
             repos_path = self.config.repos_path
@@ -1660,6 +1702,7 @@ class StackDeployer:
             if not clone_success:
                 result["output"] = clone_msg
                 return result
+            await self._prepare_secondary_host(repo_name, output_callback)
 
             # Run test script
             repos_path = self.config.repos_path
