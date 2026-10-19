@@ -1,7 +1,7 @@
 """Docker collector for the agent - collects containers, stats, and logs locally."""
 
 import calendar
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
@@ -436,8 +436,18 @@ class DockerCollector:
             "parsed_fields": parsed_fields,
         }
 
+    def resume_from(self, positions: Dict[str, datetime]) -> None:
+        """Start each known container after its newest line already stored."""
+        for container_id, newest in positions.items():
+            self._last_log_timestamp.setdefault(container_id, newest)
+
     async def collect_all_logs(self, tail: int = 500) -> List[Dict[str, Any]]:
-        """Collect logs from all running containers."""
+        """Collect the new log lines of all running containers.
+
+        Docker's ``since`` has a one-second resolution, so the lines of the
+        newest second already sent come back on the next fetch: they are
+        dropped here, the store keeping every line it receives.
+        """
         containers = await self.get_containers()
         running = [c for c in containers if c.get("status") == "running"]
 
@@ -473,11 +483,14 @@ class DockerCollector:
                 compose_service=container.get("compose_service"),
             )
 
+            if last_timestamp is not None:
+                logs = [entry for entry in logs if entry["timestamp"] > last_timestamp]
+
             if logs:
                 all_logs.extend(logs)
                 containers_with_logs += 1
                 newest_log = max(logs, key=lambda x: x["timestamp"])
-                self._last_log_timestamp[container_key] = newest_log["timestamp"] + timedelta(milliseconds=1)
+                self._last_log_timestamp[container_key] = newest_log["timestamp"]
                 self._empty_cycles[container_key] = 0
             else:
                 self._empty_cycles[container_key] = self._empty_cycles.get(container_key, 0) + 1

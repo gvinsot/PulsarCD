@@ -63,7 +63,7 @@ sans arrêter le reste du serveur. Le serveur de build doit disposer de Python 3
 
 La connexion peut également être fournie via
 `PULSARCD_BACKUP__CONNECTION_STRING` pour utiliser une base distincte. Il n'existe
-aucun accès PostgreSQL implicite via OpenSearch. Ne réutiliser les accès d'une
+aucun accès PostgreSQL implicite via VictoriaLogs. Ne réutiliser les accès d'une
 autre application qu'après avoir identifié explicitement la base voulue.
 
 ## La clé et le problème du démarrage après sinistre

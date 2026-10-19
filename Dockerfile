@@ -42,6 +42,10 @@ FROM base AS test
 RUN apt-get update && apt-get install -y --no-install-recommends bash gawk gettext-base \
     && rm -rf /var/lib/apt/lists/*
 
+# A real VictoriaLogs for the storage integration tests (tests/conftest.py
+# starts it on a temporary directory). Same version as the stack file.
+COPY --from=victoriametrics/victoria-logs:v1.53.0 /victoria-logs-prod /usr/local/bin/victoria-logs
+
 # Install test dependencies
 RUN pip install --no-cache-dir pytest pytest-asyncio "httpx>=0.23.0,<0.28.0"
 # Static-check tools, pinned so a new release cannot fail an unchanged commit.

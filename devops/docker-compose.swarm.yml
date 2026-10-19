@@ -5,46 +5,44 @@
 # IMPORTANT: Copy .env.example to .env and configure before deploying
 #
 # Architecture:
-# - Backend: API server (read-only from OpenSearch, action queue)
+# - Backend: API server (reads VictoriaLogs, action queue)
 # - Agent: Deployed on EVERY node (global mode), collects logs/metrics locally
-# - OpenSearch: Storage for logs and metrics
+# - VictoriaLogs: Storage for logs, metrics, access records and run history
 #
 # Security: Backend has NO access to Docker sockets. Agents run locally on
-# each node and push data directly to OpenSearch.
+# each node and push data directly to VictoriaLogs.
 # ============================================================================
 
 services:
   # ==========================================================================
-  # OpenSearch - Log and metrics storage
+  # VictoriaLogs - logs, metrics, access records and pipeline run history
   # ==========================================================================
-  opensearch:
-    image: opensearchproject/opensearch:3.4.0
-    environment:
-      - discovery.type=single-node
-      - bootstrap.memory_lock=true
-      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
-      - "DISABLE_SECURITY_PLUGIN=true"
+  # One retention for every kind of record. The disk cap drops the oldest
+  # days first when it is reached, whatever the retention says. The image
+  # has no shell, hence no healthcheck: the backend and agents wait for it.
+  victorialogs:
+    image: victoriametrics/victoria-logs:v1.53.0
+    command:
+      - -storageDataPath=/vlogs
+      - -retentionPeriod=${VICTORIALOGS_RETENTION:-90d}
+      - -retention.maxDiskSpaceUsageBytes=${VICTORIALOGS_MAX_DISK:-50GiB}
+      - -search.maxQueryDuration=60s
     volumes:
-      - opensearch-data:/usr/share/opensearch/data
+      - victorialogs-data:/vlogs
     networks:
       - internal
-    healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:9200 >/dev/null || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
     deploy:
       replicas: 1
       placement:
         constraints:
-          - node.hostname == ${OPENSEARCH_NODE_HOSTNAME:-server-d}
+          - node.hostname == ${VICTORIALOGS_NODE_HOSTNAME:-server-d}
       restart_policy:
         condition: on-failure
       resources:
         limits:
-          memory: 2G
-        reservations:
           memory: 1G
+        reservations:
+          memory: 128M
 
   # ==========================================================================
   # PulsarCD Backend - API Server
@@ -89,7 +87,7 @@ services:
     security_opt:
       - no-new-privileges:true
     # The default soft limit of 1024 fds is reached quickly: this process holds
-    # long-lived SSH connections to every host plus OpenSearch/Docker sockets,
+    # long-lived SSH connections to every host plus VictoriaLogs/Docker sockets,
     # and once exhausted every request fails with EMFILE.
     ulimits:
       nofile:
@@ -109,9 +107,8 @@ services:
       - PULSARCD_DEBUG=false
       - AGENT_LOG_LEVEL=${AGENT_LOG_LEVEL:-INFO}
 
-      # OpenSearch configuration (use stack-prefixed name)
-      - PULSARCD_OPENSEARCH__HOSTS=["http://opensearch:9200"]
-      - PULSARCD_OPENSEARCH__INDEX_PREFIX=pulsarcd
+      # Log, metrics and run-history store
+      - PULSARCD_VICTORIALOGS__URL=http://victorialogs:9428
 
       # Versioned encrypted .env and SSH recovery (opt-in until provisioned).
       # Both sensitive variables are converted to Docker secrets by the deploy
@@ -129,7 +126,6 @@ services:
 
       # Collector settings - agents handle log/metrics collection
       - PULSARCD_COLLECTOR__AGENTS_ONLY=true
-      - PULSARCD_COLLECTOR__RETENTION_DAYS=${LOG_RETENTION_DAYS:-7}
 
       # GitHub integration for Stacks tab
       - PULSARCD_GITHUB__TOKEN=${PULSARCD_GITHUB__TOKEN}
@@ -212,7 +208,6 @@ services:
       - PULSARCD_AUTOBAN__DURATION_SECONDS=${PULSARCD_AUTOBAN__DURATION_SECONDS:-86400}
       - PULSARCD_AUTOBAN__POLL_SECONDS=${PULSARCD_AUTOBAN__POLL_SECONDS:-10}
       - PULSARCD_AUTOBAN__OVERLAP_SECONDS=${PULSARCD_AUTOBAN__OVERLAP_SECONDS:-300}
-      - PULSARCD_AUTOBAN__BATCH_SIZE=${PULSARCD_AUTOBAN__BATCH_SIZE:-500}
       - PULSARCD_AUTOBAN__EXEMPT_CIDRS=${PULSARCD_AUTOBAN__EXEMPT_CIDRS:-[]}
       - PULSARCD_AUTOBAN__EXCLUDE_CLOUDFLARE=${PULSARCD_AUTOBAN__EXCLUDE_CLOUDFLARE:-true}
       - PULSARCD_AUTOBAN__TRAEFIK_PROJECT=${PULSARCD_AUTOBAN__TRAEFIK_PROJECT:-privatenetwork}
@@ -283,7 +278,7 @@ services:
       timeout: 10s
       retries: 3
     depends_on:
-      - opensearch
+      - victorialogs
     deploy:
       # Must stay 1: the agent actions queue and pipeline state live in this
       # process and its /data files (actions_queue.json, pipeline_state.json).
@@ -350,7 +345,7 @@ services:
 
   # ==========================================================================
   # PulsarCD Agent - Deployed on EVERY node (global mode)
-  # Collects Docker logs/metrics locally and pushes to OpenSearch
+  # Collects Docker logs/metrics locally and pushes to VictoriaLogs
   # ==========================================================================
   agent:
     image: ${DOCKER_REGISTRY_URL}/pulsarcd-agent:latest
@@ -386,9 +381,8 @@ services:
       # Backend URL for polling actions (use stack-prefixed name)
       - AGENT_BACKEND_URL=http://swarm-manager:8000
 
-      # OpenSearch configuration (use stack-prefixed name)
-      - AGENT_OPENSEARCH__HOSTS=["http://opensearch:9200"]
-      - AGENT_OPENSEARCH__INDEX_PREFIX=pulsarcd
+      # Log and metrics store
+      - AGENT_VICTORIALOGS__URL=http://victorialogs:9428
 
       # Docker socket path (inside container)
       - AGENT_DOCKER_URL=unix:///var/run/docker.sock
@@ -414,7 +408,7 @@ services:
     networks:
       - internal
     depends_on:
-      - opensearch
+      - victorialogs
       - swarm-manager
     deploy:
       # Deploy on ALL nodes in the Swarm
@@ -434,7 +428,7 @@ services:
 # Volumes
 # ============================================================================
 volumes:
-  opensearch-data:
+  victorialogs-data:
     driver: local
   pulsarcd-data:
     driver: local
@@ -448,10 +442,10 @@ networks:
   proxy:
     external: true
   internal:
-    # Security: NOT attachable. OpenSearch runs with DISABLE_SECURITY_PLUGIN=true
-    # (no authentication at all), so anyone able to `docker network connect` a
-    # throwaway container to this overlay could read, alter or delete every log
-    # and metric index. Only stack services may join it.
+    # Security: NOT attachable. VictoriaLogs has no authentication, so anyone
+    # able to `docker network connect` a throwaway container to this overlay
+    # could read every log and metric, or write forged ones. Only stack
+    # services may join it.
     #
     # MIGRATION REQUIRED on a cluster that was deployed before this line existed.
     # `docker stack deploy` never reconciles the options of an existing network

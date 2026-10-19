@@ -42,7 +42,7 @@ ignore = [
 [tool.mypy]
 python_version = "3.11"
 files = ["backend", "agent", "shared"]
-# Most third-party packages used here (opensearch-py, asyncssh, paramiko,
+# Most third-party packages used here (asyncssh, paramiko,
 # apscheduler, zvec, ...) ship no stubs; treating them as Any is fine.
 ignore_missing_imports = true
 # Understands pydantic models (aliases with populate_by_name, field defaults).

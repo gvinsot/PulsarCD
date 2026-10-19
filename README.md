@@ -68,13 +68,13 @@ For production? Not yet. But the gap is closing fast. And when it does, PulsarCD
 - **Environment Management**: Configure environment variables per stack
 - **Tag Selection**: Deploy specific versions or latest builds
 - **Verified Deploys & Auto-Rollback**: A deploy only succeeds once every service runs the new version (and an optional health URL answers); otherwise the previous version is redeployed automatically — see [Post-deploy verification and rollback](#post-deploy-verification-and-rollback)
-- **Run History**: Every build, test, QA and deploy run is kept in OpenSearch with its full, searchable log (who/what triggered it, version, commit, duration, error excerpt) - Stacks > History
+- **Run History**: Every build, test, QA and deploy run is kept in VictoriaLogs with its full, searchable log (who/what triggered it, version, commit, duration, error excerpt) - Stacks > History
 - **Notifications**: Pipeline failures, automatic edge bans and recurring errors pushed to ntfy, a Discord/Slack webhook or e-mail (see [Notifications](#notifications))
 - **Branch Previews**: Deploy any branch as an isolated preview at `<branch-slug>.<your-host>`, with automatic expiry (see [Preview environments](#preview-environments))
 
 ### Monitoring & Logs
 - **Centralized Log Collection**: Agents collect logs from all containers across all hosts
-- **Full-Text Search**: Powerful OpenSearch-backed queries
+- **Full-Text Search**: Case-insensitive search over every container log, plus LogsQL for statistics (VictoriaLogs)
 - **AI-Powered Search**: Natural language queries via Ollama (e.g., "show me errors from nginx in the last hour")
 - **Real-Time Metrics**: CPU, Memory, GPU (AMD/NVIDIA), Disk usage
 - **Error Tracking**: 4xx/5xx HTTP error counts and trends
@@ -128,8 +128,8 @@ PulsarCD uses an **agent-based architecture** where lightweight agents run on ea
                                │ Agents poll for actions
                                ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                            OpenSearch                                        │
-│                      (Logs, Metrics, Search)                                 │
+│                           VictoriaLogs                                       │
+│           (Logs, Metrics, Access records, Run history, Search)               │
 └────────────────────────────────▲─────────────────────────────────────────────┘
                                  │ Direct writes
          ┌───────────────────────┼───────────────────────┐
@@ -151,7 +151,7 @@ PulsarCD uses an **agent-based architecture** where lightweight agents run on ea
 
 1. **Agents** run on each host and:
    - Collect Docker container logs and metrics locally
-   - Write data directly to OpenSearch (no backend bottleneck)
+   - Write data directly to VictoriaLogs (no backend bottleneck)
    - Poll the backend for actions (start, stop, restart, exec commands)
    - Execute container actions and report results
 
@@ -197,7 +197,7 @@ cd pulsarcd
 export PULSARCD_AUTH__GOOGLE_CLIENT_ID=<your-client-id>.apps.googleusercontent.com
 export PULSARCD_AUTH__GOOGLE_ADMINS=you@example.com
 
-# Start backend, frontend, and OpenSearch
+# Start backend, frontend, and VictoriaLogs
 docker-compose up -d
 ```
 
@@ -226,9 +226,8 @@ All configuration is done via **environment variables** in `docker-compose.yml`:
 
 ```yaml
 environment:
-  # OpenSearch connection
-  - PULSARCD_OPENSEARCH__HOSTS=["http://opensearch:9200"]
-  - PULSARCD_OPENSEARCH__INDEX_PREFIX=pulsarcd
+  # Log, metrics and run-history store
+  - PULSARCD_VICTORIALOGS__URL=http://victorialogs:9428
 
   # AI/Ollama configuration (optional - for natural language search)
   - PULSARCD_AI__MODEL=llama3.2:latest
@@ -240,7 +239,6 @@ environment:
   # Collector settings
   - PULSARCD_COLLECTOR__LOG_INTERVAL_SECONDS=30
   - PULSARCD_COLLECTOR__METRICS_INTERVAL_SECONDS=15
-  - PULSARCD_COLLECTOR__RETENTION_DAYS=7
 ```
 
 ### Agent Configuration
@@ -255,8 +253,8 @@ environment:
   # Backend URL for polling actions
   - AGENT_BACKEND_URL=http://pulsarcd-backend:5000
 
-  # OpenSearch connection (direct writes)
-  - AGENT_OPENSEARCH__HOSTS=["http://opensearch:9200"]
+  # VictoriaLogs (direct writes)
+  - AGENT_VICTORIALOGS__URL=http://victorialogs:9428
 
   # Collection intervals (seconds)
   - AGENT_LOG_INTERVAL=30
@@ -293,13 +291,11 @@ source venv/bin/activate  # Linux/macOS
 # Install dependencies
 pip install -r requirements.txt
 
-# Start OpenSearch (required)
-# The security plugin is disabled, so this node has NO authentication at all:
-# publish it on the loopback interface only, never on 0.0.0.0.
-# See the Security Hardening section below.
-docker run -d -p 127.0.0.1:9200:9200 -e "discovery.type=single-node" \
-  -e "DISABLE_SECURITY_PLUGIN=true" \
-  opensearchproject/opensearch:3.4.0
+# Start VictoriaLogs (required)
+# It has NO authentication at all: publish it on the loopback interface only,
+# never on 0.0.0.0. See the Security Hardening section below.
+docker run -d -p 127.0.0.1:9428:9428 victoriametrics/victoria-logs:v1.53.0
+export PULSARCD_VICTORIALOGS__URL=http://127.0.0.1:9428
 
 # Run the application
 python -m backend.main
@@ -341,7 +337,7 @@ pulsarcd/
 │   ├── host_client.py      # Unified host client interface
 │   ├── main.py             # Application entry point
 │   ├── models.py           # Pydantic data models
-│   ├── opensearch_client.py # OpenSearch operations
+│   ├── log_store.py        # Log, metrics and access-record queries (VictoriaLogs)
 │   ├── ssh_client.py       # SSH client for remote hosts (legacy)
 │   └── utils.py            # Utility functions
 ├── agent/
@@ -350,7 +346,7 @@ pulsarcd/
 │   ├── config.py           # Agent configuration
 │   ├── docker_collector.py # Local Docker log/metrics collection
 │   ├── main.py             # Agent entry point
-│   ├── opensearch_writer.py # Direct OpenSearch writes
+│   ├── victorialogs_writer.py # Direct VictoriaLogs writes
 │   ├── requirements.txt    # Agent-specific dependencies
 │   └── utils.py            # Agent utility functions
 ├── frontend/
@@ -555,46 +551,39 @@ All backend configuration is done via environment variables prefixed with `PULSA
 | `PULSARCD_DEBUG` | Enable debug mode | `false` |
 | `PULSARCD_HOSTS` | JSON array of host configs (for legacy SSH mode) | `[]` |
 
-#### OpenSearch Settings
+#### VictoriaLogs Settings
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `PULSARCD_OPENSEARCH__HOSTS` | JSON array of OpenSearch URLs | `["http://localhost:9200"]` |
-| `PULSARCD_OPENSEARCH__INDEX_PREFIX` | Index prefix | `pulsarcd` |
-| `PULSARCD_OPENSEARCH__USERNAME` | Username (optional) | - |
-| `PULSARCD_OPENSEARCH__PASSWORD` | Password (optional) | - |
-| `PULSARCD_OPENSEARCH__AUTO_MIGRATE_MAPPINGS` | Reindex into a new versioned index when a field type is wrong (see below) | `true` |
-| `PULSARCD_OPENSEARCH__MIGRATE_LEGACY_INDICES` | Also move plain pre-alias indices with a correct mapping to the versioned layout at startup | `false` |
-| `PULSARCD_OPENSEARCH__MIGRATION_CATCHUP_SECONDS` | Recent window copied again under a write block before the alias switch | `900` |
+| `PULSARCD_VICTORIALOGS__URL` | VictoriaLogs base URL | `http://localhost:9428` |
+| `PULSARCD_VICTORIALOGS__USERNAME` / `__PASSWORD` | Basic auth, when an authenticating proxy sits in front | - |
+| `PULSARCD_VICTORIALOGS__TIMEOUT_SECONDS` | Time budget of one query | `30` |
 
-#### Index layout and mapping migrations
+#### Storage and retention
 
-Each logical index (`pulsarcd-logs`, `pulsarcd-metrics`, `pulsarcd-host-metrics`,
-`pulsarcd-access`) is an alias over a versioned index (`pulsarcd-logs-v1`, ...).
-Readers and writers, the agents included, only use the logical name.
-Deployments created before this layout keep their plain index; it counts as
-version 1.
+The switch from OpenSearch starts with a new VictoriaLogs store. Existing
+OpenSearch logs, metrics and pipeline history are not imported.
 
-When an existing index has a wrong field type (typically a field that
-OpenSearch auto-mapped as `text` before the mapping was created), nothing is
-deleted any more. The backend, in the background:
+Everything PulsarCD stores lives in one VictoriaLogs instance, as
+append-only records tagged with a `kind` stream field: container logs (`log`),
+container and host metrics (`container_metric`, `host_metric`), Traefik
+requests and WAF blocks (`access`), and the pipeline run history
+(`pipeline_run`, `pipeline_run_log`). Every query filters on its kind first,
+so each reads only its own data. Nothing is ever updated: a pipeline run is
+written when it starts and again when it ends, and its current state is its
+latest record.
 
-1. creates `<name>-v<N+1>` with the right mapping and reindexes into it while
-   reads and writes continue on the current index;
-2. copies again, still without blocking, the documents that arrived during
-   that copy (window: copy start minus `MIGRATION_CATCHUP_SECONDS`);
-3. blocks writes on the current index for a short time and copies once more
-   what arrived during step 2 (same margin), so the block stays short even
-   when the bulk copy took hours;
-4. checks the copy holds at least as many documents and has the expected
-   mapping, then switches the alias
-   and removes the old index in one atomic call.
+Retention is VictoriaLogs' own, the same for every kind of record:
+`VICTORIALOGS_RETENTION` (default `90d`, the run history's audit window) and a
+disk cap, `VICTORIALOGS_MAX_DISK` (default `50GiB`), past which the oldest
+days are dropped first. Both are stack variables (see `devops/.env.example`).
 
-Any failure lifts the write block, drops the partial copy and keeps the old
-index with all its data. Agents never migrate: they log the mismatch and keep
-writing. `/api/health` reports `"indices": "ok" | "migrating" | "degraded"`,
-and `/api/admin/opensearch-status` gives the details per index
-(`_index_migrations`, concrete indices, write block).
+Agents never send a log line twice: they drop the lines of the last second
+Docker returns again, and a restarted agent resumes after the newest line
+VictoriaLogs holds for each container. `/api/health` reports whether
+VictoriaLogs answers; `/api/admin/victorialogs-status` (records per kind over
+24 hours) and `/api/admin/victorialogs-probe` (write and read back a
+self-test record) are the admin diagnostics.
 
 #### AI Settings
 
@@ -674,11 +663,12 @@ restricts sources, allow those ranges for `/api/webhooks/github`.
 | `PULSARCD_COLLECTOR__LOG_INTERVAL_SECONDS` | Log collection interval | `30` |
 | `PULSARCD_COLLECTOR__METRICS_INTERVAL_SECONDS` | Metrics collection interval | `15` |
 | `PULSARCD_COLLECTOR__LOG_LINES_PER_FETCH` | Lines per container per fetch | `500` |
-| `PULSARCD_COLLECTOR__RETENTION_DAYS` | Data retention period | `7` |
-| `PULSARCD_RUN_HISTORY__ENABLED` | Record pipeline runs and their logs (`<prefix>-pipeline-runs`, `<prefix>-pipeline-run-logs`) | `true` |
-| `PULSARCD_RUN_HISTORY__RETENTION_DAYS` | Pipeline run history retention, independent of the log retention | `90` |
+| `PULSARCD_RUN_HISTORY__ENABLED` | Record pipeline runs and their logs (`kind=pipeline_run`, `kind=pipeline_run_log`) | `true` |
 | `PULSARCD_RUN_HISTORY__MAX_LOG_LINES` | Longest log stored per run (the tail is kept) | `20000` |
-| `PULSARCD_RUN_HISTORY__LOG_CHUNK_LINES` | Log lines per stored (searchable) document | `200` |
+| `PULSARCD_RUN_HISTORY__LOG_CHUNK_LINES` | Log lines per stored (searchable) record | `200` |
+
+Retention of the logs and of the run history alike is VictoriaLogs' own, see
+[Storage and retention](#storage-and-retention).
 
 #### Notifications
 
@@ -732,8 +722,7 @@ All agent configuration is done via environment variables prefixed with `AGENT_`
 | `AGENT_LOG_INTERVAL` | Log collection interval (seconds) | `30` |
 | `AGENT_METRICS_INTERVAL` | Metrics collection interval (seconds) | `15` |
 | `AGENT_ACTION_POLL_INTERVAL` | Action polling interval (seconds) | `2` |
-| `AGENT_OPENSEARCH__HOSTS` | JSON array of OpenSearch URLs | `["http://opensearch:9200"]` |
-| `AGENT_OPENSEARCH__INDEX_PREFIX` | Index prefix | `pulsarcd` |
+| `AGENT_VICTORIALOGS__URL` | VictoriaLogs base URL | `http://localhost:9428` |
 | `AGENT_LOG_LEVEL` | Logging level (DEBUG, INFO, WARNING, ERROR) | `WARNING` |
 
 ### Legacy Host Configuration Options
@@ -946,7 +935,7 @@ request bodies, decodes the path twice, and normalizes Windows separators and
 dot segments, matching the edge WAF rules. One matching request is sufficient.
 
 A background worker reads the trusted Traefik service's Docker-attributed access
-logs from OpenSearch independently of the Security view and the edge provider
+logs from VictoriaLogs independently of the Security view and the edge provider
 endpoint. It uses Traefik's socket peer `ClientHost`, never a client-supplied
 forwarded header. Only public individual IPv4/IPv6 addresses can be automatically
 banned; private/local addresses and configured exemptions are skipped. Cloudflare
@@ -970,7 +959,6 @@ same event. A new probe after a manual release can trigger a new ban.
 | `PULSARCD_AUTOBAN__DURATION_SECONDS` | `86400` | Duration of a newly created automatic ban. |
 | `PULSARCD_AUTOBAN__POLL_SECONDS` | `10` | Interval between completed log scans. |
 | `PULSARCD_AUTOBAN__OVERLAP_SECONDS` | `300` | Re-read five minutes of event time to pick up delayed log indexing. |
-| `PULSARCD_AUTOBAN__BATCH_SIZE` | `500` | Documents per scroll page, not a limit on the total scanned. |
 | `PULSARCD_AUTOBAN__EXEMPT_CIDRS` | `[]` | JSON array of exempt public IPs or CIDRs, e.g. `["8.8.8.8/32"]`. Existing automatic bans in exempt ranges are released at the first scan after restart; manual bans are preserved. |
 | `PULSARCD_AUTOBAN__EXCLUDE_CLOUDFLARE` | `true` | Add the official Cloudflare IPv4/IPv6 proxy ranges to exemptions (snapshot verified 2026-09-21 in `backend/auto_ban.py`). |
 | `PULSARCD_AUTOBAN__TRAEFIK_PROJECT` | `privatenetwork` | Trusted Docker stack/project metadata for the edge logs. |
@@ -978,10 +966,10 @@ same event. A new probe after a manual release can trigger a new ban.
 
 On routes using the WAF middleware, the first probing request is denied
 immediately by the edge's path rules.
-The IP-wide ban follows log collection (normally 30 seconds), OpenSearch refresh,
-the worker's next scan and the edge provider poll. Logs arriving more than the
-configured overlap after their event time can be missed. Pagination processes
-every matching log without a top-IP cutoff; the existing blocklist capacity is
+The IP-wide ban follows log collection (normally 30 seconds), VictoriaLogs making
+the lines searchable (about a second), the worker's next scan and the edge
+provider poll. Logs arriving more than the configured overlap after their event
+time can be missed. Each scan streams every matching log without a top-IP cutoff; the existing blocklist capacity is
 still **500 active entries**, shared with manual bans. At capacity the worker
 logs an error, retains its checkpoint, and retries rather than silently
 discarding candidates. Expired entries release capacity automatically.
@@ -1002,11 +990,10 @@ ports and removes its temporary containers and configuration on completion.
 
 ### Deployment recommendations
 
-- **Never expose OpenSearch.** It runs with `DISABLE_SECURITY_PLUGIN=true`, i.e.
-  no authentication at all. In development `docker-compose.yml` publishes it on
-  `127.0.0.1` only; in Swarm it stays on the `internal` overlay, which is
-  declared `attachable: false` so no ad-hoc container can join it and read,
-  alter or delete the log indices.
+- **Never expose VictoriaLogs.** It has no authentication at all. In
+  development `docker-compose.yml` publishes it on `127.0.0.1` only; in Swarm
+  it stays on the `internal` overlay, which is declared `attachable: false` so
+  no ad-hoc container can join it and read the logs or write forged ones.
   **On a cluster deployed before that flag existed it has no effect yet.**
   `docker stack deploy` never reconciles the options of an existing network and
   Docker cannot flip `attachable` on a live overlay, so the network has to be
@@ -1138,22 +1125,21 @@ docker stack rm pv-feature-login-df7c7a-shop   # tear down
    curl http://localhost:5000/api/agents
    ```
 
-### OpenSearch Connection Issues
+### VictoriaLogs Connection Issues
 
-1. Verify OpenSearch is running:
+1. Verify VictoriaLogs is running:
    ```bash
-   curl http://localhost:9200
+   curl http://localhost:9428/health
    ```
 
 2. Check logs:
    ```bash
-   docker-compose logs opensearch
+   docker-compose logs victorialogs
    ```
 
-3. Check agent OpenSearch connectivity:
-   ```bash
-   docker exec pulsarcd-agent curl http://opensearch:9200
-   ```
+3. Check what each agent writes: `/api/admin/victorialogs-status` lists the
+   records per kind over the last 24 hours, and each agent logs its self-test
+   (`Self-test OK` or `SELF-TEST FAILED`) at startup.
 
 ### No Logs Appearing
 
@@ -1167,9 +1153,10 @@ docker stack rm pv-feature-login-df7c7a-shop   # tear down
    docker ps
    ```
 
-3. Check OpenSearch indices:
+3. Count the stored log lines per host over the last hour:
    ```bash
-   curl http://localhost:9200/_cat/indices?v
+   curl http://localhost:9428/select/logsql/query \
+     --data-urlencode 'query=_time:1h {kind="log"} | stats by (host) count() as lines'
    ```
 
 ### AI Search Not Working

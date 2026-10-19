@@ -161,7 +161,7 @@ async function loadSystemErrors() {
         mcp: 'MCP Discovery',
         mcp_tool: 'MCP Tool',
         agent: 'Agent',
-        opensearch: 'OpenSearch',
+        logstore: 'Log store',
         error_detector: 'Error Detector',
         host_agent: 'Host Agent',
     };

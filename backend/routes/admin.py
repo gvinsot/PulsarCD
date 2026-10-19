@@ -1,20 +1,19 @@
 """Admin endpoints under /api/admin/ (see also recovery, tag_cleanup).
 
 Allowed Google addresses, configuration, LLM and MCP connection tests, agent
-history, error-detector status and the OpenSearch diagnostics.
+history, error-detector status and the VictoriaLogs diagnostics.
 auth_middleware restricts every /api/admin/ route to the admin role.
 
 App state is read from backend.api at call time, as ``api.<name>`` (see
 backend/routes/__init__.py).
 """
 
-from datetime import datetime
 from typing import Any, Dict
 
 import aiohttp
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from .. import api
 
@@ -282,235 +281,21 @@ async def get_error_detector_status():
     return api.error_detector.get_status()
 
 
-@router.get("/api/admin/opensearch-status")
-async def get_opensearch_status():
-    """Diagnostic endpoint: check OpenSearch index health, doc counts, mappings, and samples."""
-    result = {}
-
-    # Cluster info
-    try:
-        import opensearchpy as _ospy
-        result["_client_version"] = getattr(_ospy, "__versionstr__", "unknown")
-    except Exception:
-        pass
-    try:
-        info = await api.opensearch._client.info()
-        result["_cluster_name"] = info.get("cluster_name")
-        result["_server_version"] = info.get("version", {}).get("number")
-    except Exception as e:
-        result["_cluster_error"] = f"{type(e).__name__}: {str(e)[:300]}"
-
-    for index_name in [api.opensearch.logs_index, api.opensearch.metrics_index, api.opensearch.host_metrics_index]:
-        try:
-            exists = await api.opensearch._client.indices.exists(index=index_name)
-            if exists:
-                count_resp = await api.opensearch._client.count(index=index_name)
-                doc_count = count_resp.get("count", 0)
-
-                # Get latest document
-                latest = await api.opensearch._client.search(
-                    index=index_name,
-                    body={"size": 1, "sort": [{"timestamp": "desc"}]},
-                )
-                latest_hit = latest.get("hits", {}).get("hits", [])
-                latest_doc = latest_hit[0]["_source"] if latest_hit else None
-                latest_ts = latest_doc.get("timestamp") if latest_doc else None
-                latest_host = latest_doc.get("host") if latest_doc else None
-
-                # Get oldest document
-                oldest = await api.opensearch._client.search(
-                    index=index_name,
-                    body={"size": 1, "sort": [{"timestamp": "asc"}], "_source": ["timestamp"]},
-                )
-                oldest_hit = oldest.get("hits", {}).get("hits", [])
-                oldest_ts = oldest_hit[0]["_source"].get("timestamp") if oldest_hit else None
-
-                # Get mapping (field types)
-                # index_name is usually an alias: responses are keyed by the
-                # concrete (versioned) index behind it.
-                mapping_resp = await api.opensearch._client.indices.get_mapping(index=index_name)
-                concrete = index_name if index_name in mapping_resp else next(iter(mapping_resp), index_name)
-                mapping = mapping_resp.get(concrete, {}).get("mappings", {}).get("properties", {})
-                field_types = {k: v.get("type", "?") for k, v in mapping.items()}
-
-                # Get index settings
-                settings_resp = await api.opensearch._client.indices.get_settings(index=index_name)
-                idx_settings = settings_resp.get(concrete, {}).get("settings", {}).get("index", {})
-
-                result[index_name] = {
-                    "exists": True,
-                    "doc_count": doc_count,
-                    "oldest_timestamp": oldest_ts,
-                    "latest_timestamp": latest_ts,
-                    "latest_host": latest_host,
-                    "latest_doc_sample": latest_doc,
-                    "field_types": field_types,
-                    "index_uuid": idx_settings.get("uuid"),
-                    "refresh_interval": idx_settings.get("refresh_interval"),
-                    "concrete_indices": sorted(mapping_resp),
-                    "write_block": idx_settings.get("blocks", {}).get("write"),
-                }
-            else:
-                result[index_name] = {"exists": False}
-        except Exception as e:
-            result[index_name] = {"exists": "unknown", "error": str(e)[:500]}
-    result["_index_migrations"] = api.opensearch.index_status()
-    return result
+@router.get("/api/admin/victorialogs-status")
+async def get_victorialogs_status() -> Dict[str, Any]:
+    """Diagnostic endpoint: VictoriaLogs reachability and records per kind over 24 h."""
+    if not api.logstore:
+        return {"error": "Log store not configured"}
+    return await api.logstore.status()
 
 
-@router.post("/api/admin/opensearch-recreate-index")
-async def recreate_opensearch_index(
-    index: str = Query(..., description="Index name to recreate"),
-):
-    """Force delete and recreate an OpenSearch index with correct mapping.
-    WARNING: This deletes all data in the index (every concrete index behind
-    the alias). Mapping mismatches no longer need this: the backend migrates
-    them in the background without data loss.
-    """
-    try:
-        result = await api.opensearch.recreate_index(index)
-        return result
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error("Failed to recreate index", index=index, error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/api/admin/opensearch-probe")
-async def opensearch_probe() -> Dict[str, Any]:
-    """Deep OpenSearch diagnostic — admin only.
+@router.get("/api/admin/victorialogs-probe")
+async def victorialogs_probe() -> Dict[str, Any]:
+    """Write a self-test record, make it searchable and read it back -- admin only.
 
     Enforced by auth_middleware: every /api/admin/ route requires an admin JWT.
-    The probe writes and deletes documents and enumerates every index, so it
-    must never be reachable anonymously.
-
-    Tests:
-    1. Cluster connectivity and version
-    2. List ALL indices with doc counts
-    3. Write a test doc (single + bulk)
-    4. Read and delete the test doc
-    5. Check index mappings
+    The record is a ``kind=selftest`` one, never mixed with container logs.
     """
-    import json as _json
-    result: Dict[str, Any] = {"timestamp": datetime.utcnow().isoformat()}
-
-    if not api.opensearch or not api.opensearch._client:
-        result["error"] = "OpenSearch client not configured"
-        return result
-
-    client = api.opensearch._client
-
-    # 1. Cluster info
-    try:
-        info = await client.info()
-        result["cluster"] = {
-            "name": info.get("cluster_name"),
-            "server_version": info.get("version", {}).get("number"),
-            "distribution": info.get("version", {}).get("distribution"),
-        }
-        import opensearchpy as _ospy
-        result["client_version"] = getattr(_ospy, "__versionstr__", "unknown")
-    except Exception as e:
-        result["cluster_error"] = f"{type(e).__name__}: {str(e)[:300]}"
-        return result
-
-    # 2. List all indices
-    try:
-        cat_resp = await client.cat.indices(format="json")
-        result["indices"] = [
-            {
-                "index": idx.get("index"),
-                "docs_count": idx.get("docs.count"),
-                "store_size": idx.get("store.size"),
-                "health": idx.get("health"),
-                "status": idx.get("status"),
-            }
-            for idx in cat_resp
-        ]
-    except Exception as e:
-        result["indices_error"] = f"{type(e).__name__}: {str(e)[:300]}"
-
-    # 3. Write test doc (single)
-    test_index = api.opensearch.logs_index
-    test_id = "__probe_test__"
-    test_doc = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "host": "__probe__",
-        "container_id": "__probe__",
-        "container_name": "__probe__",
-        "compose_project": "__probe__",
-        "compose_service": "__probe__",
-        "stream": "stdout",
-        "message": "OpenSearch probe test",
-        "level": "INFO",
-    }
-
-    try:
-        write_resp = await client.index(
-            index=test_index, id=test_id, body=test_doc, refresh="true"
-        )
-        result["write_test"] = {
-            "status": "ok",
-            "result": write_resp.get("result"),
-            "index": write_resp.get("_index"),
-            "version": write_resp.get("_version"),
-        }
-    except Exception as e:
-        result["write_test"] = {"status": "error", "error": f"{type(e).__name__}: {str(e)[:300]}"}
-
-    # 4. Bulk write test
-    try:
-        bulk_id = "__probe_bulk__"
-        bulk_doc = test_doc.copy()
-        bulk_doc["message"] = "OpenSearch probe bulk test"
-        ndjson = (
-            _json.dumps({"index": {"_index": test_index, "_id": bulk_id}}) + "\n"
-            + _json.dumps(bulk_doc) + "\n"
-        )
-        bulk_resp = await client.bulk(body=ndjson, refresh="true")
-        items = bulk_resp.get("items", [])
-        item_status = items[0].get("index", {}).get("status") if items else None
-        item_error = items[0].get("index", {}).get("error") if items else None
-        result["bulk_test"] = {
-            "status": "ok" if not bulk_resp.get("errors") else "error",
-            "errors": bulk_resp.get("errors"),
-            "item_status": item_status,
-            "item_error": str(item_error)[:300] if item_error else None,
-        }
-    except Exception as e:
-        result["bulk_test"] = {"status": "error", "error": f"{type(e).__name__}: {str(e)[:300]}"}
-
-    # 5. Read back
-    try:
-        get_resp = await client.get(index=test_index, id=test_id)
-        result["read_test"] = {"status": "ok", "found": get_resp.get("found")}
-    except Exception as e:
-        result["read_test"] = {"status": "error", "error": f"{type(e).__name__}: {str(e)[:300]}"}
-
-    # 6. Cleanup
-    for doc_id in [test_id, "__probe_bulk__"]:
-        try:
-            await client.delete(index=test_index, id=doc_id, refresh="true")
-        except Exception:
-            pass
-
-    # 7. Check recent docs (any data at all?)
-    try:
-        search_resp = await client.search(
-            index=test_index,
-            body={"query": {"match_all": {}}, "size": 3, "sort": [{"timestamp": "desc"}]},
-        )
-        total = search_resp.get("hits", {}).get("total", {})
-        total_val = total.get("value", total) if isinstance(total, dict) else total
-        # Only report how many documents came back: returning production log
-        # lines from a diagnostic endpoint adds nothing and leaks their content.
-        result["search_test"] = {
-            "status": "ok",
-            "total_docs": total_val,
-            "sample_count": len(search_resp.get("hits", {}).get("hits", [])),
-        }
-    except Exception as e:
-        result["search_test"] = {"status": "error", "error": f"{type(e).__name__}: {str(e)[:300]}"}
-
-    return result
+    if not api.logstore:
+        return {"error": "Log store not configured"}
+    return await api.logstore.probe()

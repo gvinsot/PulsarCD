@@ -2,7 +2,7 @@
 
 This agent runs on each host and:
 1. Collects Docker container logs and metrics locally
-2. Writes data directly to OpenSearch
+2. Writes data directly to VictoriaLogs
 3. Polls the backend for actions to execute (start, stop, exec, etc.)
 """
 
@@ -16,7 +16,7 @@ import structlog
 
 from .config import load_agent_config
 from .docker_collector import DockerCollector
-from .opensearch_writer import OpenSearchWriter
+from .victorialogs_writer import VictoriaLogsWriter
 from .action_poller import ActionPoller
 
 # Configure logging level from environment (default: WARNING for less noise)
@@ -27,13 +27,6 @@ logging.basicConfig(
 )
 
 # Silence noisy HTTP client logs
-logging.getLogger("opensearchpy").setLevel(logging.ERROR)
-logging.getLogger("urllib3").setLevel(logging.ERROR)
-logging.getLogger("elastic_transport").setLevel(logging.ERROR)
-logging.getLogger("elastic_transport.transport").setLevel(logging.ERROR)
-logging.getLogger("elastic_transport.node").setLevel(logging.ERROR)
-logging.getLogger("elastic_transport.node_pool").setLevel(logging.ERROR)
-logging.getLogger("opensearch").setLevel(logging.ERROR)
 logging.getLogger("aiohttp").setLevel(logging.ERROR)
 logging.getLogger("aiohttp.client").setLevel(logging.ERROR)
 logging.getLogger("httpx").setLevel(logging.ERROR)
@@ -74,7 +67,7 @@ class Agent:
             docker_url=self.config.docker_url,
             host_name=self.config.agent_id,
         )
-        self.opensearch = OpenSearchWriter(self.config.opensearch)
+        self.writer = VictoriaLogsWriter(self.config.victorialogs, host_name=self.config.agent_id)
         self.action_poller = ActionPoller(
             backend_url=self.config.backend_url,
             agent_id=self.config.agent_id,
@@ -85,49 +78,52 @@ class Agent:
 
     async def start(self):
         """Start the agent."""
-        try:
-            import opensearchpy as _ospy
-            os_client_ver = getattr(_ospy, "__versionstr__", "unknown")
-        except Exception:
-            os_client_ver = "import_failed"
         logger.warning(
             "Starting PulsarCD Agent",
             agent_id=self.config.agent_id,
             backend_url=self.config.backend_url,
-            opensearch_hosts=self.config.opensearch.hosts,
-            opensearch_py_version=os_client_ver,
+            victorialogs_url=self.config.victorialogs.url,
         )
 
-        # Initialize OpenSearch with retry (wait for DNS/network to be ready)
+        # Wait for VictoriaLogs (DNS / network / service start)
         max_retries = 30
         retry_delay = 2
         for attempt in range(max_retries):
             try:
-                await self.opensearch.initialize()
+                await self.writer.initialize()
                 break
             except Exception as e:
                 if attempt < max_retries - 1:
                     logger.warning(
-                        "OpenSearch not ready, retrying...",
+                        "VictoriaLogs not ready, retrying...",
                         attempt=attempt + 1,
                         max_retries=max_retries,
                         error=str(e),
                     )
                     await asyncio.sleep(retry_delay)
                 else:
-                    logger.error("Failed to connect to OpenSearch after retries", error=str(e))
+                    logger.error("Failed to connect to VictoriaLogs after retries", error=str(e))
                     raise
 
         # Run self-test to verify the full write/read pipeline
-        test_ok = await self.opensearch.self_test()
+        test_ok = await self.writer.self_test()
         if not test_ok:
             logger.critical(
-                "OpenSearch self-test FAILED — logs will NOT be indexed! "
-                "Check OpenSearch connectivity, index mappings, and disk space."
+                "VictoriaLogs self-test FAILED — logs will NOT be stored! "
+                "Check VictoriaLogs connectivity and disk space."
             )
             await self.action_poller.report_system_error(
-                "opensearch", "SelfTestFailed",
-                "OpenSearch self-test failed — logs will not be indexed")
+                "logstore", "SelfTestFailed",
+                "VictoriaLogs self-test failed — logs will not be stored")
+
+        # Resume after the newest line already stored for each container,
+        # instead of sending the tail of every log again.
+        try:
+            positions = await self.writer.latest_log_times()
+            self.docker.resume_from(positions)
+            logger.warning("Log positions restored", containers=len(positions))
+        except Exception as e:
+            logger.warning("Could not restore log positions; tails will be re-read", error=str(e))
 
         self._running = True
 
@@ -164,7 +160,7 @@ class Agent:
         except Exception:
             pass
         try:
-            await self.opensearch.close()
+            await self.writer.close()
         except Exception:
             pass
         try:
@@ -190,7 +186,7 @@ class Agent:
 
                 indexed = 0
                 if logs:
-                    indexed = await self.opensearch.index_logs(logs)
+                    indexed = await self.writer.index_logs(logs)
 
                 # Always log at WARNING — silent failures are the worst kind
                 logger.warning(
@@ -200,12 +196,11 @@ class Agent:
                     indexed=indexed,
                 )
 
-                # Periodic doc count check (every 10 cycles ≈ 5min)
+                # Periodic stored-lines check (every 10 cycles ≈ 5min)
                 if cycle % 10 == 0:
-                    doc_count = await self.opensearch.count_docs()
-                    logger.warning("Periodic doc count",
-                                   index=self.opensearch.logs_index,
-                                   doc_count=doc_count, cycle=cycle)
+                    stored = await self.writer.count_recent_logs(minutes=5)
+                    logger.warning("Lines stored over the last 5 minutes",
+                                   count=stored, cycle=cycle)
 
             except Exception as e:
                 logger.error("Log collection error", error=str(e),
@@ -223,12 +218,7 @@ class Agent:
             try:
                 host_metrics, container_stats = await self.docker.collect_all_stats()
 
-                # Index host metrics
-                await self.opensearch.index_host_metrics(host_metrics)
-
-                # Index container stats
-                for stats in container_stats:
-                    await self.opensearch.index_container_stats(stats)
+                await self.writer.index_metrics(host_metrics, container_stats)
 
                 # Log GPU status for visibility (DEBUG level)
                 gpu_percent = host_metrics.get("gpu_percent")

@@ -65,6 +65,6 @@ async def get_usage_overview(
     stack: Optional[str] = Query(default=None),
 ):
     """Endpoint and per-stack traffic statistics, from the Traefik access logs."""
-    return await api.opensearch.get_usage_overview(
+    return await api.logstore.get_usage_overview(
         minutes=minutes, include_internal=include_internal,
         stack=stack or None, router_stacks=await api._get_router_stacks())

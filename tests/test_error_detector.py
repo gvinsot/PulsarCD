@@ -16,7 +16,7 @@ from backend.error_detector import (
 def _make_detector(**kwargs):
     """Create a RecurringErrorDetector with dummy config (no real services)."""
     defaults = dict(
-        opensearch_client=None,
+        logstore=None,
         llm_agent=None,
         github_service=None,
     )
@@ -42,7 +42,7 @@ class TestDeduplicateBursts:
         d = _make_detector(burst_window_seconds=10)
         now = datetime(2024, 1, 1, 12, 0, 0)
         errors = [_err("myapp", f"error #{i}", now + timedelta(seconds=i)) for i in range(5)]
-        errors_desc = list(reversed(errors))  # OpenSearch returns desc
+        errors_desc = list(reversed(errors))  # the store returns newest first
         result = d._deduplicate_bursts(errors_desc)
         assert len(result) == 1
 
@@ -327,15 +327,30 @@ def _registry_log(ts, method="HEAD", status=404, **overrides):
     }
 
 
-def _registry_detector(*put_entries):
-    opensearch = mock.Mock()
-    opensearch.logs_index = "pulsarcd-logs"
-    opensearch._client.search = mock.AsyncMock(return_value={
-        "hits": {"hits": [{"_source": entry} for entry in put_entries]},
-    })
-    opensearch._client.scroll = mock.AsyncMock()
-    opensearch._client.clear_scroll = mock.AsyncMock()
-    return _make_detector(opensearch_client=opensearch)
+class _FakeClient:
+    """Streams the given log entries as VictoriaLogs rows; records the queries."""
+
+    def __init__(self, entries, fail_after=None, error=None):
+        self.entries = entries
+        self.fail_after = fail_after
+        self.error = error
+        self.calls = []
+
+    async def iter_query(self, query, **kwargs):
+        self.calls.append((query, kwargs))
+        for count, entry in enumerate(self.entries):
+            if self.fail_after is not None and count >= self.fail_after:
+                raise self.error or RuntimeError("stream interrupted")
+            yield {"_time": entry["timestamp"], "_msg": entry["message"],
+                   **{k: entry[k] for k in ("host", "container_id", "container_name") if k in entry}}
+        if self.error is not None and self.fail_after is None:
+            raise self.error
+
+
+def _registry_detector(*put_entries, **client_options):
+    store = mock.Mock()
+    store.client = _FakeClient(list(put_entries), **client_options)
+    return _make_detector(logstore=store)
 
 
 class TestRegistryPushCorrelation:
@@ -411,60 +426,79 @@ class TestRegistryPushCorrelation:
         head.pop(field)
         detector = _registry_detector()
         assert await detector._filter_registry_push_probes([head], ts) == [head]
-        detector._opensearch._client.search.assert_not_awaited()
+        assert detector._logstore.client.calls == []
 
     async def test_unrelated_errors_are_never_delayed(self):
         now = datetime.utcnow()
         error = _err("app", "Database unavailable", now)
         detector = _registry_detector()
         assert await detector._filter_registry_push_probes([error], now) == [error]
-        detector._opensearch._client.search.assert_not_awaited()
+        assert detector._logstore.client.calls == []
 
     async def test_query_failure_releases_recent_and_pending_errors(self):
         ts = datetime(2026, 9, 22, 19, 40, 49)
         head = _registry_log(ts)
         detector = _registry_detector()
         assert await detector._filter_registry_push_probes([head], ts) == []
-        detector._opensearch._client.search.side_effect = RuntimeError("search unavailable")
+        detector._logstore.client.error = RuntimeError("search unavailable")
         assert await detector._filter_registry_push_probes([], ts + timedelta(seconds=1)) == [head]
         assert not detector._pending_registry_probes
 
-    async def test_success_on_second_query_page_and_scroll_cleanup(self):
+    async def test_match_among_unrelated_puts(self):
         ts = datetime(2026, 9, 22, 19, 40, 49)
         head = _registry_log(ts)
         unrelated = _registry_log(ts + timedelta(milliseconds=1), method="PUT", status=201,
                                   **{"http.request.uri": "/v2/other/manifests/6e25625"})
         put = _registry_log(ts + timedelta(milliseconds=15), method="PUT", status=201)
-        detector = _registry_detector(unrelated)
-        detector._REGISTRY_QUERY_PAGE_SIZE = 1
-        detector._opensearch._client.search.return_value["_scroll_id"] = "scroll-one"
-        detector._opensearch._client.scroll.side_effect = [
-            {"_scroll_id": "scroll-two", "hits": {"hits": [{"_source": put}]}},
-            {"_scroll_id": "scroll-two", "hits": {"hits": []}},
-        ]
+        detector = _registry_detector(unrelated, put)
         assert await detector._filter_registry_push_probes([head], ts) == []
         assert not detector._pending_registry_probes
-        assert detector._opensearch._client.scroll.await_count == 2
-        detector._opensearch._client.clear_scroll.assert_awaited_once_with(scroll_id="scroll-two")
+        (query, kwargs), = detector._logstore.client.calls
+        assert 'host:in("server-d")' in query and 'container_id:in("registry-container")' in query
+        assert 'http_status:=201 _msg:"http.request.method=PUT"' in query
+        assert kwargs["start"] == ts
+        assert kwargs["end"] > ts + detector._REGISTRY_PUSH_WINDOW
 
-    @pytest.mark.parametrize("response", [
-        {"timed_out": True, "hits": {"hits": []}},
-        {"_shards": {"failed": 1}, "hits": {"hits": []}},
-    ])
-    async def test_partial_search_does_not_hide_errors(self, response):
-        ts = datetime(2026, 9, 22, 19, 40, 49)
-        head = _registry_log(ts)
-        detector = _registry_detector()
-        detector._opensearch._client.search.return_value = response
-        assert await detector._filter_registry_push_probes([head], ts) == [head]
-
-    async def test_query_page_limit_fails_open(self):
+    async def test_interrupted_search_does_not_hide_errors(self):
         ts = datetime(2026, 9, 22, 19, 40, 49)
         head = _registry_log(ts)
         put = _registry_log(ts + timedelta(milliseconds=15), method="PUT", status=201)
-        detector = _registry_detector(put)
+        detector = _registry_detector(put, put, fail_after=1)
+        assert await detector._filter_registry_push_probes([head], ts) == [head]
+
+    async def test_row_limit_fails_open(self):
+        ts = datetime(2026, 9, 22, 19, 40, 49)
+        head = _registry_log(ts)
+        put = _registry_log(ts + timedelta(milliseconds=15), method="PUT", status=201)
+        detector = _registry_detector(put, put)
         detector._REGISTRY_QUERY_PAGE_SIZE = 1
         detector._REGISTRY_QUERY_MAX_PAGES = 1
-        detector._opensearch._client.search.return_value["_scroll_id"] = "scroll-one"
         assert await detector._filter_registry_push_probes([head], ts) == [head]
-        detector._opensearch._client.clear_scroll.assert_awaited_once()
+
+
+class TestFetchRecentErrors:
+    async def test_query_and_rows(self):
+        store = mock.Mock()
+        store.client.query = mock.AsyncMock(return_value=[
+            {"_time": "2026-09-22T19:40:49.5Z", "_msg": "boom", "host": "h",
+             "container_name": "app_web.1.x", "compose_project": "app", "level": "ERROR"},
+            {"_time": "2026-09-22T19:40:48Z", "_msg": "pulsarcd internal",
+             "container_name": "pulsarcd_swarm-manager.1.y", "compose_project": "devops",
+             "level": "ERROR"},
+        ])
+        detector = _make_detector(logstore=store)
+        since = datetime(2026, 9, 22, 19, 0)
+        errors = await detector._fetch_recent_errors(since)
+        query = store.client.query.await_args.args[0]
+        assert query.startswith('{kind="log"} level:in("ERROR", "FATAL", "CRITICAL")')
+        assert '-compose_project:in("pulsarcd")' in query
+        assert "sort by (_time desc) limit 2000" in query
+        assert store.client.query.await_args.kwargs["start"] == since
+        # The second row is PulsarCD's own (compose_project fixed up from its name)
+        assert [(e["message"], e["compose_project"]) for e in errors] == [("boom", "app")]
+        assert errors[0]["timestamp"] == "2026-09-22T19:40:49.500000+00:00"
+
+    async def test_store_failure_returns_nothing(self):
+        store = mock.Mock()
+        store.client.query = mock.AsyncMock(side_effect=RuntimeError("down"))
+        assert await _make_detector(logstore=store)._fetch_recent_errors(datetime(2026, 1, 1)) == []

@@ -5,8 +5,7 @@ Environment variables override config file values.
 
 Environment variables:
 - PULSARCD_HOSTS: JSON array of host configs
-- PULSARCD_OPENSEARCH__HOSTS: JSON array of OpenSearch URLs
-- PULSARCD_OPENSEARCH__INDEX_PREFIX: Index prefix string
+- PULSARCD_VICTORIALOGS__URL: VictoriaLogs base URL (logs, metrics, run history)
 - PULSARCD_COLLECTOR__LOG_INTERVAL_SECONDS: Log collection interval
 - PULSARCD_COLLECTOR__METRICS_INTERVAL_SECONDS: Metrics collection interval
 - PULSARCD_AI__MODEL: AI model name
@@ -139,21 +138,17 @@ def find_swarm_manager(
     return None
 
 
-class OpenSearchConfig(BaseModel):
-    """OpenSearch configuration."""
-    hosts: List[str] = ["http://localhost:9200"]
-    index_prefix: str = "pulsarcd"
+class VictoriaLogsConfig(BaseModel):
+    """VictoriaLogs: storage for logs, metrics, access records and run history.
+
+    Retention is VictoriaLogs' own -retentionPeriod flag (see the stack file),
+    the same for every kind of record.
+    """
+    url: str = "http://localhost:9428"
+    # Basic auth, when VictoriaLogs sits behind an authenticating proxy
     username: Optional[str] = None
     password: Optional[str] = None
-    # On a field type mismatch, reindex into a new versioned index and swap
-    # the alias in the background. When False, the mismatch is only reported
-    # (logs, /api/health) and the existing index is left untouched.
-    auto_migrate_mappings: bool = True
-    # Also move pre-alias deployments (plain "pulsarcd-logs" indices with a
-    # correct mapping) to the versioned/alias layout at startup.
-    migrate_legacy_indices: bool = False
-    # Catch-up window copied again, under a write block, after the bulk copy.
-    migration_catchup_seconds: int = 900
+    timeout_seconds: float = 30.0
 
 
 class CollectorConfig(BaseModel):
@@ -161,7 +156,6 @@ class CollectorConfig(BaseModel):
     log_interval_seconds: int = 30
     metrics_interval_seconds: int = 15
     log_lines_per_fetch: int = 500
-    retention_days: int = 7
     # When True, backend collection is completely disabled (agents handle everything)
     # The collector will only maintain container lists for the UI, not collect logs/metrics
     agents_only: bool = False
@@ -171,12 +165,10 @@ class RunHistoryConfig(BaseModel):
     """Pipeline run history (backend/run_history.py).
 
     Every build / test / qa / deploy run and its full log are kept in
-    OpenSearch for ``retention_days``, independently of the container log
-    retention (collector.retention_days), so deployments can be audited long
-    after their logs rotated out of pipeline_state.
+    VictoriaLogs, so deployments can be audited long after their logs rotated
+    out of pipeline_state.
     """
     enabled: bool = True
-    retention_days: int = 90
     # Longest log stored per run; older lines of a longer log are dropped.
     max_log_lines: int = 20000
     # Lines per log document: the unit returned by a full-text log search.
@@ -290,7 +282,6 @@ class AutoBanConfig(BaseModel):
     poll_seconds: int = Field(default=10, ge=1, le=300)
     # Revisit this much event time to pick up delayed agent/index writes.
     overlap_seconds: int = Field(default=300, ge=30, le=86400)
-    batch_size: int = Field(default=500, ge=1, le=2000)
     # Docker-derived metadata, never fields supplied by HTTP clients.
     traefik_project: str = Field(default="privatenetwork", min_length=1)
     traefik_service: str = Field(default="traefik", min_length=1)
@@ -389,8 +380,8 @@ class Settings(BaseSettings):
     # OS user for running terminal and git commands locally (via su)
     run_user: Optional[str] = None
 
-    # OpenSearch
-    opensearch: OpenSearchConfig = OpenSearchConfig()
+    # VictoriaLogs
+    victorialogs: VictoriaLogsConfig = VictoriaLogsConfig()
 
     # Collector
     collector: CollectorConfig = CollectorConfig()
@@ -483,17 +474,12 @@ def load_config() -> Settings:
     - PULSARCD_HOSTS: JSON array of host configs
 
     Optional (auto-loaded by pydantic-settings):
-    - PULSARCD_OPENSEARCH__HOSTS: JSON array of OpenSearch URLs
-    - PULSARCD_OPENSEARCH__INDEX_PREFIX: Index prefix
-    - PULSARCD_OPENSEARCH__USERNAME: OpenSearch username
-    - PULSARCD_OPENSEARCH__PASSWORD: OpenSearch password
-    - PULSARCD_OPENSEARCH__AUTO_MIGRATE_MAPPINGS: bool (default true)
-    - PULSARCD_OPENSEARCH__MIGRATE_LEGACY_INDICES: bool (default false)
-    - PULSARCD_OPENSEARCH__MIGRATION_CATCHUP_SECONDS: integer
+    - PULSARCD_VICTORIALOGS__URL: VictoriaLogs base URL
+    - PULSARCD_VICTORIALOGS__USERNAME / __PASSWORD: basic auth (optional)
+    - PULSARCD_VICTORIALOGS__TIMEOUT_SECONDS: per-query time budget
     - PULSARCD_COLLECTOR__LOG_INTERVAL_SECONDS: integer
     - PULSARCD_COLLECTOR__METRICS_INTERVAL_SECONDS: integer
     - PULSARCD_COLLECTOR__LOG_LINES_PER_FETCH: integer
-    - PULSARCD_COLLECTOR__RETENTION_DAYS: integer
     - PULSARCD_AI__MODEL: string
     - PULSARCD_GITHUB__*: GitHub configuration
 
@@ -535,17 +521,6 @@ def load_config() -> Settings:
         except Exception as e:
             print(f"Warning: Invalid host configuration: {e}")
 
-    # OpenSearch hosts need special handling (JSON array or single string)
-    opensearch_hosts_env = os.environ.get("PULSARCD_OPENSEARCH__HOSTS")
-    if opensearch_hosts_env:
-        try:
-            hosts_list = json.loads(opensearch_hosts_env)
-            if isinstance(hosts_list, list):
-                settings.opensearch.hosts = hosts_list
-        except json.JSONDecodeError:
-            # Single host string
-            settings.opensearch.hosts = [opensearch_hosts_env]
-
     # Helper function to load env vars with type conversion
     def load_env(obj, attr: str, env_var: str, converter=str):
         value = os.environ.get(env_var)
@@ -555,25 +530,16 @@ def load_config() -> Settings:
             except (ValueError, TypeError) as e:
                 print(f"Warning: Failed to parse {env_var}: {e}")
 
-    def _as_bool(value: str) -> bool:
-        return value.strip().lower() in ("true", "1", "yes")
-
-    # OpenSearch settings
-    load_env(settings.opensearch, "index_prefix", "PULSARCD_OPENSEARCH__INDEX_PREFIX")
-    load_env(settings.opensearch, "username", "PULSARCD_OPENSEARCH__USERNAME")
-    load_env(settings.opensearch, "password", "PULSARCD_OPENSEARCH__PASSWORD")
-    load_env(settings.opensearch, "auto_migrate_mappings",
-             "PULSARCD_OPENSEARCH__AUTO_MIGRATE_MAPPINGS", _as_bool)
-    load_env(settings.opensearch, "migrate_legacy_indices",
-             "PULSARCD_OPENSEARCH__MIGRATE_LEGACY_INDICES", _as_bool)
-    load_env(settings.opensearch, "migration_catchup_seconds",
-             "PULSARCD_OPENSEARCH__MIGRATION_CATCHUP_SECONDS", int)
+    # VictoriaLogs settings
+    load_env(settings.victorialogs, "url", "PULSARCD_VICTORIALOGS__URL")
+    load_env(settings.victorialogs, "username", "PULSARCD_VICTORIALOGS__USERNAME")
+    load_env(settings.victorialogs, "password", "PULSARCD_VICTORIALOGS__PASSWORD")
+    load_env(settings.victorialogs, "timeout_seconds", "PULSARCD_VICTORIALOGS__TIMEOUT_SECONDS", float)
 
     # Collector settings
     load_env(settings.collector, "log_interval_seconds", "PULSARCD_COLLECTOR__LOG_INTERVAL_SECONDS", int)
     load_env(settings.collector, "metrics_interval_seconds", "PULSARCD_COLLECTOR__METRICS_INTERVAL_SECONDS", int)
     load_env(settings.collector, "log_lines_per_fetch", "PULSARCD_COLLECTOR__LOG_LINES_PER_FETCH", int)
-    load_env(settings.collector, "retention_days", "PULSARCD_COLLECTOR__RETENTION_DAYS", int)
     # Load agents_only as bool (accepts "true", "1", "yes")
     agents_only_env = os.environ.get("PULSARCD_COLLECTOR__AGENTS_ONLY", "").lower()
     if agents_only_env in ("true", "1", "yes"):
@@ -583,7 +549,6 @@ def load_config() -> Settings:
     run_history_enabled_env = os.environ.get("PULSARCD_RUN_HISTORY__ENABLED", "").lower()
     if run_history_enabled_env in ("false", "0", "no"):
         settings.run_history.enabled = False
-    load_env(settings.run_history, "retention_days", "PULSARCD_RUN_HISTORY__RETENTION_DAYS", int)
     load_env(settings.run_history, "max_log_lines", "PULSARCD_RUN_HISTORY__MAX_LOG_LINES", int)
     load_env(settings.run_history, "log_chunk_lines", "PULSARCD_RUN_HISTORY__LOG_CHUNK_LINES", int)
 

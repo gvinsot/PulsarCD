@@ -1,16 +1,19 @@
-"""Attack detection over the access index (Traefik requests and WAF blocks).
+"""Attack detection over the access records (Traefik requests and WAF blocks).
 
-Everything here is pure: query bodies are built and responses interpreted
-without touching OpenSearch, so the detection rules can be tested directly.
-OpenSearchClient.get_security_overview runs two searches: the first ranks
-candidate client IPs and hot endpoints, the second computes detailed
-statistics for the candidates only.
+Everything here is pure: LogsQL queries are built and their rows interpreted
+without touching VictoriaLogs, so the detection rules can be tested directly.
+LogStore.get_security_overview runs two rounds of queries: the overview ranks
+candidate client IPs and hot endpoints, the detail round computes statistics
+for those candidates only.
 """
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 from shared.access_log import EVENT_REQUEST, EVENT_WAF_BLOCK
+from shared.victorialogs import (
+    KIND_ACCESS, any_of, bucket_times, exact, integer, iso_ms, num, parse_time, stream,
+)
 
 MIN_WINDOW_MINUTES = 5
 MAX_WINDOW_MINUTES = 7 * 24 * 60
@@ -42,17 +45,17 @@ PROBED_ERROR_RATIO = 0.9
 
 _SEVERITY_SCORE = {"high": 3, "medium": 1}
 
-_STATUS_RANGES = [
-    {"key": "ok", "from": 100, "to": 400},
-    {"key": "client_errors", "from": 400, "to": 500},
-    {"key": "server_errors", "from": 500, "to": 600},
-]
-_CLIENT_ERRORS = {"range": {"status": {"gte": 400, "lt": 500}}}
-_SERVER_ERRORS = {"range": {"status": {"gte": 500}}}
-_DENIED = {"terms": {"status": [401, 403]}}
-_RATE_LIMITED = {"term": {"status": 429}}
-_IS_REQUEST = {"term": {"event": EVENT_REQUEST}}
-_IS_WAF_BLOCK = {"term": {"event": EVENT_WAF_BLOCK}}
+OK = "status:range[100, 400)"
+CLIENT_ERRORS = "status:range[400, 500)"
+SERVER_ERRORS = "status:>=500"
+DENIED = "status:in(401, 403)"
+RATE_LIMITED = "status:=429"
+NOT_FOUND = "status:=404"
+IS_REQUEST = exact("event", EVENT_REQUEST)
+IS_WAF_BLOCK = exact("event", EVENT_WAF_BLOCK)
+
+_STATUS_COUNTS = (f"count() if ({OK}) as ok, count() if ({CLIENT_ERRORS}) as client_errors, "
+                  f"count() if ({SERVER_ERRORS}) as server_errors")
 
 
 def clamp_window(minutes: Any) -> int:
@@ -64,7 +67,7 @@ def clamp_window(minutes: Any) -> int:
 
 
 def timeline_interval(minutes: int) -> str:
-    """date_histogram interval of the request timeline (at most ~170 points)."""
+    """Bucket of the request timeline (at most ~170 points)."""
     if minutes <= 60:
         return "1m"
     if minutes <= 360:
@@ -77,8 +80,8 @@ def timeline_interval(minutes: int) -> str:
 def rate_interval(minutes: int) -> Tuple[str, int]:
     """Bucket used to find peak rates, and its length in minutes.
 
-    One-minute buckets up to 6 h. Beyond that the per-client histograms would
-    exceed search.max_buckets (65535 for a whole response) with ~100 clients.
+    One-minute buckets up to 6 h; coarser beyond, so a week-long window does
+    not count every client minute by minute.
     """
     if minutes <= 360:
         return "1m", 1
@@ -87,159 +90,150 @@ def rate_interval(minutes: int) -> Tuple[str, int]:
     return "1h", 60
 
 
-def _window_filters(start: datetime, include_internal: bool) -> List[Dict[str, Any]]:
-    filters: List[Dict[str, Any]] = [{"range": {"timestamp": {"gte": start.isoformat()}}}]
+def base_filter(include_internal: bool) -> str:
+    """Access records of the window (the time range is a query argument)."""
+    parts = [stream(KIND_ACCESS)]
     if not include_internal:
-        filters.append({"term": {"internal": False}})
-    return filters
+        parts.append("internal:=false")
+    return " ".join(parts)
 
 
-def _peak_aggs(minutes: int) -> Dict[str, Any]:
-    interval, _ = rate_interval(minutes)
-    return {
-        "per_interval": {"date_histogram": {"field": "timestamp", "fixed_interval": interval}},
-        "peak": {"max_bucket": {"buckets_path": "per_interval>_count"}},
-    }
+def endpoint_filter(endpoints: List[Tuple[str, str]]) -> str:
+    """Records of any of these (request_host, path) endpoints."""
+    if not endpoints:
+        return "path:in()"
+    return "(" + " OR ".join(
+        f"({exact('request_host', host)} {exact('path', path)})" for host, path in endpoints) + ")"
 
 
-def build_overview_query(start: datetime, end: datetime, minutes: int,
-                         include_internal: bool) -> Dict[str, Any]:
+def build_overview_queries(minutes: int, include_internal: bool) -> Dict[str, str]:
     """Totals, timeline, candidate IPs and hot endpoints."""
+    base = base_filter(include_internal)
+    requests = f"{base} {IS_REQUEST}"
+    waf = f"{base} {IS_WAF_BLOCK}"
     return {
-        "size": 0,
-        "query": {"bool": {"filter": _window_filters(start, include_internal)}},
-        "aggs": {
-            "requests": {
-                "filter": _IS_REQUEST,
-                "aggs": {
-                    "unique_ips": {"cardinality": {"field": "client_ip"}},
-                    "statuses": {"range": {"field": "status", "ranges": _STATUS_RANGES}},
-                    "denied": {"filter": _DENIED},
-                    "rate_limited": {"filter": _RATE_LIMITED},
-                    "timeline": {
-                        "date_histogram": {
-                            "field": "timestamp",
-                            "fixed_interval": timeline_interval(minutes),
-                            "min_doc_count": 0,
-                            "extended_bounds": {"min": start.isoformat(), "max": end.isoformat()},
-                        },
-                        "aggs": {"statuses": {"range": {"field": "status", "ranges": _STATUS_RANGES}}},
-                    },
-                    # A flood ranks by volume; a scanner with a few hundred
-                    # 404s would not, next to busy legitimate clients.
-                    "by_requests": {"terms": {"field": "client_ip", "size": TOP_N}},
-                    "by_errors": {
-                        "filter": _CLIENT_ERRORS,
-                        "aggs": {"ips": {"terms": {"field": "client_ip", "size": TOP_N}}},
-                    },
-                    "endpoints": {
-                        "multi_terms": {
-                            "terms": [{"field": "request_host"}, {"field": "path"}],
-                            "size": TOP_N,
-                        },
-                        "aggs": {
-                            "distinct_ips": {"cardinality": {"field": "client_ip"}},
-                            "client_errors": {"filter": _CLIENT_ERRORS},
-                            "server_errors": {"filter": _SERVER_ERRORS},
-                            "top_ips": {"terms": {"field": "client_ip", "size": 3}},
-                            **_peak_aggs(minutes),
-                        },
-                    },
-                },
-            },
-            "waf": {
-                "filter": _IS_WAF_BLOCK,
-                "aggs": {
-                    "ips": {"terms": {"field": "client_ip", "size": TOP_N}},
-                    "rules": {"terms": {"field": "rule_msg", "size": 10}},
-                },
-            },
-        },
+        "totals": (f"{requests} | stats count() as requests, count_uniq(client_ip) as unique_ips, "
+                   f"{_STATUS_COUNTS}, count() if ({DENIED}) as denied, "
+                   f"count() if ({RATE_LIMITED}) as rate_limited"),
+        "timeline": f"{requests} | stats by (_time:{timeline_interval(minutes)}) {_STATUS_COUNTS}",
+        # A flood ranks by volume; a scanner with a few hundred 404s would
+        # not, next to busy legitimate clients.
+        "by_requests": (f"{requests} client_ip:* | stats by (client_ip) count() as n "
+                        f"| sort by (n desc) limit {TOP_N}"),
+        "by_errors": (f"{requests} {CLIENT_ERRORS} client_ip:* | stats by (client_ip) count() as n "
+                      f"| sort by (n desc) limit {TOP_N}"),
+        "endpoints": (f"{requests} | stats by (request_host, path) count() as requests, "
+                      f"count_uniq(client_ip) as distinct_ips, "
+                      f"count() if ({CLIENT_ERRORS}) as client_errors, "
+                      f"count() if ({SERVER_ERRORS}) as server_errors "
+                      f"| sort by (requests desc) limit {TOP_N}"),
+        "waf_total": f"{waf} | stats count() as n",
+        "waf_ips": (f"{waf} client_ip:* | stats by (client_ip) count() as n "
+                    f"| sort by (n desc) limit {TOP_N}"),
+        "waf_rules": f"{waf} rule_msg:* | stats by (rule_msg) count() as n | sort by (n desc) limit 10",
     }
 
 
-def candidate_ips(overview: Dict[str, Any]) -> List[str]:
+def candidate_ips(overview: Dict[str, List[Dict[str, Any]]]) -> List[str]:
     """IPs worth a detailed look: top by requests, by 4xx and by WAF blocks."""
-    aggs = overview.get("aggregations", {})
-    requests = aggs.get("requests", {})
-    rankings = [
-        requests.get("by_requests", {}),
-        requests.get("by_errors", {}).get("ips", {}),
-        aggs.get("waf", {}).get("ips", {}),
-    ]
     ips: List[str] = []
-    for ranking in rankings:
-        for bucket in ranking.get("buckets", []):
-            if bucket["key"] not in ips:
-                ips.append(bucket["key"])
+    for ranking in ("by_requests", "by_errors", "waf_ips"):
+        for row in overview.get(ranking, []):
+            ip = row.get("client_ip")
+            if ip and ip not in ips:
+                ips.append(ip)
     return ips
 
 
-def build_ip_stats_query(start: datetime, minutes: int, include_internal: bool,
-                         ips: List[str]) -> Dict[str, Any]:
-    """Per-IP statistics for the candidates returned by candidate_ips."""
-    filters = _window_filters(start, include_internal) + [{"terms": {"client_ip": ips}}]
-    return {
-        "size": 0,
-        "query": {"bool": {"filter": filters}},
-        "aggs": {
-            "ips": {
-                "terms": {"field": "client_ip", "size": len(ips)},
-                "aggs": {
-                    "requests": {
-                        "filter": _IS_REQUEST,
-                        "aggs": {
-                            "client_errors": {"filter": _CLIENT_ERRORS},
-                            "not_found": {"filter": {"term": {"status": 404}}},
-                            "denied": {"filter": _DENIED},
-                            "rate_limited": {"filter": _RATE_LIMITED},
-                            "server_errors": {"filter": _SERVER_ERRORS},
-                            "distinct_paths": {"cardinality": {"field": "path"}},
-                            "distinct_hosts": {"cardinality": {"field": "request_host"}},
-                            "top_hosts": {"terms": {"field": "request_host", "size": 3}},
-                            "top_paths": {"terms": {"field": "path", "size": 5}},
-                            "user_agents": {"terms": {"field": "user_agent", "size": 1}},
-                            **_peak_aggs(minutes),
-                        },
-                    },
-                    "waf_blocks": {"filter": _IS_WAF_BLOCK},
-                    "internal": {"terms": {"field": "internal", "size": 1}},
-                    "first_seen": {"min": {"field": "timestamp"}},
-                    "last_seen": {"max": {"field": "timestamp"}},
-                },
-            }
-        },
-    }
+def top_endpoints(overview: Dict[str, List[Dict[str, Any]]]) -> List[Tuple[str, str]]:
+    return [(row.get("request_host", ""), row.get("path", "")) for row in overview.get("endpoints", [])]
 
 
-def build_ip_events_query(ip: str, start: datetime, size: int = MAX_IP_EVENTS) -> Dict[str, Any]:
-    """Latest requests and WAF blocks of one client."""
+def build_detail_queries(minutes: int, include_internal: bool,
+                         overview: Dict[str, List[Dict[str, Any]]]) -> Dict[str, str]:
+    """Per-IP and per-endpoint statistics for the overview's candidates."""
+    base = base_filter(include_internal)
+    rate, _ = rate_interval(minutes)
+    queries: Dict[str, str] = {}
+    ips = candidate_ips(overview)
+    if ips:
+        scope = f"{base} {any_of('client_ip', ips)}"
+        requests = f"{scope} {IS_REQUEST}"
+        queries.update({
+            "ip_stats": (
+                f"{scope} | stats by (client_ip) "
+                f"count() if ({IS_REQUEST}) as requests, "
+                f"count() if ({IS_REQUEST} {CLIENT_ERRORS}) as client_errors, "
+                f"count() if ({IS_REQUEST} {NOT_FOUND}) as not_found, "
+                f"count() if ({IS_REQUEST} {DENIED}) as denied, "
+                f"count() if ({IS_REQUEST} {RATE_LIMITED}) as rate_limited, "
+                f"count() if ({IS_REQUEST} {SERVER_ERRORS}) as server_errors, "
+                f"count() if ({IS_WAF_BLOCK}) as waf_blocks, "
+                f"count_uniq(path) if ({IS_REQUEST}) as distinct_paths, "
+                f"count_uniq(request_host) if ({IS_REQUEST}) as distinct_hosts, "
+                f"any(internal) as internal, min(_time) as first_seen, max(_time) as last_seen"),
+            "ip_hosts": (f"{requests} request_host:* | stats by (client_ip, request_host) count() as n "
+                         "| sort by (n desc) partition by (client_ip) limit 3"),
+            "ip_paths": (f"{requests} path:* | stats by (client_ip, path) count() as n "
+                         "| sort by (n desc) partition by (client_ip) limit 5"),
+            "ip_agents": (f"{requests} user_agent:* | stats by (client_ip, user_agent) count() as n "
+                          "| sort by (n desc) partition by (client_ip) limit 1"),
+            "ip_peaks": (f"{requests} | stats by (client_ip, _time:{rate}) count() as c "
+                         "| stats by (client_ip) max(c) as peak"),
+        })
+    endpoints = top_endpoints(overview)
+    if endpoints:
+        scope = f"{base} {IS_REQUEST} {endpoint_filter(endpoints)}"
+        queries.update({
+            "endpoint_ips": (f"{scope} client_ip:* | stats by (request_host, path, client_ip) count() as n "
+                             "| sort by (n desc) partition by (request_host, path) limit 3"),
+            "endpoint_peaks": (f"{scope} | stats by (request_host, path, _time:{rate}) count() as c "
+                               "| stats by (request_host, path) max(c) as peak"),
+        })
+    return queries
+
+
+def build_ip_events_query(ip: str) -> str:
+    """Latest requests and WAF blocks of one client (newest first via limit=)."""
+    return (f"{stream(KIND_ACCESS)} {exact('client_ip', ip)} | fields _time, event, request_host, "
+            "method, uri, status, router, user_agent, rule_msg, duration_ms")
+
+
+def event_from_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    status = num(row.get("status"))
     return {
-        "size": size,
-        "sort": [{"timestamp": {"order": "desc"}}],
-        "query": {"bool": {"filter": [
-            {"range": {"timestamp": {"gte": start.isoformat()}}},
-            {"term": {"client_ip": ip}},
-        ]}},
-        "_source": ["timestamp", "event", "request_host", "method", "uri", "status",
-                    "router", "user_agent", "rule_msg", "duration_ms"],
+        "timestamp": row.get("_time"),
+        "event": row.get("event"),
+        "request_host": row.get("request_host"),
+        "method": row.get("method"),
+        "uri": row.get("uri"),
+        "status": int(status) if status is not None else None,
+        "router": row.get("router"),
+        "user_agent": row.get("user_agent"),
+        "rule_msg": row.get("rule_msg"),
+        "duration_ms": num(row.get("duration_ms")),
     }
 
 
 # --- Interpretation ---------------------------------------------------------
 
-def _count(agg: Optional[Dict[str, Any]]) -> int:
-    return (agg or {}).get("doc_count", 0)
-
-
-def _peak_per_minute(bucket: Dict[str, Any], minutes: int) -> float:
+def _peak_per_minute(peak: Any, minutes: int) -> float:
     _, bucket_minutes = rate_interval(minutes)
-    value = (bucket.get("peak") or {}).get("value") or 0
-    return round(value / bucket_minutes, 1)
+    return round((num(peak) or 0) / bucket_minutes, 1)
 
 
-def _top(agg: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return [{"key": b["key"], "count": b["doc_count"]} for b in (agg or {}).get("buckets", [])]
+def _top(rows: List[Dict[str, Any]], key: str) -> List[Dict[str, Any]]:
+    return [{"key": row.get(key), "count": integer(row.get("n"))} for row in rows]
+
+
+def _grouped(rows: List[Dict[str, Any]], *keys: str) -> Dict[Any, List[Dict[str, Any]]]:
+    out: Dict[Any, List[Dict[str, Any]]] = {}
+    for row in rows:
+        group = tuple(row.get(k) for k in keys)
+        out.setdefault(group[0] if len(group) == 1 else group, []).append(row)
+    for group_rows in out.values():
+        group_rows.sort(key=lambda r: integer(r.get("n")), reverse=True)
+    return out
 
 
 def _flag(code: str, severity: str, label: str, detail: str) -> Dict[str, str]:
@@ -295,45 +289,44 @@ def _score(flags: List[Dict[str, str]]) -> int:
     return sum(_SEVERITY_SCORE.get(f["severity"], 0) for f in flags)
 
 
-def _ip_entry(bucket: Dict[str, Any], minutes: int) -> Dict[str, Any]:
-    requests = bucket.get("requests", {})
-    internal_buckets = bucket.get("internal", {}).get("buckets", [])
-    user_agents = _top(requests.get("user_agents"))
+def _ip_entry(row: Dict[str, Any], detail: Dict[str, Dict[Any, Any]], minutes: int) -> Dict[str, Any]:
+    ip_address = row.get("client_ip")
+    agents = _top(detail["agents"].get(ip_address, []), "user_agent")
     ip = {
-        "ip": bucket["key"],
-        "internal": bool(internal_buckets and internal_buckets[0]["key"]),
-        "requests": _count(requests),
-        "client_errors": _count(requests.get("client_errors")),
-        "not_found": _count(requests.get("not_found")),
-        "denied": _count(requests.get("denied")),
-        "rate_limited": _count(requests.get("rate_limited")),
-        "server_errors": _count(requests.get("server_errors")),
-        "waf_blocks": _count(bucket.get("waf_blocks")),
-        "distinct_paths": requests.get("distinct_paths", {}).get("value", 0),
-        "distinct_hosts": requests.get("distinct_hosts", {}).get("value", 0),
-        "top_hosts": _top(requests.get("top_hosts")),
-        "top_paths": _top(requests.get("top_paths")),
-        "user_agent": user_agents[0]["key"] if user_agents else None,
-        "peak_per_minute": _peak_per_minute(requests, minutes),
-        "first_seen": bucket.get("first_seen", {}).get("value_as_string"),
-        "last_seen": bucket.get("last_seen", {}).get("value_as_string"),
+        "ip": ip_address,
+        "internal": row.get("internal") == "true",
+        "requests": integer(row.get("requests")),
+        "client_errors": integer(row.get("client_errors")),
+        "not_found": integer(row.get("not_found")),
+        "denied": integer(row.get("denied")),
+        "rate_limited": integer(row.get("rate_limited")),
+        "server_errors": integer(row.get("server_errors")),
+        "waf_blocks": integer(row.get("waf_blocks")),
+        "distinct_paths": integer(row.get("distinct_paths")),
+        "distinct_hosts": integer(row.get("distinct_hosts")),
+        "top_hosts": _top(detail["hosts"].get(ip_address, []), "request_host"),
+        "top_paths": _top(detail["paths"].get(ip_address, []), "path"),
+        "user_agent": agents[0]["key"] if agents else None,
+        "peak_per_minute": _peak_per_minute(detail["peaks"].get(ip_address), minutes),
+        "first_seen": row.get("first_seen"),
+        "last_seen": row.get("last_seen"),
     }
     ip["flags"] = ip_flags(ip)
     ip["score"] = _score(ip["flags"])
     return ip
 
 
-def _endpoint_entry(bucket: Dict[str, Any], minutes: int) -> Dict[str, Any]:
-    host, path = bucket["key"]
+def _endpoint_entry(row: Dict[str, Any], detail: Dict[str, Dict[Any, Any]], minutes: int) -> Dict[str, Any]:
+    key = (row.get("request_host"), row.get("path"))
     ep = {
-        "host": host,
-        "path": path,
-        "requests": bucket["doc_count"],
-        "distinct_ips": bucket.get("distinct_ips", {}).get("value", 0),
-        "client_errors": _count(bucket.get("client_errors")),
-        "server_errors": _count(bucket.get("server_errors")),
-        "top_ips": _top(bucket.get("top_ips")),
-        "peak_per_minute": _peak_per_minute(bucket, minutes),
+        "host": key[0],
+        "path": key[1],
+        "requests": integer(row.get("requests")),
+        "distinct_ips": integer(row.get("distinct_ips")),
+        "client_errors": integer(row.get("client_errors")),
+        "server_errors": integer(row.get("server_errors")),
+        "top_ips": _top(detail["endpoint_ips"].get(key, []), "client_ip"),
+        "peak_per_minute": _peak_per_minute(detail["endpoint_peaks"].get(key), minutes),
     }
     ep["flags"] = endpoint_flags(ep)
     ep["score"] = _score(ep["flags"])
@@ -345,7 +338,7 @@ def empty_overview(minutes: int, include_internal: bool, generated_at: datetime,
     result = {
         "window_minutes": minutes,
         "include_internal": include_internal,
-        "generated_at": generated_at.isoformat() + "Z",
+        "generated_at": iso_ms(generated_at),
         "timeline_interval": timeline_interval(minutes),
         "totals": {
             "requests": 0, "unique_ips": 0, "client_errors": 0, "server_errors": 0,
@@ -362,42 +355,60 @@ def empty_overview(minutes: int, include_internal: bool, generated_at: datetime,
     return result
 
 
-def summarize(overview: Dict[str, Any], ip_stats: Optional[Dict[str, Any]], *,
-              minutes: int, include_internal: bool, generated_at: datetime) -> Dict[str, Any]:
-    """The security view's payload, from the two search responses."""
+def timeline(rows: List[Dict[str, Any]], start: datetime, end: datetime, interval: str,
+             fields: Tuple[str, ...], averages: Tuple[str, ...] = ()) -> List[Dict[str, Any]]:
+    """Every bucket of the window, the empty ones as zeros (null averages)."""
+    by_time = {parse_time(row.get("_time")): row for row in rows}
+    out = []
+    for bucket in bucket_times(start, end, interval):
+        row = by_time.get(bucket, {})
+        point: Dict[str, Any] = {"timestamp": iso_ms(bucket)}
+        for name in averages:
+            value = num(row.get(name))
+            point[name] = round(value, 1) if value is not None else None
+        for name in fields:
+            point[name] = integer(row.get(name))
+        out.append(point)
+    return out
+
+
+def summarize(overview: Dict[str, List[Dict[str, Any]]], details: Dict[str, List[Dict[str, Any]]], *,
+              minutes: int, include_internal: bool, start: datetime, end: datetime,
+              generated_at: datetime) -> Dict[str, Any]:
+    """The security view's payload, from the overview and detail rows."""
     result = empty_overview(minutes, include_internal, generated_at)
-    aggs = overview.get("aggregations", {})
-    requests = aggs.get("requests", {})
-    waf = aggs.get("waf", {})
-    statuses = {b["key"]: b["doc_count"] for b in requests.get("statuses", {}).get("buckets", [])}
+    totals = (overview.get("totals") or [{}])[0]
+    waf_total = (overview.get("waf_total") or [{}])[0]
 
-    result["timeline"] = [
-        {
-            "timestamp": b["key_as_string"],
-            **{s["key"]: s["doc_count"] for s in b.get("statuses", {}).get("buckets", [])},
-        }
-        for b in requests.get("timeline", {}).get("buckets", [])
-    ]
+    result["timeline"] = timeline(overview.get("timeline", []), start, end, timeline_interval(minutes),
+                                  ("ok", "client_errors", "server_errors"))
 
-    ip_buckets = (ip_stats or {}).get("aggregations", {}).get("ips", {}).get("buckets", [])
-    ips = [_ip_entry(b, minutes) for b in ip_buckets]
+    detail = {
+        "hosts": _grouped(details.get("ip_hosts", []), "client_ip"),
+        "paths": _grouped(details.get("ip_paths", []), "client_ip"),
+        "agents": _grouped(details.get("ip_agents", []), "client_ip"),
+        "peaks": {row.get("client_ip"): row.get("peak") for row in details.get("ip_peaks", [])},
+        "endpoint_ips": _grouped(details.get("endpoint_ips", []), "request_host", "path"),
+        "endpoint_peaks": {(row.get("request_host"), row.get("path")): row.get("peak")
+                           for row in details.get("endpoint_peaks", [])},
+    }
+    ips = [_ip_entry(row, detail, minutes) for row in details.get("ip_stats", [])]
     ips.sort(key=lambda ip: (ip["score"], ip["requests"]), reverse=True)
     result["ips"] = ips
 
-    endpoints = [_endpoint_entry(b, minutes)
-                 for b in requests.get("endpoints", {}).get("buckets", [])]
+    endpoints = [_endpoint_entry(row, detail, minutes) for row in overview.get("endpoints", [])]
     endpoints.sort(key=lambda ep: (ep["score"], ep["requests"]), reverse=True)
     result["endpoints"] = endpoints
 
-    result["waf_rules"] = _top(waf.get("rules"))
+    result["waf_rules"] = _top(overview.get("waf_rules", []), "rule_msg")
     result["totals"] = {
-        "requests": _count(requests),
-        "unique_ips": requests.get("unique_ips", {}).get("value", 0),
-        "client_errors": statuses.get("client_errors", 0),
-        "server_errors": statuses.get("server_errors", 0),
-        "denied": _count(requests.get("denied")),
-        "rate_limited": _count(requests.get("rate_limited")),
-        "waf_blocks": _count(waf),
+        "requests": integer(totals.get("requests")),
+        "unique_ips": integer(totals.get("unique_ips")),
+        "client_errors": integer(totals.get("client_errors")),
+        "server_errors": integer(totals.get("server_errors")),
+        "denied": integer(totals.get("denied")),
+        "rate_limited": integer(totals.get("rate_limited")),
+        "waf_blocks": integer(waf_total.get("n")),
         "flagged_ips": sum(1 for ip in ips if ip["flags"]),
         "flagged_endpoints": sum(1 for ep in endpoints if ep["flags"]),
     }

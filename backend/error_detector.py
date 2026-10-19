@@ -1,7 +1,7 @@
 """Recurring error detector using zvec for similarity-based clustering.
 
 Runs as a background task, periodically scanning recent ERROR/FATAL/CRITICAL logs
-from OpenSearch, vectorizing them with zvec, and detecting recurring patterns.
+from VictoriaLogs, vectorizing them with zvec, and detecting recurring patterns.
 When a recurring error pattern is confirmed (N occurrences across M services/containers),
 it delegates to the LLM agent for investigation and remediation.
 """
@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set
 
 import structlog
+
+from shared.victorialogs import KIND_LOG, any_of, parse_time, quote, stream
 
 from .notifier import notify_recurring_error
 
@@ -81,6 +83,18 @@ def text_fingerprint(msg: str) -> str:
 # Recurring error pattern tracker
 # ---------------------------------------------------------------------------
 
+def _entry_from_row(row: dict) -> dict:
+    """The log dict the detector works on, from a ``kind=log`` record."""
+    entry = {"message": row.get("_msg") or ""}
+    stamp = parse_time(row.get("_time"))
+    entry["timestamp"] = stamp.isoformat() if stamp else row.get("_time")
+    for name in ("host", "container_id", "container_name", "compose_project",
+                 "compose_service", "level"):
+        if row.get(name):
+            entry[name] = row[name]
+    return entry
+
+
 class ErrorPattern:
     """Tracks a recurring error pattern."""
     __slots__ = ('fingerprint', 'sample_message', 'services', 'compose_projects',
@@ -141,7 +155,7 @@ class RecurringErrorDetector:
     - When a pattern hits the threshold (count >= min_occurrences),
       delegates to the LLM agent for investigation; re-notifies at most once per hour
 
-    System errors (scan failures, OpenSearch errors, LLM delegation errors)
+    System errors (scan failures, log store errors, LLM delegation errors)
     are reported to the LLM agent's system error tracker when available.
     """
 
@@ -202,7 +216,7 @@ class RecurringErrorDetector:
 
     def __init__(
         self,
-        opensearch_client,
+        logstore,
         llm_agent=None,
         github_service=None,
         pipeline_state: Optional[Dict] = None,
@@ -215,7 +229,7 @@ class RecurringErrorDetector:
         burst_window_seconds: int = 10,
         exclude_compose_projects: Optional[List[str]] = None,
     ):
-        self._opensearch = opensearch_client
+        self._logstore = logstore
         self._llm_agent = llm_agent
         self._github_service = github_service
         self._pipeline_state = pipeline_state
@@ -329,7 +343,7 @@ class RecurringErrorDetector:
             # to avoid double-counting errors across overlapping scan windows
             since = self._last_scan_ts
 
-        # Query OpenSearch for new error logs
+        # Query the log store for new error logs
         errors = await self._fetch_recent_errors(since)
         # Revisit pending probes even when no new ERROR lines were fetched.
         # Raw logs remain intact; only confirmed push probes leave detection.
@@ -488,7 +502,7 @@ class RecurringErrorDetector:
         result = []
 
         # Process in chronological order so the first event of a burst wins
-        for err in reversed(errors):  # OpenSearch returns desc, reverse → asc
+        for err in reversed(errors):  # newest first, reverse → asc
             project = err.get("compose_project") or err.get("container_name", "unknown")
             ts_raw = err.get("timestamp")
             try:
@@ -513,7 +527,7 @@ class RecurringErrorDetector:
         return result
 
     # ------------------------------------------------------------------
-    # OpenSearch queries
+    # Log store queries
     # ------------------------------------------------------------------
 
     def _is_self_log(self, message: str) -> bool:
@@ -569,53 +583,34 @@ class RecurringErrorDetector:
             return None
 
     async def _registry_successful_puts(self, candidates: List[tuple]) -> Optional[List[dict]]:
-        """Fetch bounded, paginated PUT evidence; failures never hide errors."""
+        """Fetch bounded PUT evidence; failures never hide errors."""
         events = [event for _, event in candidates]
-        body = {
-            "query": {"bool": {"filter": [
-                {"terms": {"host": sorted({event["key"][0] for event in events})}},
-                {"terms": {"container_id": sorted({event["key"][1] for event in events})}},
-                {"range": {"timestamp": {
-                    "gte": min(event["timestamp"] for event in events).isoformat(),
-                    "lte": (max(event["timestamp"] for event in events) + self._REGISTRY_PUSH_WINDOW).isoformat(),
-                }}},
-                {"term": {"http_status": 201}},
-                {"match_phrase": {"message": "http.request.method=PUT"}},
-            ]}},
-            "size": self._REGISTRY_QUERY_PAGE_SIZE,
-            "sort": [{"timestamp": "asc"}],
-            "_source": ["message", "timestamp", "host", "container_id", "container_name"],
-            "timeout": "10s",
-        }
-        scroll_id = None
+        query = (
+            f"{stream(KIND_LOG)} "
+            f"{any_of('host', sorted({event['key'][0] for event in events}))} "
+            f"{any_of('container_id', sorted({event['key'][1] for event in events}))} "
+            f"http_status:=201 _msg:{quote('http.request.method=PUT')} "
+            "| fields _time, _msg, host, container_id, container_name"
+        )
+        start = min(event["timestamp"] for event in events)
+        end = max(event["timestamp"] for event in events) + self._REGISTRY_PUSH_WINDOW
+        limit = self._REGISTRY_QUERY_PAGE_SIZE * self._REGISTRY_QUERY_MAX_PAGES
         results = []
         try:
-            response = await self._opensearch._client.search(
-                index=self._opensearch.logs_index, body=body, scroll="1m")
-            for page in range(self._REGISTRY_QUERY_MAX_PAGES):
-                scroll_id = response.get("_scroll_id", scroll_id)
-                if response.get("timed_out") or response.get("_shards", {}).get("failed", 0):
-                    raise RuntimeError("Incomplete registry PUT search")
-                hits = response.get("hits", {}).get("hits", [])
-                for hit in hits:
-                    event = self._registry_event(hit["_source"])
-                    if event and event["method"] == "PUT" and event["status"] == "201":
-                        results.append(event)
-                if len(hits) < self._REGISTRY_QUERY_PAGE_SIZE:
-                    return results
-                if not scroll_id or page + 1 == self._REGISTRY_QUERY_MAX_PAGES:
-                    raise RuntimeError("Registry PUT search exceeded its bounded page limit")
-                response = await self._opensearch._client.scroll(scroll_id=scroll_id, scroll="1m")
+            scanned = 0
+            async for row in self._logstore.client.iter_query(
+                    query, start=start, end=end + timedelta(microseconds=1), timeout=10):
+                scanned += 1
+                if scanned > limit:
+                    raise RuntimeError("Registry PUT search exceeded its bounded row limit")
+                event = self._registry_event(_entry_from_row(row))
+                if event and event["method"] == "PUT" and event["status"] == "201":
+                    results.append(event)
+            return results
         except Exception as exc:
             logger.warning("Registry push correlation unavailable; keeping missing manifest errors",
                            error=str(exc))
             return None
-        finally:
-            if scroll_id:
-                try:
-                    await self._opensearch._client.clear_scroll(scroll_id=scroll_id)
-                except Exception:
-                    logger.debug("Could not clear registry correlation search scroll")
 
     async def _filter_registry_push_probes(self, errors: List[dict], now: datetime) -> List[dict]:
         """Exclude a HEAD 404 only after a matching PUT 201 within five seconds.
@@ -678,46 +673,29 @@ class RecurringErrorDetector:
             entry["compose_project"] = m.group(1)
 
     async def _fetch_recent_errors(self, since: datetime) -> List[dict]:
-        """Fetch recent ERROR/FATAL/CRITICAL logs from OpenSearch.
+        """Fetch recent ERROR/FATAL/CRITICAL logs, newest first.
 
         Excludes PulsarCD's own compose projects and internal log messages
         to avoid self-detection loops.
         """
         try:
-            must_not = []
+            parts = [stream(KIND_LOG), any_of("level", ["ERROR", "FATAL", "CRITICAL"])]
             # Exclude PulsarCD's own stacks
             if self._exclude_projects:
-                must_not.append({"terms": {"compose_project": self._exclude_projects}})
-
-            body = {
-                "query": {
-                    "bool": {
-                        "must": [
-                            {"terms": {"level": ["ERROR", "FATAL", "CRITICAL"]}},
-                            {"range": {"timestamp": {"gte": since.isoformat()}}},
-                        ],
-                        "must_not": must_not,
-                    }
-                },
-                "size": 2000,
-                "sort": [{"timestamp": "desc"}],
-                "_source": ["message", "container_name", "compose_project",
-                            "compose_service", "host", "timestamp", "level", "container_id"],
-            }
-            response = await self._opensearch._client.search(
-                index=self._opensearch.logs_index, body=body
-            )
-            hits = [hit["_source"] for hit in response["hits"]["hits"]]
-            total_hits = response["hits"].get("total", {})
-            total_count = total_hits.get("value", len(hits)) if isinstance(total_hits, dict) else total_hits
+                parts.append("-" + any_of("compose_project", self._exclude_projects))
+            query = (" ".join(parts) + " | sort by (_time desc) limit 2000 "
+                     "| fields _time, _msg, container_name, compose_project, compose_service, "
+                     "host, level, container_id")
+            rows = await self._logstore.client.query(query, start=since)
+            hits = [_entry_from_row(row) for row in rows]
 
             # Fix compose_project from Swarm container names (handles
             # 'devops' directory-name artifacts before exclusion filtering)
             for h in hits:
                 self._fixup_compose_project(h)
 
-            # Re-apply project exclusion after fixup (OpenSearch query only
-            # excluded the original compose_project, not the corrected one)
+            # Re-apply project exclusion after fixup (the query only excluded
+            # the original compose_project, not the corrected one)
             if self._exclude_projects:
                 excl = set(self._exclude_projects)
                 hits = [h for h in hits if h.get("compose_project") not in excl]
@@ -736,8 +714,7 @@ class RecurringErrorDetector:
                 for h in filtered:
                     cp = h.get("compose_project", "(none)")
                     cp_counts[cp] = cp_counts.get(cp, 0) + 1
-                logger.info("Error detector fetched errors from OpenSearch",
-                            total_in_index=total_count,
+                logger.info("Error detector fetched errors",
                             returned=len(hits),
                             self_filtered=self_filtered,
                             benign_filtered=benign_filtered,
@@ -749,7 +726,7 @@ class RecurringErrorDetector:
             logger.error("Error detector: failed to fetch errors", error=str(e))
             if self._llm_agent and hasattr(self._llm_agent, '_report_system_error'):
                 self._llm_agent._report_system_error(
-                    "opensearch", type(e).__name__, str(e),
+                    "logstore", type(e).__name__, str(e),
                     action="fetch_errors")
             return []
 

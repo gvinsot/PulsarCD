@@ -22,7 +22,7 @@ router = APIRouter()
 @router.get("/api/dashboard/stats", response_model=DashboardStats)
 async def get_dashboard_stats():
     """Get dashboard statistics."""
-    stats = await api.opensearch.get_dashboard_stats()
+    stats = await api.logstore.get_dashboard_stats()
     
     # Add container counts
     containers = await api.collector.get_all_containers()
@@ -41,7 +41,7 @@ async def get_errors_timeseries(
     interval: str = Query(default="1h")
 ):
     """Get error count time series."""
-    return await api.opensearch.get_error_timeseries(hours=hours, interval=interval)
+    return await api.logstore.get_error_timeseries(hours=hours, interval=interval)
 
 
 @router.get("/api/dashboard/http-4xx-timeseries", response_model=List[TimeSeriesPoint])
@@ -50,7 +50,7 @@ async def get_http_4xx_timeseries(
     interval: str = Query(default="1h")
 ):
     """Get HTTP 4xx count time series."""
-    return await api.opensearch.get_http_status_timeseries(400, 500, hours=hours, interval=interval)
+    return await api.logstore.get_http_status_timeseries(400, 500, hours=hours, interval=interval)
 
 
 @router.get("/api/dashboard/http-5xx-timeseries", response_model=List[TimeSeriesPoint])
@@ -59,7 +59,7 @@ async def get_http_5xx_timeseries(
     interval: str = Query(default="1h")
 ):
     """Get HTTP 5xx count time series."""
-    return await api.opensearch.get_http_status_timeseries(500, 600, hours=hours, interval=interval)
+    return await api.logstore.get_http_status_timeseries(500, 600, hours=hours, interval=interval)
 
 
 @router.get("/api/dashboard/http-requests-timeseries", response_model=List[TimeSeriesPoint])
@@ -68,7 +68,7 @@ async def get_http_requests_timeseries(
     interval: str = Query(default="1h")
 ):
     """Get total HTTP requests count time series."""
-    return await api.opensearch.get_http_requests_timeseries(hours=hours, interval=interval)
+    return await api.logstore.get_http_requests_timeseries(hours=hours, interval=interval)
 
 
 @router.get("/api/dashboard/cpu-timeseries", response_model=List[TimeSeriesPoint])
@@ -77,7 +77,7 @@ async def get_cpu_timeseries(
     interval: str = Query(default="15m")
 ):
     """Get CPU usage time series."""
-    return await api.opensearch.get_resource_timeseries("cpu_percent", hours=hours, interval=interval)
+    return await api.logstore.get_resource_timeseries("cpu_percent", hours=hours, interval=interval)
 
 
 @router.get("/api/dashboard/gpu-timeseries", response_model=List[TimeSeriesPoint])
@@ -86,7 +86,7 @@ async def get_gpu_timeseries(
     interval: str = Query(default="15m")
 ):
     """Get GPU usage time series."""
-    return await api.opensearch.get_resource_timeseries("gpu_percent", hours=hours, interval=interval)
+    return await api.logstore.get_resource_timeseries("gpu_percent", hours=hours, interval=interval)
 
 
 @router.get("/api/dashboard/memory-timeseries", response_model=List[TimeSeriesPoint])
@@ -95,7 +95,7 @@ async def get_memory_timeseries(
     interval: str = Query(default="15m")
 ):
     """Get memory usage time series."""
-    return await api.opensearch.get_resource_timeseries("memory_percent", hours=hours, interval=interval)
+    return await api.logstore.get_resource_timeseries("memory_percent", hours=hours, interval=interval)
 
 
 @router.get("/api/dashboard/cpu-timeseries-by-host", response_model=List[TimeSeriesByHost])
@@ -104,7 +104,7 @@ async def get_cpu_timeseries_by_host(
     interval: str = Query(default="15m")
 ):
     """Get CPU usage time series grouped by host."""
-    return await api.opensearch.get_resource_timeseries_by_host("cpu_percent", hours=hours, interval=interval)
+    return await api.logstore.get_resource_timeseries_by_host("cpu_percent", hours=hours, interval=interval)
 
 
 @router.get("/api/dashboard/gpu-timeseries-by-host", response_model=List[TimeSeriesByHost])
@@ -113,7 +113,7 @@ async def get_gpu_timeseries_by_host(
     interval: str = Query(default="15m")
 ):
     """Get GPU usage time series grouped by host."""
-    return await api.opensearch.get_resource_timeseries_by_host("gpu_percent", hours=hours, interval=interval)
+    return await api.logstore.get_resource_timeseries_by_host("gpu_percent", hours=hours, interval=interval)
 
 
 @router.get("/api/dashboard/memory-timeseries-by-host", response_model=List[TimeSeriesByHost])
@@ -122,7 +122,7 @@ async def get_memory_timeseries_by_host(
     interval: str = Query(default="15m")
 ):
     """Get memory usage time series grouped by host."""
-    return await api.opensearch.get_resource_timeseries_by_host("memory_percent", hours=hours, interval=interval)
+    return await api.logstore.get_resource_timeseries_by_host("memory_percent", hours=hours, interval=interval)
 
 
 @router.get("/api/dashboard/vram-timeseries-by-host", response_model=List[TimeSeriesByHost])
@@ -132,7 +132,7 @@ async def get_vram_timeseries_by_host(
 ):
     """Get VRAM usage time series grouped by host (percentage of total)."""
     # Use gpu_memory_used_mb / gpu_memory_total_mb * 100
-    return await api.opensearch.get_vram_percent_timeseries_by_host(hours=hours, interval=interval)
+    return await api.logstore.get_vram_percent_timeseries_by_host(hours=hours, interval=interval)
 
 
 @router.get("/api/dashboard/recurring-errors")

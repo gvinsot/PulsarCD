@@ -557,7 +557,7 @@ async function executeSearchWithParams(params) {
     updatePagination();
 }
 
-// OpenSearch refuses a result window past index.max_result_window, and the API
+// The store pages at most this deep (log_store.MAX_SEARCH_FROM), and the API
 // now validates `from` against the same bound instead of clamping it silently.
 // Cap the pager here too, otherwise "Next" walks past the last reachable page
 // and the request comes back as a 422.

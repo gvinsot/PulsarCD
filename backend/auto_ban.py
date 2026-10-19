@@ -1,9 +1,9 @@
 """Block external clients probing secrets or WordPress on our non-WP edge.
 
-Only Docker-attributed Traefik access logs are trusted. The access analytics
-index deliberately drops container provenance, so enforcement reads the same
-requests from the raw logs index. It never trusts a client's forwarded header
-or a Coraza message interpolating untrusted request text.
+Only Docker-attributed Traefik access logs are trusted. The access records
+deliberately drop container provenance, so enforcement reads the same
+requests from the container log lines. It never trusts a client's forwarded
+header or a Coraza message interpolating untrusted request text.
 """
 
 import asyncio
@@ -16,6 +16,8 @@ from pathlib import Path
 from urllib.parse import unquote
 
 import structlog
+
+from shared.victorialogs import KIND_LOG, exact, stream
 
 from .config import AutoBanConfig
 from .ip_blocklist import HTTP_ROUTER_NAME, ROUTER_NAME, IpBlocklist, _timestamp
@@ -60,9 +62,9 @@ def probe_kind(uri: str):
 
 
 class AutoBanWorker:
-    def __init__(self, opensearch, blocklist: IpBlocklist, config: AutoBanConfig,
+    def __init__(self, logstore, blocklist: IpBlocklist, config: AutoBanConfig,
                  checkpoint_path: str):
-        self.opensearch = opensearch
+        self.logstore = logstore
         self.blocklist = blocklist
         self.config = config
         self._path = Path(checkpoint_path)
@@ -141,6 +143,11 @@ class AutoBanWorker:
                 or source.get("compose_service") != self.config.traefik_service):
             return
         fields = source.get("parsed_fields")
+        if isinstance(fields, str):
+            try:
+                fields = json.loads(fields)
+            except ValueError:
+                return
         if not isinstance(fields, dict) or not all(
                 key in fields for key in ("ClientHost", "DownstreamStatus", "RequestPath")):
             return
@@ -155,7 +162,7 @@ class AutoBanWorker:
             return
         if self._is_exempt(address):
             return
-        stamp = _timestamp(source.get("timestamp"))
+        stamp = _timestamp(source.get("_time") or source.get("timestamp"))
         if stamp is None or stamp > now or stamp < now - timedelta(seconds=self.config.duration_seconds):
             return
         kind = probe_kind(fields["RequestPath"])
@@ -166,9 +173,9 @@ class AutoBanWorker:
                 notify_auto_ban(entry["ip"], entry["reason"], entry.get("expires_at") or "")
 
     async def scan_once(self, now=None):
-        """Read every matching log in bounded pages, including delayed writes.
+        """Read every matching log line of the window, including delayed writes.
 
-        The durable checkpoint advances only after the entire scroll succeeds.
+        The durable checkpoint advances only after the entire scan succeeds.
         Replay guards persist atomically with bans. A restart or partial scan
         can therefore retry safely, including after an operator unblocks an IP.
         """
@@ -176,45 +183,19 @@ class AutoBanWorker:
             return
         async with self._scan_lock:
             # Runs on the first startup scan and every subsequent scan, before
-            # querying OpenSearch: release shared proxies even if indexing is down.
+            # querying the log store: release shared proxies even if it is down.
             await self._release_exempt_automatic_bans()
             now = now or datetime.now(timezone.utc)
             start = min(self._checkpoint, now) - timedelta(seconds=self.config.overlap_seconds)
             # After a long outage, already obsolete probes do not merit bans.
             start = max(start, now - timedelta(seconds=self.config.duration_seconds))
-            body = {
-                "size": self.config.batch_size,
-                "sort": ["_doc"],
-                "query": {"bool": {"filter": [
-                    {"range": {"timestamp": {"gte": start.isoformat(), "lte": now.isoformat()}}},
-                    {"term": {"compose_project": self.config.traefik_project}},
-                    {"term": {"compose_service": self.config.traefik_service}},
-                ]}},
-                "_source": ["timestamp", "compose_project", "compose_service", "parsed_fields"],
-            }
-            scroll_id = None
-            try:
-                response = await self.opensearch._client.search(
-                    index=self.opensearch.logs_index, body=body, scroll="2m", request_timeout=30)
-                while True:
-                    scroll_id = response.get("_scroll_id", scroll_id)
-                    if response.get("timed_out") or response.get("_shards", {}).get("failed", 0):
-                        raise RuntimeError("Incomplete automatic-ban log search")
-                    hits = response.get("hits", {}).get("hits", [])
-                    if not hits:
-                        break
-                    for hit in hits:
-                        await self._consume(hit.get("_source", {}), now)
-                    if not scroll_id:
-                        raise RuntimeError("Automatic-ban log search returned no scroll cursor")
-                    response = await self.opensearch._client.scroll(
-                        scroll_id=scroll_id, scroll="2m", request_timeout=30)
-                self._save_checkpoint(now)
-                self.blocklist.prune_observed(now - timedelta(seconds=self.config.overlap_seconds))
-                self.blocklist.targets()  # Expire bans even when no requests arrive.
-            finally:
-                if scroll_id:
-                    try:
-                        await self.opensearch._client.clear_scroll(scroll_id=scroll_id)
-                    except Exception:
-                        logger.warning("Could not release automatic-ban log scroll")
+            query = (f"{stream(KIND_LOG)} {exact('compose_project', self.config.traefik_project)} "
+                     f"{exact('compose_service', self.config.traefik_service)} parsed_fields:* "
+                     "| fields _time, compose_project, compose_service, parsed_fields")
+            # end is exclusive: the scan covers [start, now].
+            async for row in self.logstore.client.iter_query(
+                    query, start=start, end=now + timedelta(microseconds=1), timeout=30):
+                await self._consume(row, now)
+            self._save_checkpoint(now)
+            self.blocklist.prune_observed(now - timedelta(seconds=self.config.overlap_seconds))
+            self.blocklist.targets()  # Expire bans even when no requests arrive.

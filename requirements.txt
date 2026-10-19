@@ -8,9 +8,6 @@ python-multipart>=0.0.9
 paramiko>=3.4.0
 asyncssh>=2.14.2
 
-# OpenSearch
-opensearch-py>=2.4.2
-
 # Data & Async
 # The MCP version compatible with our Starlette pin imports eval_type_backport,
 # which Pydantic removed in 2.14. Lift this cap with the FastAPI/Starlette upgrade.

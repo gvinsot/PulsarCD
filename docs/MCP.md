@@ -59,7 +59,7 @@ Both servers accept two token types:
 | Tool | Description |
 |------|-------------|
 | `get_log_metadata` | Discover available hosts, services, containers and log levels in the log store. Call this first before searching logs |
-| `search_logs` | Search logs with filters (query, project, service, host, level, time range) or raw OpenSearch queries |
+| `search_logs` | Search logs with filters (query, project, service, host, level, time range) or a LogsQL query (counts, statistics) |
 | `get_health_summary` | Post-deploy check in one call: container/host counts, 24h error, warning and HTTP 4xx/5xx totals, CPU/memory/GPU load, recurring error patterns |
 
 #### Releases and pipeline

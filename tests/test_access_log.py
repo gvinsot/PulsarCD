@@ -1,14 +1,14 @@
-"""Tests for shared.access_log and the agent's access-index writes."""
+"""Tests for shared.access_log and the agent's access-record writes."""
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
 from shared.access_log import (
-    ACCESS_INDEX_MAPPING, EVENT_REQUEST, EVENT_WAF_BLOCK,
-    build_access_doc, is_internal_ip, normalize_ip,
+    EVENT_REQUEST, EVENT_WAF_BLOCK, build_access_doc, is_internal_ip, normalize_ip,
 )
+from shared.victorialogs import KIND_ACCESS, KIND_LOG, access_row
 from shared.log_utils import parse_log_message
 
 
@@ -135,45 +135,47 @@ class TestAddresses:
         assert is_internal_ip(ip) is internal
 
 
-def test_every_document_field_is_mapped():
-    """dynamic: false silently drops unmapped fields from search and aggs."""
-    mapped = set(ACCESS_INDEX_MAPPING["mappings"]["properties"])
+def test_access_record_keeps_every_field():
     for line in (TRAEFIK_LINE, CORAZA_LINE):
-        assert set(build_access_doc(_entry(line))) <= mapped
+        doc = build_access_doc(_entry(line))
+        row = access_row(doc)
+        assert row["kind"] == KIND_ACCESS
+        assert row["_time"] == "2026-09-19T18:14:08.279129Z"
+        assert row["_msg"]
+        # Empty values are dropped (VictoriaLogs treats them as missing).
+        expected = {k: v for k, v in doc.items() if k != "timestamp" and v not in (None, "")}
+        expected["internal"] = "true" if doc["internal"] else "false"
+        assert {k: row[k] for k in expected} == expected
 
 
 class TestAgentWriter:
-    async def test_access_docs_go_to_their_own_index(self):
-        from agent.config import OpenSearchConfig
-        from agent.opensearch_writer import OpenSearchWriter
+    def _writer(self):
+        from agent.config import VictoriaLogsConfig
+        from agent.victorialogs_writer import VictoriaLogsWriter
 
-        writer = OpenSearchWriter(OpenSearchConfig())
-        bulk = AsyncMock(side_effect=lambda client, actions, **kw: (len(actions), []))
-        with patch("agent.opensearch_writer.helpers.async_bulk", bulk):
-            indexed = await writer.index_logs([
-                _entry(TRAEFIK_LINE),
-                _entry("plain application log line"),
-                _entry(CORAZA_LINE),
-            ])
+        writer = VictoriaLogsWriter(VictoriaLogsConfig(), host_name="server-a")
+        writer.client.insert = AsyncMock(side_effect=lambda rows, kind: len(rows))
+        return writer
+
+    async def test_access_records_follow_the_log_lines(self):
+        writer = self._writer()
+        indexed = await writer.index_logs([
+            _entry(TRAEFIK_LINE),
+            _entry("plain application log line"),
+            _entry(CORAZA_LINE),
+        ])
         await writer.close()
 
         assert indexed == 3  # log lines only
-        assert bulk.await_count == 2
-        log_actions = bulk.await_args_list[0].args[1]
-        access_actions = bulk.await_args_list[1].args[1]
-        assert {a["_index"] for a in log_actions} == {"pulsarcd-logs"}
-        assert {a["_index"] for a in access_actions} == {"pulsarcd-access"}
-        assert [a["_source"]["event"] for a in access_actions] == [EVENT_REQUEST, EVENT_WAF_BLOCK]
-        # A re-collected line overwrites its access doc instead of duplicating it.
-        assert access_actions[0]["_id"] == log_actions[0]["_id"]
+        calls = writer.client.insert.await_args_list
+        assert [c.args[1] for c in calls] == [KIND_LOG, KIND_ACCESS]
+        assert {row["kind"] for row in calls[0].args[0]} == {KIND_LOG}
+        assert [row["event"] for row in calls[1].args[0]] == [EVENT_REQUEST, EVENT_WAF_BLOCK]
+        # parsed_fields is stored whole, as a JSON string
+        assert json.loads(calls[0].args[0][0]["parsed_fields"])["ClientHost"] == "80.94.95.211"
 
-    async def test_no_access_bulk_without_traefik_lines(self):
-        from agent.config import OpenSearchConfig
-        from agent.opensearch_writer import OpenSearchWriter
-
-        writer = OpenSearchWriter(OpenSearchConfig())
-        bulk = AsyncMock(return_value=(1, []))
-        with patch("agent.opensearch_writer.helpers.async_bulk", bulk):
-            await writer.index_logs([_entry("plain application log line")])
+    async def test_no_access_write_without_traefik_lines(self):
+        writer = self._writer()
+        await writer.index_logs([_entry("plain application log line")])
         await writer.close()
-        assert bulk.await_count == 1
+        assert writer.client.insert.await_count == 1

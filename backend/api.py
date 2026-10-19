@@ -38,7 +38,7 @@ from .ip_blocklist import IpBlocklist
 from .google_auth import GoogleIdTokenVerifier
 from .collector import Collector
 from .config import load_config, Settings
-from .opensearch_client import OpenSearchClient
+from .log_store import LogStore
 from .github_service import GitHubService, close_shared_ssh_clients
 from .actions_queue import actions_queue
 from .pipeline_state import PipelineStateManager
@@ -138,7 +138,7 @@ logger = structlog.get_logger()
 
 # Global instances
 settings: Settings = None
-opensearch: OpenSearchClient = None
+logstore: LogStore = None
 collector: Collector = None
 github_service: GitHubService = None
 error_detector = None
@@ -166,7 +166,7 @@ _auto_build_task = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    global settings, opensearch, collector, github_service, error_detector, user_manager, llm_agent, pipeline_state
+    global settings, logstore, collector, github_service, error_detector, user_manager, llm_agent, pipeline_state
     global email_allowlist, google_verifier, ip_blocklist, auto_ban_worker
 
     # Startup
@@ -180,7 +180,7 @@ async def lifespan(app: FastAPI):
             "agent endpoint. Set PULSARCD_AUTH__AGENT_KEYS to a JSON object "
             "mapping each agent_id to its own key."
         )
-    opensearch = OpenSearchClient(settings.opensearch)
+    logstore = LogStore(settings.victorialogs)
 
     # Initialize persistent pipeline state
     pipeline_state = PipelineStateManager.get_instance(settings.data_dir)
@@ -228,36 +228,36 @@ async def lifespan(app: FastAPI):
             "(plus PULSARCD_AUTH__GOOGLE_ADMINS) or PULSARCD_AUTH__PASSWORD."
         )
 
-    # Initialize OpenSearch with retry (wait for DNS/service to be ready)
+    # Wait for VictoriaLogs (DNS / service start) before anything reads it
     max_retries = 30
     retry_delay = 2
     for attempt in range(max_retries):
         try:
-            await opensearch.initialize()
+            await logstore.initialize()
             break
         except Exception as e:
             if attempt < max_retries - 1:
                 logger.warning(
-                    "OpenSearch not ready, retrying...",
+                    "VictoriaLogs not ready, retrying...",
                     attempt=attempt + 1,
                     max_retries=max_retries,
                     error=str(e),
                 )
                 await asyncio.sleep(retry_delay)
             else:
-                logger.error("Failed to connect to OpenSearch after retries", error=str(e))
+                logger.error("Failed to connect to VictoriaLogs after retries", error=str(e))
                 raise
 
-    collector = Collector(settings, opensearch)
+    collector = Collector(settings, logstore)
     await collector.start()
 
-    await run_history.recorder.attach(opensearch, settings, log_source=_run_history_log_source)
+    await run_history.recorder.attach(logstore, settings, log_source=_run_history_log_source)
     # Outbound notifications (ntfy / webhook / e-mail); a no-op when unset.
     notifier.configure(getattr(settings, "notify", None))
 
     if settings.autoban.enabled and settings.auth.edge_key:
         auto_ban_worker = AutoBanWorker(
-            opensearch, ip_blocklist, settings.autoban,
+            logstore, ip_blocklist, settings.autoban,
             checkpoint_path=f"{settings.data_dir}/autoban_checkpoint.json")
         if auto_ban_worker.start():
             logger.info("Automatic edge bans enabled", duration_seconds=settings.autoban.duration_seconds)
@@ -294,7 +294,7 @@ async def lifespan(app: FastAPI):
     # but the detection and history still run)
     from .error_detector import RecurringErrorDetector
     error_detector = RecurringErrorDetector(
-        opensearch_client=opensearch,
+        logstore=logstore,
         llm_agent=llm_agent,
         github_service=github_service,
         pipeline_state=pipeline_state,
@@ -367,7 +367,7 @@ async def lifespan(app: FastAPI):
         await asyncio.wait_for(run_history.recorder.drain(), timeout=10)
     except Exception as e:
         logger.warning("Pipeline run history: pending writes not flushed", error=str(e))
-    await opensearch.close()
+    await logstore.close()
     await github_service.close()
     await close_shared_ssh_clients()
     if llm_agent:

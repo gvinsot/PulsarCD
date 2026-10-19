@@ -18,7 +18,7 @@ import re
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 import pytest
@@ -482,40 +482,34 @@ class TestH2HealthDisclosure:
 
     def test_health_discloses_no_volumetry_or_version(self, client):
         data = client.get("/api/health").json()
-        # "indices" is a coarse migration state, never index names or counts.
-        assert set(data) <= {"status", "service", "opensearch", "indices"}
+        assert set(data) <= {"status", "service", "victorialogs"}
         assert not [k for k in data if "version" in k or k.endswith("_docs")]
-        assert data["opensearch"] in ("connected", "error", "not_configured")
-        assert data.get("indices", "ok") in ("ok", "migrating", "degraded")
+        assert data["victorialogs"] in ("connected", "error", "not_configured")
 
-    def test_health_hides_the_opensearch_error_message(self, client):
+    def test_health_says_error_without_details(self, client):
         """A connection error can carry host names and credentials."""
         broken = MagicMock()
-        broken._client = MagicMock()
-        broken._client.info = MagicMock(
-            side_effect=RuntimeError("auth failed for admin:hunter2 at os-prod.internal"))
-        with patch.object(api_module, "opensearch", broken):
+        broken.health = AsyncMock(return_value=False)
+        with patch.object(api_module, "logstore", broken):
             resp = client.get("/api/health")
         assert resp.status_code == 200
-        assert resp.json()["opensearch"] == "error"
-        assert "hunter2" not in resp.text
-        assert "os-prod.internal" not in resp.text
+        assert resp.json() == {"status": "healthy", "service": "pulsarcd", "victorialogs": "error"}
 
     def test_only_the_exact_health_path_is_public(self, client):
         assert "/api/health" not in api_module._AUTH_EXEMPT_PREFIXES
-        assert client.get("/api/health/opensearch").status_code == 401
+        assert client.get("/api/health/victorialogs").status_code == 401
         assert client.get("/api/health/anything").status_code == 401
 
     def test_deep_probe_requires_authentication(self, client):
-        assert client.get("/api/admin/opensearch-probe").status_code == 401
+        assert client.get("/api/admin/victorialogs-probe").status_code == 401
 
     def test_deep_probe_requires_admin(self, client):
-        resp = client.get("/api/admin/opensearch-probe", headers=_headers("viewer"))
+        resp = client.get("/api/admin/victorialogs-probe", headers=_headers("viewer"))
         assert resp.status_code == 403
 
-    def test_opensearch_status_requires_admin(self, client):
-        assert client.get("/api/admin/opensearch-status").status_code == 401
-        assert client.get("/api/admin/opensearch-status",
+    def test_store_status_requires_admin(self, client):
+        assert client.get("/api/admin/victorialogs-status").status_code == 401
+        assert client.get("/api/admin/victorialogs-status",
                           headers=_headers("viewer")).status_code == 403
 
 
@@ -874,75 +868,94 @@ class TestH4AgentToolPolicy:
 
 
 # ===========================================================================
-# M5 - Log search query injection into OpenSearch
+# M5 - Log search query injection into LogsQL
 # ===========================================================================
 
-class TestM5OpenSearchQueryHardening:
-    """A search string must not target other fields nor stall the cluster."""
+class TestM5LogsQLHardening:
+    """A search string must not target other fields, pipes or kinds of record."""
 
     def test_full_text_search_is_pinned_to_the_message_field(self):
-        from backend.opensearch_client import _build_message_query
-        clause = _build_message_query("host:secret-host OR /.*/ OR error~2")
-        assert "query_string" not in clause
-        sqs = clause["simple_query_string"]
-        assert sqs["fields"] == ["message"]
-        assert sqs["analyze_wildcard"] is False
-        assert "FUZZY" not in sqs["flags"]
-        assert "REGEX" not in sqs["flags"]
+        from shared.victorialogs import text_filter
+        clause = text_filter("host:secret-host OR /.*/ OR error~2")
+        assert clause == '(_msg:i("host:secret-host") OR _msg:i("/.*/") OR _msg:i("error~2"))'
+
+    @pytest.mark.parametrize("hostile", [
+        'x") | delete', "a | stats count()", '") OR {kind="pipeline_run_log"} OR ("',
+        "_time:100y", "* | union (*)", 'i(x) ` \\" \n',
+    ])
+    def test_hostile_text_stays_quoted(self, hostile):
+        from shared.victorialogs import text_filter
+        clause = text_filter(hostile)
+        # Every token is a quoted literal inside _msg:i(...): no pipe, no
+        # field filter, no stream filter can escape it.
+        stripped = re.sub(r'_msg:i\("(?:[^"\\]|\\.)*"\*?\)', "", clause)
+        assert set(stripped) <= set("() ANDORT"), stripped
 
     def test_search_text_is_truncated(self):
-        from backend.opensearch_client import MAX_QUERY_LENGTH, _build_message_query
-        clause = _build_message_query("a" * (MAX_QUERY_LENGTH * 3))
-        assert len(clause["simple_query_string"]["query"]) <= MAX_QUERY_LENGTH
+        from shared.victorialogs import MAX_TEXT_QUERY_LENGTH, text_filter
+        clause = text_filter("a" * (MAX_TEXT_QUERY_LENGTH * 3))
+        assert len(clause) <= MAX_TEXT_QUERY_LENGTH + 20
 
     def test_boolean_keywords_still_work(self):
-        from backend.opensearch_client import _build_message_query
-        query = _build_message_query(
-            "error AND timeout NOT debug")["simple_query_string"]["query"]
-        assert "+" in query and "-" in query
+        from shared.victorialogs import text_filter
+        assert text_filter("error AND timeout NOT debug") == (
+            '(_msg:i("error") AND _msg:i("timeout") AND NOT _msg:i("debug"))')
 
     def test_quoted_phrases_are_left_alone(self):
-        from backend.opensearch_client import _build_message_query
-        query = _build_message_query('"failed AND retried"')["simple_query_string"]["query"]
-        assert '"failed AND retried"' in query
+        from shared.victorialogs import text_filter
+        assert text_filter('"failed AND retried"') == '(_msg:i("failed AND retried"))'
 
-    @pytest.mark.parametrize("body", [
-        {"query": {"script": {"source": "while(true){}"}}},
-        {"script_fields": {"x": {"script": "1"}}},
-        {"query": {"function_score": {"script_score": {"script": {"source": "1"}}}}},
-        {"aggs": {"a": {"scripted_metric": {"init_script": "x"}}}},
-        {"runtime_mappings": {"f": {"type": "keyword"}}},
-        {"query": {"bool": {"must": [{"script": {"source": "1"}}]}}},
-    ])
-    def test_scripted_query_bodies_are_refused(self, body):
-        from backend.opensearch_client import _reject_scripted_query
-        with pytest.raises(ValueError, match="not allowed"):
-            _reject_scripted_query(body)
+    def test_filter_values_are_quoted(self):
+        from backend.log_store import log_filters
+        from backend.models import LogSearchQuery
+        query = log_filters(LogSearchQuery(hosts=['a") OR (*'], levels=["ERROR"]))
+        assert query == '{kind="log"} host:in("a\\") OR (*") level:in("ERROR")'
 
-    def test_a_plain_query_body_is_accepted(self):
-        from backend.opensearch_client import _reject_scripted_query
-        _reject_scripted_query({"query": {"bool": {"must": [{"match_all": {}}]}}})
+    async def test_raw_logsql_is_confined_to_container_logs(self):
+        from datetime import datetime, timedelta, timezone
 
-    def test_a_huge_body_is_refused_instead_of_traversed(self):
-        from backend.opensearch_client import MAX_QUERY_BODY_NODES, _reject_scripted_query
-        with pytest.raises(ValueError):
-            _reject_scripted_query([{"k": i} for i in range(MAX_QUERY_BODY_NODES)])
+        from backend.config import VictoriaLogsConfig
+        from backend.log_store import MAX_RAW_QUERY_HOURS, MAX_RAW_QUERY_ROWS, LogStore
 
-    @pytest.mark.parametrize("interval", ["1ms", "0s", "bogus", "1' OR '1", "99999d", ""])
+        store = LogStore(VictoriaLogsConfig())
+        seen = {}
+
+        async def iter_query(query, **kwargs):
+            seen.update(kwargs, query=query)
+            for i in range(10_000):
+                yield {"n": str(i)}
+        store.client.iter_query = iter_query
+        end = datetime.now(timezone.utc)
+        rows = await store.run_logsql('{kind="pipeline_run"} | stats count()',
+                                      start=end - timedelta(days=365), end=end, limit=10 ** 6)
+        await store.close()
+        # VictoriaLogs applies the stream filter to the query and every subquery
+        assert seen["extra_stream_filters"] == {"kind": "log"}
+        assert seen["start"] == end - timedelta(hours=MAX_RAW_QUERY_HOURS)
+        assert len(rows) == MAX_RAW_QUERY_ROWS
+
+    @pytest.mark.parametrize("interval", ["1ms", "0s", "bogus", "1' OR '1", "99999d", "",
+                                          "1h | stats count()"])
     def test_hostile_histogram_intervals_fall_back(self, interval):
-        from backend.opensearch_client import _safe_interval
+        from backend.log_store import _safe_interval
         assert _safe_interval(interval, "1h", hours=24) == "1h"
 
     def test_a_sane_histogram_interval_is_kept(self):
-        from backend.opensearch_client import _safe_interval
+        from backend.log_store import _safe_interval
         assert _safe_interval("5m", "1h", hours=24) == "5m"
 
     def test_sizes_are_clamped(self):
-        from backend.opensearch_client import _clamp_int
+        from backend.log_store import _clamp_int
         assert _clamp_int(10 ** 9, 1, 500, 100) == 500
         assert _clamp_int(-5, 1, 500, 100) == 1
         assert _clamp_int("not-a-number", 1, 500, 100) == 100
         assert _clamp_int(None, 1, 500, 100) == 100
+
+    def test_only_known_metrics_can_be_charted(self):
+        from backend.log_store import _metric
+        assert _metric("cpu_percent") == "cpu_percent"
+        with pytest.raises(ValueError):
+            _metric("cpu_percent) | delete")
 
 
 # ===========================================================================
