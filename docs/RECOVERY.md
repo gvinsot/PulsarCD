@@ -58,6 +58,14 @@ provoque un échec d'authentification des versions existantes et bloque le relev
 
 ## Ce qui est sauvegardé
 
+La barre supérieure de l'éditeur `.env` / `.env.qa` affiche le nom du nœud
+qui lit le fichier (renvoyé par l'hôte de build, pas son alias SSH). Si le fichier
+n'existe pas encore, elle indique le nœud où il sera créé à l'enregistrement.
+PulsarCD écrit ces fichiers sur ce seul nœud : il ne les réplique pas sur les
+autres nœuds Swarm. Les sauvegardes chiffrées PostgreSQL restent distinctes de
+ces fichiers, et une éventuelle réplication externe du système de fichiers
+n'est pas détectée par l'éditeur.
+
 - Toute écriture par l'éditeur web ou le MCP sauvegarde d'abord le fichier
   existant, puis la nouvelle version. Celle-ci est `pending` jusqu'au remplacement
   atomique du fichier local, puis `applied`. Le fichier est écrit avec des

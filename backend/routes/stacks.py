@@ -332,12 +332,12 @@ async def get_stack_env(repo_name: str, env: str = _ENV_QUERY):
         raise HTTPException(status_code=400, detail="GitHub integration not configured")
 
     deployer = StackDeployer(api.settings.github, None)
-    success, content = await deployer.get_env_file(repo_name, env=env)
+    success, result = await deployer.get_env_file_details(repo_name, env=env)
 
-    if not success:
-        raise HTTPException(status_code=500, detail=content)
+    if not success or not isinstance(result, dict):
+        raise HTTPException(status_code=500, detail=result)
 
-    return {"content": content, "repo": repo_name, "env": env}
+    return {**result, "repo": repo_name, "env": env}
 
 
 @router.put("/api/stacks/{repo_name}/env")
@@ -362,6 +362,13 @@ async def save_stack_env(repo_name: str, request: Request, env: str = _ENV_QUERY
 _deployed_tags_cache = None
 _deployed_tags_cache_time = None
 _DEPLOYED_TAGS_CACHE_TTL = 10  # seconds
+
+
+def invalidate_deployed_tags_cache():
+    """Force the next read to reflect changes to Swarm services."""
+    global _deployed_tags_cache, _deployed_tags_cache_time
+    _deployed_tags_cache = None
+    _deployed_tags_cache_time = None
 
 
 @router.get("/api/stacks/deployed-tags")

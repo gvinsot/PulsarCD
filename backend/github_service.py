@@ -1,6 +1,7 @@
 """GitHub integration service for PulsarCD."""
 
 import asyncio
+import base64
 import hashlib
 import json
 import os
@@ -1753,21 +1754,38 @@ class StackDeployer:
         Returns:
             Tuple of (success, content_or_error)
         """
+        success, result = await self.get_env_file_details(repo_name, env=env)
+        return success, result["content"] if isinstance(result, dict) else result
+
+    async def get_env_file_details(self, repo_name: str, env: str = "prod") -> tuple[bool, dict | str]:
+        """Read the file and identify its storage node in the same SSH operation.
+
+        Env writes target only this host; Swarm distributes service variables,
+        not copies of these files. External filesystem replication is unknown.
+        """
         try:
             repo_name = _validate_repo_name(repo_name)
         except ValueError as e:
             logger.warning("Rejected unsafe repository name", error=str(e))
             return False, str(e)
 
-        from .recovery import read_env, env_resource
+        from .recovery import file_operation, env_resource
         from .backup_vault import BackupError
         try:
             resource = env_resource(repo_name, env)
         except ValueError as e:
             return False, str(e)
         try:
-            content = await read_env(self, resource)
-            return True, "" if content is None else content.decode("utf-8")
+            response = await file_operation(self, "read", resource=resource)
+            encoded = response["content"]
+            return True, {
+                "content": "" if encoded is None else base64.b64decode(encoded, validate=True).decode("utf-8"),
+                "storage": {
+                    "node": response["hostname"],
+                    "exists": encoded is not None,
+                    "resource": resource,
+                },
+            }
         except (BackupError, UnicodeError):
             return False, "Unable to read the environment file"
 
