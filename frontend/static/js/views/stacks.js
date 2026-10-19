@@ -738,6 +738,16 @@ function renderStacksList() {
             qaStep = _qa('success'); deployStep = 'success';
         }
 
+        // Stages run independently (e.g. a deploy started while a build is in
+        // progress): the overall stage/status only reflects the last update, so
+        // overlay every stage whose own status is still running.
+        const isStageRunning = (s) => !!(pipeline && pipeline.stages && pipeline.stages[s]
+                                         && pipeline.stages[s].status === 'running');
+        if (isStageRunning('build')) { versionStep = 'success'; buildStep = 'running'; }
+        if (isStageRunning('test')) { versionStep = 'success'; testStep = 'running'; }
+        if (isStageRunning('qa')) { versionStep = 'success'; qaStep = _qa('running'); }
+        if (isStageRunning('deploy')) { versionStep = 'success'; deployStep = 'running'; }
+
         const pipelineVersion = (pipeline && pipeline.version) ? pipeline.version : (latestBuilt ? normalizeVersion(latestBuilt) : (deployedTag || '–'));
         const buildActionId = pipeline ? pipeline.build_action_id : null;
         const testActionId = pipeline ? pipeline.test_action_id : null;
@@ -1140,12 +1150,11 @@ function pipelineStepClick(repoName, sshUrl, step) {
     const pipeline = stacksPipelineState[repoName];
 
     // If the step is currently running, show live logs instead of opening the modal
-    if (pipeline && pipeline.status === 'running') {
-        let actionId = null;
-        if (step === 'build' && pipeline.stage === 'build') actionId = pipeline.build_action_id;
-        else if (step === 'test' && pipeline.stage === 'test') actionId = pipeline.test_action_id;
-        else if (step === 'qa' && pipeline.stage === 'qa') actionId = pipeline.qa_action_id;
-        else if (step === 'deploy' && pipeline.stage === 'deploy') actionId = pipeline.deploy_action_id;
+    // (several stages can run at once, so check the step's own status too)
+    const stageRunning = !!(pipeline && pipeline.stages && pipeline.stages[step]
+                            && pipeline.stages[step].status === 'running');
+    if (pipeline && (stageRunning || (pipeline.status === 'running' && pipeline.stage === step))) {
+        const actionId = pipeline[`${step}_action_id`] || null;
 
         if (actionId) {
             const label = step === 'qa' ? 'QA' : (step.charAt(0).toUpperCase() + step.slice(1));
