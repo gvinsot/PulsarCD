@@ -1092,9 +1092,19 @@
                         </div>
                         <div class="modal-body">
                             <p id="stack-env-help" class="env-help-text">Edit the environment variables for this stack. Each line should be in KEY=VALUE format.</p>
+                            <!-- Backed-up versions of the file shown (encrypted backup). -->
+                            <div id="stack-env-history" class="env-history start-hidden" aria-live="polite"></div>
                             <textarea id="stack-env-content" class="env-editor" placeholder="# Environment variables&#10;KEY=value&#10;ANOTHER_KEY=another_value" spellcheck="false"></textarea>
                         </div>
                         <div class="modal-footer">
+                            <button class="btn btn-secondary env-history-btn" id="stack-env-history-btn" data-click="toggleStackEnvHistory" aria-controls="stack-env-history" aria-expanded="false">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                                    <path d="M3 12a9 9 0 1 0 3-6.7L3 8"/>
+                                    <polyline points="3 3 3 8 8 8"/>
+                                    <polyline points="12 7 12 12 15 14"/>
+                                </svg>
+                                History
+                            </button>
                             <button class="btn btn-secondary" data-click="closeStackEnvModal">Cancel</button>
                             <button class="btn btn-primary" id="stack-env-save" data-click="saveStackEnv">
                                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">

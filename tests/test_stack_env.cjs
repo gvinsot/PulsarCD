@@ -6,23 +6,32 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../frontend/static/js/views/stack-env.js'), 'utf8');
 
+function fakeElement() {
+    const classes = new Set();
+    return {
+        textContent: '', title: '', value: '', style: {}, disabled: false, attributes: {},
+        children: [],
+        classList: {
+            add(name) { classes.add(name); },
+            remove(name) { classes.delete(name); },
+            contains(name) { return classes.has(name); },
+        },
+        focus() {},
+        setAttribute(name, value) { this.attributes[name] = String(value); },
+        append(...nodes) { this.children.push(...nodes); },
+        replaceChildren(...nodes) { this.children = nodes; },
+    };
+}
+
 function editor(apiGetOrError, apiPut = async () => ({ success: true })) {
     const elements = new Map();
     const notifications = [];
     const get = id => {
-        const classes = new Set();
-        if (!elements.has(id)) elements.set(id, {
-            textContent: '', title: '', value: '', style: {}, disabled: false,
-            classList: {
-                add(name) { classes.add(name); },
-                remove(name) { classes.delete(name); },
-                contains(name) { return classes.has(name); },
-            }, focus() {},
-        });
+        if (!elements.has(id)) elements.set(id, fakeElement());
         return elements.get(id);
     };
     const context = vm.createContext({
-        document: { getElementById: get, querySelectorAll: () => [] },
+        document: { getElementById: get, querySelectorAll: () => [], createElement: fakeElement },
         isAdmin: () => true, apiGetOrError,
         apiPut, showNotification(type, message) { notifications.push({ type, message }); },
     });
@@ -141,6 +150,73 @@ test('replication result keeps the other tab unsaved and the modal open', async 
     assert.equal(e.get('stack-env-modal').classList.contains('active'), true);
     await e.context.switchStackEnvTab('prod');
     assert.equal(e.get('stack-env-content').value, 'UNSAVED=1');
+});
+
+const VERSIONS = [
+    { id: 'v3', created_at: '2026-10-20T10:00:00+00:00', source: 'editor', actor: 'gildas', state: 'applied' },
+    { id: 'v2', created_at: '2026-10-19T10:00:00+00:00', source: 'before-edit', actor: 'gildas', state: 'observed' },
+    { id: 'v1', created_at: '2026-10-18T10:00:00+00:00', source: 'scan', actor: 'system', state: 'observed' },
+];
+
+function withHistory(versions = VERSIONS) {
+    const calls = [];
+    const e = editor(async url => {
+        calls.push(url);
+        if (url.includes('/history')) return { data: { versions } };
+        if (url.includes('/versions/')) return { data: { content: `RESTORED=${url.split('/versions/')[1].split('?')[0]}\n` } };
+        return { data: { content: 'CURRENT=1\n', storage: { node: 'server-b', exists: true } } };
+    });
+    return { ...e, calls, panel: () => e.get('stack-env-history') };
+}
+
+test('history lists the backed-up versions of the file shown, as text', async () => {
+    const e = withHistory();
+    await e.context.editStackEnv('repo', true);
+    await e.context.toggleStackEnvHistory();
+    assert.equal(e.panel().style.display, '');
+    assert.ok(e.calls.includes('/admin/recovery/env/repo/history?env=prod'));
+    const rows = e.panel().children;
+    assert.equal(rows.length, 3);
+    const meta = rows.map(r => r.children[1].textContent);
+    assert.equal(meta[0], 'Saved from the editor · gildas · latest');
+    assert.equal(meta[1], 'Content before an edit · gildas');
+    assert.equal(meta[2], 'Changed on the build host · system');
+    assert.equal(rows[1].children[2].attributes['data-click'], 'loadStackEnvVersion');
+    assert.equal(rows[1].children[2].attributes['data-args'], '["v2"]');
+
+    // The panel follows the tab.
+    await e.context.switchStackEnvTab('qa');
+    assert.ok(e.calls.includes('/admin/recovery/env/repo/history?env=qa'));
+    await e.context.toggleStackEnvHistory();
+    assert.equal(e.panel().style.display, 'none');
+});
+
+test('loading a version puts it in the editor unsaved; Save restores it', async () => {
+    const writes = [];
+    const e = withHistory();
+    e.context.apiPut = async (url, body) => { writes.push(body.content); return { success: true }; };
+    await e.context.editStackEnv('repo');
+    await e.context.toggleStackEnvHistory();
+    await e.context.loadStackEnvVersion('v2');
+    assert.equal(e.get('stack-env-content').value, 'RESTORED=v2\n');
+    assert.match(e.notifications.at(-1).message, /Save to restore it as \.env/);
+    await e.context.saveStackEnv();
+    assert.deepEqual(writes, ['RESTORED=v2\n']);
+});
+
+test('history explains an empty or unavailable backup', async () => {
+    const empty = withHistory([]);
+    await empty.context.editStackEnv('repo');
+    await empty.context.toggleStackEnvHistory();
+    assert.match(empty.panel().children[0].textContent, /No backup of \.env yet/);
+
+    const disabled = editor(async url => url.includes('/history')
+        ? { error: 'Encrypted backup is disabled' }
+        : { data: { content: '', storage: { node: 'server-b', exists: true } } });
+    await disabled.context.editStackEnv('repo');
+    await disabled.context.toggleStackEnvHistory();
+    assert.equal(disabled.get('stack-env-history').children[0].textContent,
+        'History unavailable: Encrypted backup is disabled');
 });
 
 test('partial replication failure preserves the editor and allows the same content to be retried', async () => {

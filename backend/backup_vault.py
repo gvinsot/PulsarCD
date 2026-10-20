@@ -23,6 +23,14 @@ class BackupError(Exception):
     pass
 
 
+def _env_history_limit():
+    """Versions kept per .env file; older ones are deleted on each new backup."""
+    try:
+        return max(1, int(os.environ.get("PULSARCD_BACKUP__ENV_HISTORY", "10")))
+    except ValueError:
+        return 10
+
+
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
@@ -121,6 +129,16 @@ class Vault:
                 VALUES (%s,%s,%s,%s,%s::jsonb,%s,%s,%s)""",
                 (meta["id"], self.scope, kind, resource, canonical(meta).decode(),
                  nonce, ciphertext, state))
+            if kind == "env":
+                # Keep the last N versions of each .env file, under the same
+                # resource lock as the insert. The newest row — this one, even
+                # still pending — always survives.
+                conn.execute("""DELETE FROM recovery_versions
+                    WHERE scope=%s AND kind='env' AND resource=%s AND sequence NOT IN (
+                        SELECT sequence FROM recovery_versions
+                        WHERE scope=%s AND kind='env' AND resource=%s
+                        ORDER BY sequence DESC LIMIT %s)""",
+                    (self.scope, resource, self.scope, resource, _env_history_limit()))
         return meta["id"]
 
     def mark_applied(self, revision):
@@ -145,10 +163,11 @@ class Vault:
         return self.decrypt(row)
 
     def history(self, kind, resource):
+        limit = _env_history_limit() if kind == "env" else 100
         with self.connect() as conn:
             rows = conn.execute("""SELECT metadata, state FROM recovery_versions
                 WHERE scope=%s AND kind=%s AND resource=%s
-                ORDER BY sequence DESC LIMIT 100""", (self.scope, kind, resource)).fetchall()
+                ORDER BY sequence DESC LIMIT %s""", (self.scope, kind, resource, limit)).fetchall()
         return [dict(row["metadata"], state=row["state"]) for row in rows]
 
     def resources(self):

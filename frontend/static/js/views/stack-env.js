@@ -136,6 +136,8 @@ async function switchStackEnvTab(env) {
 
     const file = state.files[env];
     renderStackEnvStorage(file);
+    // The history panel follows the tab: it lists the file now shown.
+    if (state.historyOpen) renderStackEnvHistory();
     if (file.error) {
         textarea.value = `# Could not read the ${STACK_ENV_FILES[env].name} file:\n# ${file.error}\n`;
         textarea.disabled = true;
@@ -175,6 +177,7 @@ async function saveStackEnv() {
             const unsaved = Object.entries(state.files).find(
                 ([name, f]) => name !== env && !f.error && f.content !== f.saved);
             if (unsaved) {
+                if (state.historyOpen && state.active === env) renderStackEnvHistory();
                 showNotification('warning', `${savedMessage} `
                     + `${STACK_ENV_FILES[unsaved[0]].name} still has unsaved changes.`);
             } else {
@@ -201,5 +204,103 @@ async function saveStackEnv() {
 
 function closeStackEnvModal() {
     stackEnvState = null;
+    document.getElementById('stack-env-history').style.display = 'none';
     document.getElementById('stack-env-modal').classList.remove('active');
+}
+
+// ── History: the versions the encrypted backup keeps of each file ──────────
+// (the last 10 by default, PULSARCD_BACKUP__ENV_HISTORY). Loading one puts it
+// in the editor as an unsaved edit: Save restores it, through the same path —
+// and the same backup — as any other save.
+
+const STACK_ENV_SOURCES = {
+    editor: 'Saved from the editor',
+    'before-edit': 'Content before an edit',
+    scan: 'Changed on the build host',
+};
+
+function _stackEnvNote(text) {
+    const p = document.createElement('p');
+    p.className = 'env-history-note';
+    p.textContent = text;
+    return p;
+}
+
+function _stackEnvHistoryRow(version, isCurrent) {
+    const row = document.createElement('div');
+    row.className = 'env-history-row';
+    const when = document.createElement('span');
+    when.className = 'env-history-when';
+    const date = new Date(version.created_at);
+    when.textContent = Number.isNaN(date.getTime()) ? version.created_at : date.toLocaleString();
+    const meta = document.createElement('span');
+    meta.className = 'env-history-meta';
+    meta.textContent = [
+        STACK_ENV_SOURCES[version.source] || version.source,
+        version.actor,
+        version.state === 'pending' ? 'not applied (save failed)' : null,
+        isCurrent ? 'latest' : null,
+    ].filter(Boolean).join(' · ');
+    const load = document.createElement('button');
+    load.className = 'btn btn-secondary btn-sm';
+    load.textContent = 'Load';
+    load.title = 'Put this version in the editor; Save restores it';
+    load.setAttribute('data-click', 'loadStackEnvVersion');
+    load.setAttribute('data-args', JSON.stringify([version.id]));
+    row.append(when, meta, load);
+    return row;
+}
+
+async function renderStackEnvHistory() {
+    const state = stackEnvState;
+    const panel = document.getElementById('stack-env-history');
+    document.getElementById('stack-env-history-btn').setAttribute(
+        'aria-expanded', String(!!state?.historyOpen));
+    if (!state?.historyOpen) {
+        panel.style.display = 'none';
+        return;
+    }
+    panel.style.display = '';
+    const env = state.active;
+    panel.replaceChildren(_stackEnvNote('Loading history…'));
+    const { data, error } = await apiGetOrError(
+        `/admin/recovery/env/${encodeURIComponent(state.repo)}/history?env=${env}`);
+    // Closed, reopened or switched to the other file while this loaded.
+    if (stackEnvState !== state || state.active !== env || !state.historyOpen) return;
+    if (error) {
+        panel.replaceChildren(_stackEnvNote(`History unavailable: ${error}`));
+        return;
+    }
+    const versions = data.versions || [];
+    if (!versions.length) {
+        panel.replaceChildren(_stackEnvNote(
+            `No backup of ${STACK_ENV_FILES[env].name} yet: one is recorded at each save.`));
+        return;
+    }
+    const latest = versions.find(v => v.state !== 'pending');
+    panel.replaceChildren(...versions.map(v => _stackEnvHistoryRow(v, v === latest)));
+}
+
+async function toggleStackEnvHistory() {
+    const state = stackEnvState;
+    if (!state) return;
+    state.historyOpen = !state.historyOpen;
+    await renderStackEnvHistory();
+}
+
+async function loadStackEnvVersion(revision) {
+    const state = stackEnvState;
+    if (!state || !state.files[state.active] || state.files[state.active].error) return;
+    const env = state.active;
+    const { data, error } = await apiGetOrError(
+        `/admin/recovery/env/${encodeURIComponent(state.repo)}/versions/${encodeURIComponent(revision)}?env=${env}`);
+    if (stackEnvState !== state || state.active !== env) return;
+    if (error) {
+        showNotification('error', `Could not load this version: ${error}`);
+        return;
+    }
+    const textarea = document.getElementById('stack-env-content');
+    textarea.value = state.files[env].content = data.content;
+    textarea.focus();
+    showNotification('success', `Version loaded in the editor. Save to restore it as ${STACK_ENV_FILES[env].name}.`);
 }

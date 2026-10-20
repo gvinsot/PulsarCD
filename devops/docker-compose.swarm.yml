@@ -118,6 +118,8 @@ services:
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
       - PULSARCD_BACKUP__SCOPE=${PULSARCD_BACKUP__SCOPE:-production}
       - PULSARCD_BACKUP__INTERVAL_SECONDS=${PULSARCD_BACKUP__INTERVAL_SECONDS:-60}
+      # Versions kept per .env file; each new backup deletes the older ones.
+      - PULSARCD_BACKUP__ENV_HISTORY=${PULSARCD_BACKUP__ENV_HISTORY:-10}
       - PULSARCD_BACKUP__SSH_PATH=/root/.ssh
 
       # AI/vLLM configuration

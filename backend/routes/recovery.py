@@ -39,6 +39,29 @@ async def env_backup_history(repo_name: str, env: str = _ENV_QUERY):
         raise HTTPException(503, str(exc)) from None
 
 
+@router.get("/api/admin/recovery/env/{repo_name}/versions/{revision}")
+async def env_backup_version(repo_name: str, revision: str, env: str = _ENV_QUERY):
+    """Content of one backed-up version, for the editor's history panel.
+
+    Admin-only like everything under /api/admin/ — the same audience that
+    already reads the live .env through GET /api/stacks/{repo}/env.
+    """
+    from ..backup_vault import get_vault, BackupError
+    from ..github_service import _validate_repo_name
+    from ..recovery import env_resource
+    try:
+        _validate_repo_name(repo_name)
+        vault = await asyncio.to_thread(get_vault)
+        if vault is None:
+            raise HTTPException(503, "Encrypted backup is disabled")
+        content = await asyncio.to_thread(vault.read, "env", env_resource(repo_name, env), revision)
+        return {"revision": revision, "content": content.decode("utf-8")}
+    except (ValueError, UnicodeError):
+        raise HTTPException(400, "Invalid repository or environment content") from None
+    except BackupError as exc:
+        raise HTTPException(503, str(exc)) from None
+
+
 @router.post("/api/admin/recovery/env/{repo_name}/restore/{revision}")
 async def restore_env_backup(repo_name: str, revision: str, request: Request,
                              env: str = _ENV_QUERY):

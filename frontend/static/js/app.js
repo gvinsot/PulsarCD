@@ -60,7 +60,8 @@ const UI_HANDLERS = Object.freeze({
     closeStackOutputModal, closeTestModal, containerAction, createUser, deleteRecentQuery,
     deleteUser, editStackEnv, executeGeneratedQuery, exportLogs, filterContainerEnv,
     filterContainerLogs, filterContainers, filterServiceLogs, hostAction, loadAgentHistory,
-    loadContainerMetrics, loadSecurity, loadUsage, logout, nextPage, onPipelineBranchChange,
+    loadContainerMetrics, loadSecurity, loadStackEnvVersion, loadUsage, logout, nextPage,
+    onPipelineBranchChange,
     openActionLogs, openAgentModal, openContainer,
     openCreateTaskModal, openSecurityIp, openServiceDeploy, openServiceLogs, openServiceStatus,
     openTransitionConfig, pipelineStepClick, prevPage, quickAction, reconnectTerminal,
@@ -75,7 +76,7 @@ const UI_HANDLERS = Object.freeze({
     submitTest, switchAgentTab, switchSettingsTab, switchStackEnvTab, testLLMConnection, testMCPServer,
     toggleBuildSource, toggleDeploySource, toggleMobileMenu, togglePasswordLogin,
     toggleServiceDeploySource, toggleServiceLogsAutoRefresh, toggleServiceStatusAutoRefresh,
-    toggleStackExpand, toggleStackSubSection, toggleTaskPreview, toggleTestSource,
+    toggleStackEnvHistory, toggleStackExpand, toggleStackSubSection, toggleTaskPreview, toggleTestSource,
     toggleUserMenu, updateTaskPreview, useRecentQuery,
 
     // Handlers that use the element, or make more than one call

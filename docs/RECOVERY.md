@@ -46,6 +46,7 @@ DATABASE_CONNECTION_STRING=<connexion PostgreSQL existante>
 ENCRYPTION_KEY=<clé existante, sans en générer une nouvelle>
 PULSARCD_BACKUP__SCOPE=production
 PULSARCD_BACKUP__INTERVAL_SECONDS=60
+PULSARCD_BACKUP__ENV_HISTORY=10
 ```
 
 Les deux valeurs sensibles sont converties en secrets Docker par le processus
@@ -113,8 +114,11 @@ provoque un échec d'authentification des versions existantes et bloque le relev
 Le relevé constate l'état au moment du passage : il ne garantit pas de capturer
 chaque version intermédiaire d'une modification SSH. Une garantie à chaque
 écriture demande de passer par PulsarCD. Une disparition du fichier ne supprime
-jamais ses sauvegardes. L'historique n'a pas de purge automatique dans cette
-première version. Les fichiers sont limités à 4 MiB chacun.
+jamais ses sauvegardes. Chaque fichier `.env` / `.env.qa` garde ses **10 dernières
+versions** (`PULSARCD_BACKUP__ENV_HISTORY`) : chaque nouvelle sauvegarde supprime
+les plus anciennes de ce fichier, sous le même verrou que l'insertion. La plus
+récente, même encore `pending`, est toujours conservée. Les sauvegardes SSH n'ont
+pas de purge automatique. Les fichiers sont limités à 4 MiB chacun.
 
 Les écritures et relevés `.env` sont sérialisés dans l'unique backend actuel.
 Ne pas augmenter son nombre de réplicas avant de mettre en place un verrou de
@@ -129,12 +133,18 @@ secret dans les listes :
 | Route | Fonction |
 |---|---|
 | `GET /api/admin/recovery/status` | Dernier relevé réussi, erreur éventuelle et nombre de fichiers |
-| `GET /api/admin/recovery/env/{repo}/history` | Les 100 dernières versions de `devops/.env` (`?env=qa` : `devops/.env.qa`) |
+| `GET /api/admin/recovery/env/{repo}/history` | Les versions conservées de `devops/.env` (`?env=qa` : `devops/.env.qa`), sans contenu |
+| `GET /api/admin/recovery/env/{repo}/versions/{revision}` | Le contenu d'une version, pour l'historique de l'éditeur (`?env=qa` pour `devops/.env.qa`) |
 | `POST /api/admin/recovery/env/{repo}/restore/{revision}` | Restaure une version, en sauvegardant l'état actuel avant écriture (`?env=qa` pour `devops/.env.qa`) |
 
 Une restauration ne redéploie pas automatiquement la stack. Les fichiers SSH
 se restaurent uniquement via l'outil autonome ci-dessous, dans un nouveau dossier.
-Il n'y a pas de bouton d'historique dans l'interface web dans cette version.
+
+Dans l'interface web, le bouton **History** de la modale d'édition d'un `.env`
+liste les versions conservées du fichier affiché (date, origine, auteur). **Load**
+place une version dans l'éditeur comme une modification non enregistrée ;
+**Save** la restaure, par le même chemin — et avec la même sauvegarde — qu'une
+édition ordinaire. Sans sauvegarde chiffrée activée, le panneau l'indique.
 
 ## Restauration sans PulsarCD
 

@@ -65,6 +65,34 @@ def test_ciphertext_only_dedup_history_and_rollback(vault):
     assert len(bytes(row["nonce"])) == 12
 
 
+def test_env_history_keeps_the_last_ten_versions_per_file(vault, monkeypatch):
+    monkeypatch.delenv("PULSARCD_BACKUP__ENV_HISTORY", raising=False)
+    resource, other = "sample/devops/.env", "sample/devops/.env.qa"
+    vault.save("env", other, b"QA=1\n", source="scan")
+    ids = [vault.save("env", resource, f"V={i}\n".encode(), source="editor") for i in range(13)]
+    versions = vault.history("env", resource)
+    assert [v["id"] for v in versions] == ids[::-1][:10]
+    with vault.connect() as conn:
+        count = conn.execute("""SELECT count(*) AS n FROM recovery_versions
+            WHERE scope=%s AND resource=%s""", (vault.scope, resource)).fetchone()["n"]
+    assert count == 10, "older versions are deleted, not just hidden"
+    assert vault.read("env", resource, ids[3]) == b"V=3\n"
+    with pytest.raises(BackupError):
+        vault.read("env", resource, ids[2])
+    # Another file and the SSH backups keep their own history.
+    assert len(vault.history("env", other)) == 1
+    for i in range(12):
+        vault.save("ssh", "id_ed25519", f"key-{i}".encode(), source="scan")
+    assert len(vault.history("ssh", "id_ed25519")) == 12
+
+
+def test_env_history_limit_is_configurable(vault, monkeypatch):
+    monkeypatch.setenv("PULSARCD_BACKUP__ENV_HISTORY", "3")
+    for i in range(5):
+        vault.save("env", "sample/devops/.env", f"V={i}\n".encode(), source="editor")
+    assert len(vault.history("env", "sample/devops/.env")) == 3
+
+
 def test_tamper_wrong_key_and_cross_resource_rejected(vault):
     revision = vault.save("ssh", "id_ed25519", b"private-key", source="scan")
     with vault.connect() as conn:
@@ -226,6 +254,22 @@ def test_viewer_cannot_access_recovery_metadata(client):
     assert client.get("/api/admin/recovery/status", headers=headers).status_code == 403
     assert client.get("/api/admin/recovery/env/repo/history", headers=headers).status_code == 403
     assert client.post("/api/admin/recovery/env/repo/restore/id", headers=headers).status_code == 403
+    assert client.get("/api/admin/recovery/env/repo/versions/id", headers=headers).status_code == 403
+
+
+def test_admin_reads_one_backed_up_version(vault, client, auth_headers, monkeypatch):
+    from backend import backup_vault
+    monkeypatch.setattr(backup_vault, "get_vault", lambda: vault)
+    revision = vault.save("env", "repo/devops/.env.qa", b"QA_TOKEN=old\n", source="editor")
+    response = client.get(f"/api/admin/recovery/env/repo/versions/{revision}?env=qa",
+                          headers=auth_headers)
+    assert response.status_code == 200, response.text
+    assert response.json() == {"revision": revision, "content": "QA_TOKEN=old\n"}
+    # A revision is only read under the file it belongs to.
+    wrong_file = client.get(f"/api/admin/recovery/env/repo/versions/{revision}?env=prod",
+                            headers=auth_headers)
+    assert wrong_file.status_code == 503
+    assert "QA_TOKEN" not in wrong_file.text
 
 
 def test_admin_history_and_restore(vault, client, auth_headers, monkeypatch, tmp_path):
