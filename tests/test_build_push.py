@@ -23,13 +23,15 @@ BASH = str(GIT_BASH) if GIT_BASH.exists() else shutil.which("bash")
 @unittest.skipUnless(BASH, "Bash is required")
 class BuildPushTests(unittest.TestCase):
     def run_build(self, *, existing="", failure="", platforms="", no_cache=False, tag_status=2,
-                  registry=None, version="1.2.3", extra_env=None, secrets_copy=None):
+                  registry=None, version="1.2.3", extra_env=None, secrets_copy=None, build_env=None):
         self.assertTrue(SCRIPT.is_file(), f"Build script missing from test environment: {SCRIPT}")
         with tempfile.TemporaryDirectory(prefix="build push ") as directory:
             root = Path(directory)
             repo = root / "repo"
             (repo / ".git").mkdir(parents=True)
             (repo / "devops").mkdir()
+            if build_env is not None:
+                (repo / "devops" / ".env.build").write_bytes(build_env.encode())
             (repo / "devops" / "docker-compose.swarm.yml").write_text('''services:
   stt-server:
     image: ${REGISTRY}/speech:rocm
@@ -155,6 +157,42 @@ exit 0
             self.assertEqual(override["services"]["web"]["build"]["secrets"], ["keystore", "keystore_env"])
             self.assertEqual((copy / "keystore").read_bytes(), keystore)
             self.assertEqual((copy / "keystore_env").read_text(), "KEY_ALIAS=release")
+
+    def test_env_build_file_becomes_build_secrets_without_being_sourced(self):
+        keystore = bytes(range(256))
+        build_env = (
+            "# build secrets\n"
+            "NPM_TOKEN=npm-secret-value\n"
+            f"export KEYSTORE_B64=\"{base64.b64encode(keystore).decode()}\"\n"
+            "EMPTY=\n"
+        )
+        with tempfile.TemporaryDirectory() as copy_root:
+            copy = Path(copy_root) / "secrets"
+            result, calls = self.run_build(
+                build_env=build_env,
+                extra_env={"BUILD_SECRET_LEGACY": "from-dotenv"},
+                secrets_copy=copy.as_posix(),
+            )
+            output = result.stdout + result.stderr
+            self.assertEqual(result.returncode, 0, output)
+            self.assertIn("Build secrets: build_env,keystore,legacy,npm_token", result.stdout)
+            self.assertNotIn("npm-secret-value", output)
+            override = yaml.safe_load((copy / "compose.build-secrets.yml").read_text())
+            self.assertEqual(override["services"]["web"]["build"]["secrets"],
+                             ["build_env", "keystore", "legacy", "npm_token"])
+            self.assertEqual((copy / "npm_token").read_text(), "npm-secret-value")
+            self.assertEqual((copy / "keystore").read_bytes(), keystore)
+            self.assertEqual((copy / "legacy").read_text(), "from-dotenv")
+            self.assertEqual((copy / "build_env").read_text(), build_env)
+            self.assertFalse((copy / "empty").exists())
+
+    def test_invalid_env_build_line_fails_the_build_without_echoing_it(self):
+        result, calls = self.run_build(build_env="NPM_TOKEN=ok\nnot an assignment secret-value\n")
+        output = result.stdout + result.stderr
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(".env.build line 2", output)
+        self.assertNotIn("secret-value", output)
+        self.assertFalse([c for c in calls if c[0] == "compose"])
 
     def test_no_build_secret_keeps_the_single_compose_file(self):
         result, calls = self.run_build()

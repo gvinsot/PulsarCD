@@ -19,7 +19,7 @@ Choosing a host for a build or a test:
 
 The primary stays the single source of truth for ``.env`` files. Editor/MCP
 saves replicate the edited file to every configured secondary. Before a
-build or test, the repo's ``.env`` / ``.env.qa`` files are also copied from
+build or test, the repo's ``.env`` / ``.env.qa`` / ``.env.build`` files are also copied from
 the primary (``sync_repo_envs``), catching up after failed replication or
 manual edits. Host selection state is in memory: a restart only costs a
 build without cache.

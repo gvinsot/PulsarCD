@@ -1289,13 +1289,16 @@ class StackDeployer:
                 await self._run_command(f"mv {q_backup_path} {q_repo_path}")
                 return False, f"Failed to clone repository: {output}"
 
-            # 3. Copy config files from backup (devops/.env, devops/.env.qa, .env)
+            # 3. Copy config files from backup (devops/.env, devops/.env.qa,
+            #    devops/.env.build, .env)
             q_backup_devops_env = _shell_quote_path(f"{backup_path}/devops/.env")
             q_backup_devops_env_qa = _shell_quote_path(f"{backup_path}/devops/.env.qa")
+            q_backup_devops_env_build = _shell_quote_path(f"{backup_path}/devops/.env.build")
             q_backup_env = _shell_quote_path(f"{backup_path}/.env")
             q_repo_devops = _shell_quote_path(f"{repo_path}/devops")
             q_repo_devops_env = _shell_quote_path(f"{repo_path}/devops/.env")
             q_repo_devops_env_qa = _shell_quote_path(f"{repo_path}/devops/.env.qa")
+            q_repo_devops_env_build = _shell_quote_path(f"{repo_path}/devops/.env.build")
             q_repo_env = _shell_quote_path(f"{repo_path}/.env")
             restore_cmd = f"""
                 if [ -f {q_backup_devops_env} ]; then
@@ -1303,6 +1306,9 @@ class StackDeployer:
                 fi
                 if [ -f {q_backup_devops_env_qa} ]; then
                     mkdir -p {q_repo_devops} && cp {q_backup_devops_env_qa} {q_repo_devops_env_qa}
+                fi
+                if [ -f {q_backup_devops_env_build} ]; then
+                    mkdir -p {q_repo_devops} && cp {q_backup_devops_env_build} {q_repo_devops_env_build}
                 fi
                 if [ -f {q_backup_env} ]; then
                     cp {q_backup_env} {q_repo_env}
@@ -1749,7 +1755,8 @@ class StackDeployer:
 
         Args:
             repo_name: Name of the repository
-            env: "prod" for devops/.env, "qa" for the devops/.env.qa overrides
+            env: "prod" for devops/.env, "qa" for the devops/.env.qa overrides,
+                "build" for the devops/.env.build build secrets
 
         Returns:
             Tuple of (success, content_or_error)
@@ -1798,7 +1805,8 @@ class StackDeployer:
         Args:
             repo_name: Name of the repository
             content: The content to write to the .env file
-            env: "prod" for devops/.env, "qa" for the devops/.env.qa overrides
+            env: "prod" for devops/.env, "qa" for the devops/.env.qa overrides,
+                "build" for the devops/.env.build build secrets
 
         Returns:
             Tuple of (success, message)
@@ -1815,7 +1823,7 @@ class StackDeployer:
         from .backup_vault import BackupError
         from .build_hosts import env_replica_targets
         if env not in ENV_FILES:
-            return False, "Unknown environment: expected 'prod' or 'qa'"
+            return False, "Unknown environment: expected 'prod', 'qa' or 'build'"
         try:
             revision = await save_env(self, repo_name, content.encode("utf-8"), actor=actor, env=env)
             message = ("File saved and encrypted backup recorded" if revision

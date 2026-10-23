@@ -45,6 +45,7 @@ logs/
 config.local.yaml
 .env
 .env.qa
+.env.build
 .env.local
 
 # SSH keys (safety)

@@ -213,16 +213,23 @@ secrets:
 
 Pour un secret nécessaire **pendant le build** de l’image (clé de signature d’une application mobile, token d’un registre privé…), sans qu’il finisse dans une couche de l’image ni dans un secret Docker au déploiement :
 
-- dans `devops/.env`, `BUILD_SECRET_<ID>=valeur` (texte) ou `BUILD_SECRET_<ID>_B64=...` (contenu **encodé en base64** : fichier binaire comme un keystore `.jks`, ou texte sur plusieurs lignes, car une valeur `.env` tient sur une ligne) ;
+- dans `devops/.env.build` (éditeur web : onglet **Build** de la modale `.env` ; MCP : `set_stack_env(..., env="build")`), `<ID>=valeur` (texte) ou `<ID>_B64=...` (contenu **encodé en base64** : fichier binaire comme un keystore `.jks`, ou texte sur plusieurs lignes, car une valeur `.env` tient sur une ligne) ;
 - dans le Dockerfile, `RUN --mount=type=secret,id=<id>` puis lire `/run/secrets/<id>` (`<id>` = `<ID>` en minuscules).
+
+Le fichier `.env.build` entier est aussi le secret `build_env`, à monter comme un `.env` là où l’outil de build en lit un : `RUN --mount=type=secret,id=build_env,target=/app/.env npm run build`. Il est **lu, jamais sourcé** : ses valeurs ne deviennent pas des variables d’environnement du build ni de l’interpolation compose. Les valeurs sont prises telles quelles (une paire de guillemets englobants est retirée, pas d’expansion `$VAR` ni de commentaire en fin de ligne) ; une valeur vide ne définit pas de secret, une ligne qui n’est pas `CLE=valeur` fait échouer le build (seul son numéro est affiché).
+
+L’ancienne forme reste acceptée : dans `devops/.env`, `BUILD_SECRET_<ID>=valeur` ou `BUILD_SECRET_<ID>_B64=...` donnent le secret `<id>`. Un même identifiant défini deux fois fait échouer le build.
 
 Au build, PulsarCD écrit chaque secret dans un fichier temporaire (mode 600, supprimé en fin de build) et ajoute un override compose **utilisé pour le build seulement** qui déclare ces secrets pour tous les services ayant une section `build:` (`docker compose build` comme `docker buildx bake`). Rien de tout cela n’est déployé, et seuls les identifiants apparaissent dans les logs.
 
-```bash
-# Exemple : keystore Android et ses mots de passe
-BUILD_SECRET_KEYSTORE_B64=$(base64 -w0 release.jks)
-BUILD_SECRET_KEYSTORE_ENV_B64=$(printf 'KEYSTORE_PASSWORD=...\nKEY_ALIAS=...\nKEY_PASSWORD=...\n' | base64 -w0)
+```dotenv
+# devops/.env.build — exemple : token npm, keystore Android et ses mots de passe
+NPM_TOKEN=npm_xxx
+KEYSTORE_B64=<sortie de: base64 -w0 release.jks>
+KEYSTORE_ENV_B64=<sortie de: printf 'KEYSTORE_PASSWORD=...\nKEY_ALIAS=...\n' | base64 -w0>
 ```
+
+Comme `.env`, `.env.build` ne doit **jamais** être committé (ajoutez-le au `.gitignore`) ni copié dans l’image : excluez-le aussi du contexte de build (`.dockerignore`), sinon un `COPY . .` l’embarquerait dans une couche. Il est sauvegardé/restauré autour des opérations git, versionné chiffré et répliqué sur les serveurs de build comme `.env`.
 
 
 ## Environnement QA (`.env.qa`)

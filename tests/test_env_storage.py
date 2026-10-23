@@ -10,7 +10,7 @@ from backend.config import GitHubConfig
 from backend.github_service import StackDeployer
 
 
-@pytest.mark.parametrize("env,filename", [("prod", ".env"), ("qa", ".env.qa")])
+@pytest.mark.parametrize("env,filename", [("prod", ".env"), ("qa", ".env.qa"), ("build", ".env.build")])
 @pytest.mark.parametrize("exists", [True, False])
 def test_editor_reports_selected_file_storage(client, auth_headers, monkeypatch, tmp_path,
                                               env, filename, exists):

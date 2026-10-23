@@ -321,13 +321,14 @@ async def get_commit_diff(owner: str, repo: str, sha: str):
 
 
 # env=prod is devops/.env; env=qa is devops/.env.qa, whose variables override
-# devops/.env for the QA deployment only.
-_ENV_QUERY = Query("prod", pattern="^(prod|qa)$")
+# devops/.env for the QA deployment only; env=build is devops/.env.build, the
+# build secrets (BuildKit secrets of the image build, never deployed).
+_ENV_QUERY = Query("prod", pattern="^(prod|qa|build)$")
 
 
 @router.get("/api/stacks/{repo_name}/env")
 async def get_stack_env(repo_name: str, env: str = _ENV_QUERY):
-    """Get the .env (or .env.qa) file content for a stack."""
+    """Get the .env (or .env.qa, .env.build) file content for a stack."""
     if not api.github_service.is_configured():
         raise HTTPException(status_code=400, detail="GitHub integration not configured")
 
@@ -342,7 +343,7 @@ async def get_stack_env(repo_name: str, env: str = _ENV_QUERY):
 
 @router.put("/api/stacks/{repo_name}/env")
 async def save_stack_env(repo_name: str, request: Request, env: str = _ENV_QUERY):
-    """Save the .env (or .env.qa) file content for a stack."""
+    """Save the .env (or .env.qa, .env.build) file content for a stack."""
     if not api.github_service.is_configured():
         raise HTTPException(status_code=400, detail="GitHub integration not configured")
 

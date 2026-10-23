@@ -1394,8 +1394,10 @@ async def cancel_action(action_id: str) -> str:
 # only legitimate uses are "does KEY exist" and "set KEY to this", which the
 # key listing and the patch below cover without a value ever coming back.
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-# prod is devops/.env; qa is devops/.env.qa, the QA-only overrides.
-_ENV_NAMES = ("prod", "qa")
+# prod is devops/.env; qa is devops/.env.qa, the QA-only overrides; build is
+# devops/.env.build, the build secrets.
+_ENV_NAMES = ("prod", "qa", "build")
+_ENV_NAMES_ERROR = "env must be 'prod', 'qa' or 'build'"
 
 
 def _split_env_line(line: str):
@@ -1466,7 +1468,9 @@ def _patch_env(content: str, updates: Dict[str, str], unset: List[str]):
         "option to reveal them -- read them in the web UI if you must.\n"
         "env: 'prod' (default) reads devops/.env; 'qa' reads devops/.env.qa, "
         "whose variables override devops/.env for the QA deployment only "
-        "(used verbatim, without the automatic qa. domain prefix).\n"
+        "(used verbatim, without the automatic qa. domain prefix); 'build' "
+        "reads devops/.env.build, the build secrets: each KEY becomes the "
+        "BuildKit secret <key> of the image build, never deployed.\n"
         "Change a variable with set_stack_env."
     )
 )
@@ -1476,7 +1480,7 @@ async def get_stack_env(repo_name: str, env: str = "prod") -> str:
     from .github_service import StackDeployer
 
     if env not in _ENV_NAMES:
-        return json.dumps({"error": "env must be 'prod' or 'qa'"})
+        return json.dumps({"error": _ENV_NAMES_ERROR})
     try:
         await _resolve_repo(repo_name)
     except ValueError as exc:
@@ -1519,7 +1523,11 @@ async def get_stack_env(repo_name: str, env: str = "prod") -> str:
         "devops/.env.qa, the QA-only overrides (created on first write). A key "
         "set there replaces the devops/.env value in the QA deployment and is "
         "used verbatim, without the automatic qa. domain prefix; an empty "
-        "value blanks the variable for QA."
+        "value blanks the variable for QA; 'build' patches devops/.env.build, "
+        "the build secrets (created on first write): each KEY is mounted in "
+        "the image build as the BuildKit secret <key> (lowercase, "
+        "RUN --mount=type=secret,id=<key>), a KEY_B64 value is decoded from "
+        "base64, and nothing of it is deployed."
     )
 )
 async def set_stack_env(
@@ -1554,7 +1562,7 @@ async def set_stack_env(
     if both:
         return json.dumps({"error": f"Keys in both updates and unset: {', '.join(both)}"})
     if env not in _ENV_NAMES:
-        return json.dumps({"error": "env must be 'prod' or 'qa'"})
+        return json.dumps({"error": _ENV_NAMES_ERROR})
 
     try:
         await _resolve_repo(repo_name)

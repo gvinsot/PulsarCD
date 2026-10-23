@@ -83,14 +83,15 @@ async def file_operation(deployer, operation, **kwargs):
         raise BackupError("Unable to access recovery files on the build host") from None
 
 
-# Stack env files: devops/.env, and devops/.env.qa whose variables override it
-# for the QA deployment only (see scripts/deploy-service.sh).
-ENV_FILES = {"prod": ".env", "qa": ".env.qa"}
+# Stack env files: devops/.env, devops/.env.qa whose variables override it
+# for the QA deployment only (see scripts/deploy-service.sh), and
+# devops/.env.build, the build secrets (see scripts/build_secrets.py).
+ENV_FILES = {"prod": ".env", "qa": ".env.qa", "build": ".env.build"}
 
 
 def env_resource(repo_name, env="prod"):
     if env not in ENV_FILES:
-        raise ValueError("Unknown environment: expected 'prod' or 'qa'")
+        raise ValueError("Unknown environment: expected 'prod', 'qa' or 'build'")
     return f"{repo_name}/devops/{ENV_FILES[env]}"
 
 

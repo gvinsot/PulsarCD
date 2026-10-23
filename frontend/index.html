@@ -1084,11 +1084,12 @@
                             </div>
                             <button class="modal-close" data-click="closeStackEnvModal">&times;</button>
                         </div>
-                        <!-- Shown when the stack's QA stage is enabled. Not .tab-btn: the
-                             container modal's tab handler drives every .tab-btn. -->
-                        <div id="stack-env-tabs" class="modal-tabs start-hidden">
+                        <!-- The .env.qa tab is shown when the stack's QA stage is enabled. Not
+                             .tab-btn: the container modal's tab handler drives every .tab-btn. -->
+                        <div id="stack-env-tabs" class="modal-tabs">
                             <button class="env-tab-btn active" data-env="prod" data-click="switchStackEnvTab" data-args='["prod"]'>.env</button>
-                            <button class="env-tab-btn" data-env="qa" data-click="switchStackEnvTab" data-args='["qa"]'>.env.qa (QA overrides)</button>
+                            <button id="stack-env-tab-qa" class="env-tab-btn start-hidden" data-env="qa" data-click="switchStackEnvTab" data-args='["qa"]'>.env.qa (QA overrides)</button>
+                            <button class="env-tab-btn" data-env="build" data-click="switchStackEnvTab" data-args='["build"]'>Build</button>
                         </div>
                         <div class="modal-body">
                             <p id="stack-env-help" class="env-help-text">Edit the environment variables for this stack. Each line should be in KEY=VALUE format.</p>

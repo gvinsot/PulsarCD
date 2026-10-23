@@ -96,14 +96,14 @@ backup_env_files() {
     local repo_path="$1"
     ENV_BACKUP_DIR=$(mktemp -d)
     
-    # Find and backup all .env files
+    # Find and backup all .env files (and the .env.build build secrets)
     while IFS= read -r -d '' env_file; do
         local rel_path="${env_file#$repo_path/}"
         local backup_path="$ENV_BACKUP_DIR/$rel_path"
         mkdir -p "$(dirname "$backup_path")"
         cp "$env_file" "$backup_path"
         log_info "Backed up: $rel_path"
-    done < <(find "$repo_path" -name ".env" -type f -print0 2>/dev/null)
+    done < <(find "$repo_path" \( -name ".env" -o -name ".env.build" \) -type f -print0 2>/dev/null)
 }
 
 # Restore .env files after git operations
@@ -117,7 +117,7 @@ restore_env_files() {
             mkdir -p "$(dirname "$target_path")"
             cp "$backup_file" "$target_path"
             log_info "Restored: $rel_path"
-        done < <(find "$ENV_BACKUP_DIR" -name ".env" -type f -print0 2>/dev/null)
+        done < <(find "$ENV_BACKUP_DIR" \( -name ".env" -o -name ".env.build" \) -type f -print0 2>/dev/null)
         
         # Cleanup backup directory
         rm -rf "$ENV_BACKUP_DIR"
@@ -472,18 +472,21 @@ export DOCKER_REGISTRY_URL="${DOCKER_REGISTRY_URL:-$REGISTRY}"
 log_info "REGISTRY_URL=$REGISTRY_URL"
 log_info "REPO_NAME=$REPO_NAME"
 
-# Build-time secrets (BuildKit): every BUILD_SECRET_<ID> (text) or
-# BUILD_SECRET_<ID>_B64 (base64, e.g. a keystore) of devops/.env becomes the
-# secret <id> of every service with a build section, through a compose
-# override used for this build only (never deployed). See build_secrets.py.
+# Build-time secrets (BuildKit): every KEY of devops/.env.build (the "Build"
+# tab of the .env editor; parsed, never sourced) and every BUILD_SECRET_<ID>
+# of devops/.env becomes a secret of every service with a build section,
+# through a compose override used for this build only (never deployed). The
+# whole .env.build is also the secret build_env. See build_secrets.py.
 COMPOSE_FILES=(-f "$COMPOSE_PATH")
-if env | grep -q '^BUILD_SECRET_'; then
+BUILD_ENV_FILE=""
+[ -f "$DEVOPS_PATH/.env.build" ] && BUILD_ENV_FILE="$DEVOPS_PATH/.env.build"
+if [ -n "$BUILD_ENV_FILE" ] || env | grep -q '^BUILD_SECRET_'; then
     BUILD_SECRETS_DIR=$(mktemp -d)
     chmod 700 "$BUILD_SECRETS_DIR"
     trap 'rm -rf "$BUILD_SECRETS_DIR"' EXIT
     BUILD_SECRETS_OVERRIDE="$BUILD_SECRETS_DIR/compose.build-secrets.yml"
-    if ! BUILD_SECRET_IDS=$(python3 "$SCRIPT_DIR/build_secrets.py" "$COMPOSE_PATH" "$BUILD_SECRETS_DIR" "$BUILD_SECRETS_OVERRIDE"); then
-        log_error "Invalid build secrets (BUILD_SECRET_* in devops/.env)"
+    if ! BUILD_SECRET_IDS=$(python3 "$SCRIPT_DIR/build_secrets.py" "$COMPOSE_PATH" "$BUILD_SECRETS_DIR" "$BUILD_SECRETS_OVERRIDE" ${BUILD_ENV_FILE:+"$BUILD_ENV_FILE"}); then
+        log_error "Invalid build secrets (devops/.env.build or BUILD_SECRET_* in devops/.env)"
         exit 1
     fi
     if [ -f "$BUILD_SECRETS_OVERRIDE" ]; then

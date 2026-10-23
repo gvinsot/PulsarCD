@@ -216,13 +216,25 @@ async def test_qa_overrides_file_is_edited_apart_from_the_env(deployer, tmp_path
     assert (await deployer.save_env_file("repo", "X=1", env="../.env"))[0] is False
 
 
+async def test_build_secrets_file_is_edited_apart_from_the_env(deployer, tmp_path):
+    env = tmp_path / "repo/devops/.env"
+    env.parent.mkdir(parents=True)
+    env.write_bytes(b"DB=prod\n")
+    ok, _ = await deployer.save_env_file("repo", "NPM_TOKEN=secret\n", env="build")
+    assert ok
+    assert (tmp_path / "repo/devops/.env.build").read_bytes() == b"NPM_TOKEN=secret\n"
+    assert env.read_bytes() == b"DB=prod\n"
+    assert await deployer.get_env_file("repo", env="build") == (True, "NPM_TOKEN=secret\n")
+
+
 def test_periodic_scan_lists_qa_overrides(tmp_path):
     (tmp_path / "repo/devops").mkdir(parents=True)
     (tmp_path / "repo/devops/.env").write_bytes(b"A=1\n")
     (tmp_path / "repo/devops/.env.qa").write_bytes(b"A=2\n")
+    (tmp_path / "repo/devops/.env.build").write_bytes(b"T=3\n")
     (tmp_path / "repo/devops/.env.example").write_bytes(b"A=\n")
     listed = recovery_files.handle(dict(root=str(tmp_path), operation="list"))
-    assert listed["files"] == ["repo/devops/.env", "repo/devops/.env.qa"]
+    assert listed["files"] == ["repo/devops/.env", "repo/devops/.env.build", "repo/devops/.env.qa"]
 
 
 def test_atomic_write_refuses_concurrent_edit(tmp_path):

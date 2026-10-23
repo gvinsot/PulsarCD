@@ -6,7 +6,7 @@ dans le backend. Cette fonctionnalité ne sauvegarde pas `/data`.
 
 ## Réplication sur les serveurs de build
 
-Chaque enregistrement de `devops/.env` ou `devops/.env.qa` via l'éditeur web
+Chaque enregistrement de `devops/.env`, `devops/.env.qa` ou `devops/.env.build` via l'éditeur web
 ou le MCP écrit d'abord le fichier sur l'hôte principal (`github.ssh_host`),
 puis réplique ce fichier sur tous les serveurs supplémentaires configurés dans
 `github.build_hosts`. L'adresse du principal est exclue et les adresses répétées
@@ -97,7 +97,7 @@ provoque un échec d'authentification des versions existantes et bloque le relev
   permissions `0600` sur Linux. Les contenus circulent sur stdin, jamais dans
   les arguments de commande. Les retours à la ligne sont préservés.
 - Dès le démarrage, puis toutes les 60 secondes par défaut, un relevé recherche
-  les fichiers nommés exactement `.env` ou `.env.qa` (surcharges QA) sous le répertoire configuré des dépôts,
+  les fichiers nommés exactement `.env`, `.env.qa` (surcharges QA) ou `.env.build` (secrets de build) sous le répertoire configuré des dépôts,
   y compris les fichiers à leur racine et dans `devops`. Les répertoires `.git`,
   `node_modules`, `.venv`, `venv` et `__pycache__` sont exclus. Les liens
   symboliques ne sont pas suivis. Une version `observed` est créée si le contenu
@@ -114,7 +114,7 @@ provoque un échec d'authentification des versions existantes et bloque le relev
 Le relevé constate l'état au moment du passage : il ne garantit pas de capturer
 chaque version intermédiaire d'une modification SSH. Une garantie à chaque
 écriture demande de passer par PulsarCD. Une disparition du fichier ne supprime
-jamais ses sauvegardes. Chaque fichier `.env` / `.env.qa` garde ses **10 dernières
+jamais ses sauvegardes. Chaque fichier `.env` / `.env.qa` / `.env.build` garde ses **10 dernières
 versions** (`PULSARCD_BACKUP__ENV_HISTORY`) : chaque nouvelle sauvegarde supprime
 les plus anciennes de ce fichier, sous le même verrou que l'insertion. La plus
 récente, même encore `pending`, est toujours conservée. Les sauvegardes SSH n'ont
@@ -133,9 +133,9 @@ secret dans les listes :
 | Route | Fonction |
 |---|---|
 | `GET /api/admin/recovery/status` | Dernier relevé réussi, erreur éventuelle et nombre de fichiers |
-| `GET /api/admin/recovery/env/{repo}/history` | Les versions conservées de `devops/.env` (`?env=qa` : `devops/.env.qa`), sans contenu |
-| `GET /api/admin/recovery/env/{repo}/versions/{revision}` | Le contenu d'une version, pour l'historique de l'éditeur (`?env=qa` pour `devops/.env.qa`) |
-| `POST /api/admin/recovery/env/{repo}/restore/{revision}` | Restaure une version, en sauvegardant l'état actuel avant écriture (`?env=qa` pour `devops/.env.qa`) |
+| `GET /api/admin/recovery/env/{repo}/history` | Les versions conservées de `devops/.env` (`?env=qa` : `devops/.env.qa`, `?env=build` : `devops/.env.build`), sans contenu |
+| `GET /api/admin/recovery/env/{repo}/versions/{revision}` | Le contenu d'une version, pour l'historique de l'éditeur (`?env=qa` pour `devops/.env.qa`, `?env=build` pour `devops/.env.build`) |
+| `POST /api/admin/recovery/env/{repo}/restore/{revision}` | Restaure une version, en sauvegardant l'état actuel avant écriture (`?env=qa` pour `devops/.env.qa`, `?env=build` pour `devops/.env.build`) |
 
 Une restauration ne redéploie pas automatiquement la stack. Les fichiers SSH
 se restaurent uniquement via l'outil autonome ci-dessous, dans un nouveau dossier.

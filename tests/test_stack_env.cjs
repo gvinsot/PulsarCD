@@ -57,6 +57,17 @@ test('storage follows each tab and its cached buffer', async () => {
     assert.equal(e.get('stack-env-content').value, 'UNSAVED=1');
 });
 
+test('the build secrets tab is offered without QA and edits .env.build', async () => {
+    const urls = [];
+    const e = editor(async url => { urls.push(url); return response('prod-host'); });
+    await e.context.editStackEnv('repo', false);
+    assert.equal(e.get('stack-env-tab-qa').style.display, 'none');
+    await e.context.switchStackEnvTab('build');
+    assert.deepEqual(urls, ['/stacks/repo/env?env=prod', '/stacks/repo/env?env=build']);
+    assert.match(e.get('stack-env-title').textContent, /Edit \.env\.build: repo/);
+    assert.match(e.get('stack-env-help').textContent, /never deployed/);
+});
+
 test('missing file shows the save target and becomes stored after saving', async () => {
     const e = editor(async () => response('build-host', false));
     await e.context.editStackEnv('repo', true);

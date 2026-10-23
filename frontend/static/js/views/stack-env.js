@@ -49,10 +49,10 @@ function closeStackOutputModal() {
 
 // ============== Stack Env Editor ==============
 
-// The modal edits devops/.env and, when the stack's QA stage is enabled,
-// devops/.env.qa in a second tab: the variables it sets override .env for the
-// QA deployment only. Each tab keeps its own buffer, so switching tabs does not
-// lose unsaved edits.
+// The modal edits devops/.env, devops/.env.qa when the stack's QA stage is
+// enabled (the variables it sets override .env for the QA deployment only),
+// and devops/.env.build, the build secrets. Each tab keeps its own buffer, so
+// switching tabs does not lose unsaved edits.
 const STACK_ENV_FILES = {
     prod: {
         name: '.env',
@@ -63,6 +63,14 @@ const STACK_ENV_FILES = {
         help: 'Overrides for the QA deployment only. Each KEY=VALUE here replaces the .env value '
             + 'in the QA stack, verbatim: no automatic "qa." domain prefix. KEY= with no value '
             + 'blanks it. Variables not listed keep their .env value.',
+    },
+    build: {
+        name: '.env.build',
+        help: 'Build secrets, given to the image build only and never deployed. Each KEY=VALUE '
+            + 'is the BuildKit secret "key" (lowercase): RUN --mount=type=secret,id=key in the '
+            + 'Dockerfile, then read /run/secrets/key. KEY_B64=... is decoded from base64 '
+            + '(binary or multi-line content). The whole file is also the secret "build_env" '
+            + '(--mount=type=secret,id=build_env,target=/app/.env).',
     },
 };
 let stackEnvState = null;
@@ -93,7 +101,7 @@ async function editStackEnv(repoName, qaEnabled = false) {
         return;
     }
     stackEnvState = { repo: repoName, active: null, files: {} };
-    document.getElementById('stack-env-tabs').style.display = qaEnabled ? '' : 'none';
+    document.getElementById('stack-env-tab-qa').style.display = qaEnabled ? '' : 'none';
     document.getElementById('stack-env-modal').classList.add('active');
     await switchStackEnvTab('prod');
 }
