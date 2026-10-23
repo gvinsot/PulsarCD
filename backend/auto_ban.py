@@ -37,7 +37,8 @@ CLOUDFLARE_CIDRS = (
     "2a06:98c0::/29", "2c0f:f248::/32",
 )
 
-_ENV = re.compile(r"(?:^|/)\.env(?:[./;~]|$)", re.IGNORECASE)
+# Any file named ".env.*" or ending in ".env" (".env", "prod.env", "app.env~").
+_ENV = re.compile(r"(?:^|/)\.env\.|\.env(?:[/;~]|$)", re.IGNORECASE)
 _AUTH_JSON = re.compile(r"(?:^|/)auth\.json(?:[./;~]|$)", re.IGNORECASE)
 _WORDPRESS = re.compile(
     r"(?:^|/)(?:(?:wp-admin|wp-content|wp-includes|wp-json)(?:[/;]|$)"
