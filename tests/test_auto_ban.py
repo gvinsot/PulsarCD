@@ -18,6 +18,8 @@ from backend.config import AutoBanConfig, Settings
     ("/.env", ".env"), ("/API/.ENV.production?x=1", ".env"),
     ("/app/%252eenv~", ".env"), ("/a%255c.env", ".env"),
     ("/.env;v=1", ".env"), ("/a/../.env.bak", ".env"),
+    ("/docs/my.env", ".env"), ("/production.ENV", ".env"),
+    ("/config/app.env~", ".env"), ("/x%252eenv", ".env"),
     ("/auth.json", "auth.json"), ("/app/auth.json", "auth.json"),
     ("/.composer/auth.json", "auth.json"), ("/AUTH.JSON", "auth.json"),
     ("/%61uth%2ejson", "auth.json"), ("/%2561uth%252ejson", "auth.json"),
@@ -31,7 +33,7 @@ from backend.config import AutoBanConfig, Settings
     ("/", None), ("/environment", None), ("/.environment", None),
     ("/wp-admin-guide", None), ("/wp-login.phpx", None),
     ("/search?q=/.env", None), ("/search?next=/wp-admin", None),
-    ("/docs/my.env", None), ("/wp-admin/../normal", None),
+    ("/docs/my.envelope", None), ("/app.env.js", None), ("/wp-admin/../normal", None),
     ("/oauth.json", None), ("/auth.json-guide", None), ("/authentication.json", None),
     ("/api?file=auth.json", None), ("/auth.json/../normal", None),
 ])
