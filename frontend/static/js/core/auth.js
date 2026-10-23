@@ -76,6 +76,31 @@ function _notifyForbidden(endpoint) {
         'This action is reserved for administrators (your account is read-only).');
 }
 
+const EDGE_REFUSAL_MESSAGE = 'Refused at the edge (HTTP 403): this address is blocked, or the WAF '
+    + 'rejected the request. Not a permission issue.';
+let _lastEdgeRefusalNotice = 0;
+
+/**
+ * Report a 403 and return its message. PulsarCD's own refusals carry a JSON
+ * "detail"; a 403 without one comes from in front of it: the edge blocklist
+ * (an automatic ban, say) or the WAF. Calling that "reserved for
+ * administrators" sent an administrator looking for a role problem.
+ */
+async function _reportForbidden(response, endpoint) {
+    const body = await response.json().catch(() => null);
+    if (body && typeof body.detail === 'string') {
+        _notifyForbidden(endpoint);
+        return 'This action is reserved for administrators.';
+    }
+    console.warn(`Forbidden (${endpoint}): refused before reaching PulsarCD`);
+    // Polling views hit it every few seconds: one notice a minute is enough.
+    if (Date.now() - _lastEdgeRefusalNotice > 60000) {
+        _lastEdgeRefusalNotice = Date.now();
+        showNotification('error', EDGE_REFUSAL_MESSAGE);
+    }
+    return EDGE_REFUSAL_MESSAGE;
+}
+
 async function checkAuth() {
     const token = getAuthToken();
     if (!token) {

@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from backend import ip_blocklist as bl
+from backend import operator_addresses
 from backend.auto_ban import AutoBanWorker, probe_kind, scanner_agent
 from backend.config import AutoBanConfig, Settings
 
@@ -349,3 +350,75 @@ async def test_interrupted_scan_never_advances_checkpoint(tmp_path, store, clock
         await w.scan_once(clock_now[0])
     assert w._checkpoint == before and store.targets() == []
     assert not (tmp_path / "cursor.json").exists()
+
+
+# ---- Administrators' own addresses ------------------------------------------
+# An administrator checking that the WAF refuses /.git/config was banned for
+# 24 hours, and lost PulsarCD with the unblock button.
+
+@pytest.fixture
+def operators():
+    operator_addresses.reset()
+    yield operator_addresses
+    operator_addresses.reset()
+
+
+def test_operator_addresses_expire_are_canonical_and_bounded(operators):
+    operators.note("2a01:0e0a::0001", now=1000)
+    assert operators.seen_within("2a01:e0a::1", 60, now=1050)
+    assert not operators.seen_within("2a01:e0a::1", 60, now=1061)
+    operators.note("testclient")  # not an address: ignored
+    assert not operators.seen_within("testclient", 60)
+    for i in range(operators.MAX_ADDRESSES + 10):
+        operators.note(f"198.51.100.{i % 250}" if i < 250 else f"203.0.113.{i - 250}", now=2000 + i)
+    assert len(operators._seen) == operators.MAX_ADDRESSES
+    # The least recently seen went first; a fresh note keeps an address.
+    assert not operators.seen_within("198.51.100.0", 10 ** 6, now=3000)
+    assert operators.seen_within("203.0.113.15", 10 ** 6, now=3000)
+
+
+async def test_an_administrators_probe_is_not_banned(tmp_path, store, clock_now, operators):
+    operators.note("79.199.236.168")
+    w = worker(tmp_path, store, clock_now[0])
+    await w._consume(log(clock_now[0], "79.199.236.168", path="/.git/config"), clock_now[0])
+    assert store.targets() == []
+    # Any other client probing the same path still is.
+    await w._consume(log(clock_now[0], "45.9.12.7", path="/.git/config"), clock_now[0])
+    assert store.targets() == ["45.9.12.7"]
+
+
+async def test_the_exemption_lasts_as_long_as_a_ban(tmp_path, store, clock_now, operators):
+    operators.note("79.199.236.168", now=0)  # long ago
+    w = worker(tmp_path, store, clock_now[0], AutoBanConfig(duration_seconds=3600))
+    await w._consume(log(clock_now[0], "79.199.236.168", path="/.git/config"), clock_now[0])
+    assert store.targets() == ["79.199.236.168"]
+
+
+async def test_an_administrator_already_banned_is_released(tmp_path, store, clock_now, operators):
+    await store.add_automatic("79.199.236.168", "Automatic probe: VCS metadata",
+                              clock_now[0] - timedelta(seconds=1), 86400)
+    await store.add("79.199.236.169", "manual", "admin")
+    operators.note("79.199.236.168")
+    operators.note("79.199.236.169")
+    w = worker(tmp_path, store, clock_now[0])
+    await w._release_exempt_automatic_bans()
+    # A manual block stays: an administrator decided it.
+    assert store.targets() == ["79.199.236.169"]
+
+
+def test_only_administrator_sessions_are_recorded(client, monkeypatch, operators):
+    import backend.api as api_module
+    from backend.auth import create_token
+
+    def headers(role, ip):
+        token = create_token("sec-tester", api_module.settings.auth.jwt_secret, 1, role=role)
+        return {"Authorization": f"Bearer {token}", "X-Forwarded-For": ip}
+
+    monkeypatch.setenv("PULSARCD_TRUST_PROXY_HEADERS", "true")
+    client.get("/api/security/blocklist", headers=headers("viewer", "198.51.100.7"))
+    client.get("/api/security/blocklist", headers=headers("admin", "79.199.236.168"))
+    assert not operators.seen_within("198.51.100.7", 60)
+    assert operators.seen_within("79.199.236.168", 60)
+    # Without a session, nothing is recorded.
+    client.get("/api/security/blocklist", headers={"X-Forwarded-For": "45.9.12.7"})
+    assert not operators.seen_within("45.9.12.7", 60)

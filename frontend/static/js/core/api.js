@@ -11,7 +11,7 @@ async function apiGet(endpoint) {
         if (response.status === 401) { showLogin(); return null; }
         // A handful of GETs disclose secrets or infrastructure detail and are
         // admin-only (config, .env contents, GitHub token probes).
-        if (response.status === 403) { _notifyForbidden(endpoint); return null; }
+        if (response.status === 403) { await _reportForbidden(response, endpoint); return null; }
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return await response.json();
     } catch (error) {
@@ -36,8 +36,7 @@ async function apiGetOrError(endpoint) {
         const response = await fetch(`${API_BASE}${endpoint}`, { headers: authHeaders() });
         if (response.status === 401) { showLogin(); return { error: 'Not authenticated' }; }
         if (response.status === 403) {
-            _notifyForbidden(endpoint);
-            return { error: 'This action is reserved for administrators.' };
+            return { error: await _reportForbidden(response, endpoint) };
         }
         if (!response.ok) {
             const body = await response.json().catch(() => ({}));
@@ -79,7 +78,7 @@ async function apiPost(endpoint, data) {
         }
         const response = await fetch(`${API_BASE}${endpoint}`, opts);
         if (response.status === 401) { showLogin(); return null; }
-        if (response.status === 403) { _notifyForbidden(endpoint); return null; }
+        if (response.status === 403) { await _reportForbidden(response, endpoint); return null; }
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
             throw new Error(errorData.detail || `HTTP ${response.status}`);
@@ -99,7 +98,7 @@ async function apiPut(endpoint, data) {
             body: JSON.stringify(data)
         });
         if (response.status === 401) { showLogin(); return null; }
-        if (response.status === 403) { _notifyForbidden(endpoint); return null; }
+        if (response.status === 403) { await _reportForbidden(response, endpoint); return null; }
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
             throw new Error(errorData.detail || `HTTP ${response.status}`);

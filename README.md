@@ -988,6 +988,16 @@ enforcement behind that proxy. Doing so requires configuring trusted real-client
 identity and matching enforcement together; arbitrary forwarded headers remain
 untrusted. Other shared proxies must be added to the exemptions explicitly.
 
+The addresses administrators work from are exempt too: each request an
+administrator's session makes records its client address (as the backend sees
+it, through `PULSARCD_TRUST_PROXY_HEADERS`), and a probe from an address
+recorded within the ban duration is not banned. Checking that the WAF refuses
+`/.git/config` would otherwise ban the administrator for 24 hours, and lock
+them out of PulsarCD with the unblock button. The WAF still refuses the probe
+itself. An automatic ban that already hits such an address is released at the
+next scan once the administrator reaches PulsarCD again. The record is in
+memory, refilled by the open console's next request after a restart.
+
 Automatic bans last **24 hours** by default. Manual bans remain permanent.
 Expiry is persisted and applied whenever the blocklist is read, including each
 edge poll. Requests already refused by the blocklist do not prolong a ban.

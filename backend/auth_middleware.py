@@ -20,7 +20,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from .auth import AUTH_SOURCE_GOOGLE, AUTH_SOURCE_LOCAL, decode_token
-from . import run_history
+from . import operator_addresses, run_history
 
 logger = structlog.get_logger()
 
@@ -381,6 +381,11 @@ async def auth_middleware(request: Request, call_next):
     request.state.role = payload.get("role", "viewer")
     run_history.set_actor(request.state.user)
     request.state.auth_source = payload.get("auth", AUTH_SOURCE_LOCAL)
+
+    # The automatic edge ban leaves the addresses administrators work from
+    # alone (see operator_addresses.py).
+    if request.state.role == "admin":
+        operator_addresses.note(_client_address(request))
 
     # Admin-only paths
     if path.startswith("/api/admin/") and getattr(request.state, "role", "") != "admin":

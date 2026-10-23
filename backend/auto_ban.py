@@ -22,6 +22,7 @@ import structlog
 
 from shared.victorialogs import KIND_LOG, exact, stream
 
+from . import operator_addresses
 from .config import AutoBanConfig
 from .ip_blocklist import HTTP_ROUTER_NAME, ROUTER_NAME, IpBlocklist, _timestamp
 from .notifier import notify_auto_ban
@@ -166,6 +167,10 @@ class AutoBanWorker:
         self._checkpoint = through
 
     def _is_exempt(self, address):
+        # An administrator checking that the WAF refuses a probe is not a
+        # scanner: banning their address would lock them out of PulsarCD.
+        if operator_addresses.seen_within(address, self.config.duration_seconds):
+            return True
         return any(address.version == network.version and address in network
                    for network in self._exemptions)
 
