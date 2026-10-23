@@ -956,6 +956,26 @@ including beneath a subdirectory. Classification ignores query strings and
 request bodies, decodes the path twice, and normalizes Windows separators and
 dot segments, matching the edge WAF rules. One matching request is sufficient.
 
+The same applies to other paths no service here exposes:
+
+- **VCS/IDE metadata**: `.git`, `.svn`, `.hg`, `.bzr`, `.idea`, `.vscode` and
+  `.DS_Store`;
+- **credential files**: `.htpasswd`, `.htaccess`, `.git-credentials`, `.gitconfig`,
+  `.npmrc`, `.pypirc`, `.netrc`, `.pgpass`, shell histories, `.ssh`, `.aws`,
+  `.kube`, `id_rsa`-style keys, `/etc/passwd`, `/etc/shadow` and
+  `/proc/self/environ`;
+- **admin/exploit endpoints**: phpMyAdmin/Adminer, `cgi-bin`, `boaform`, `HNAP1`,
+  `server-status`, Laravel `_ignition`, `vendor/phpunit`, `phpinfo.php` and
+  common web shells, Tomcat `manager/html`, Spring `actuator/env|heapdump|gateway`;
+- **backup dumps**: any `*.sql` (optionally compressed) and archives named
+  `backup`, `dump`, `db`, `database`, `site`, `www`, `wwwroot`, `htdocs` or
+  `public_html`.
+
+A request whose `User-Agent` names an attack tool (sqlmap, nikto, nmap, masscan,
+zgrab, nuclei, wpscan, gobuster, dirbuster, feroxbuster, ffuf, wfuzz, acunetix,
+nessus, openvas, hydra, ...) also triggers a ban, on any path. Traefik keeps that
+header in its access log as `request_User-Agent`.
+
 A background worker reads the trusted Traefik service's Docker-attributed access
 logs from VictoriaLogs independently of the Security view and the edge provider
 endpoint. It uses Traefik's socket peer `ClientHost`, never a client-supplied

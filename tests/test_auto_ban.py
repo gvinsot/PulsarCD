@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from backend import ip_blocklist as bl
-from backend.auto_ban import AutoBanWorker, probe_kind
+from backend.auto_ban import AutoBanWorker, probe_kind, scanner_agent
 from backend.config import AutoBanConfig, Settings
 
 
@@ -39,6 +39,56 @@ from backend.config import AutoBanConfig, Settings
 ])
 def test_paths(path, kind):
     assert probe_kind(path) == kind
+
+
+@pytest.mark.parametrize("path,kind", [
+    ("/.git/config", "VCS metadata"), ("/app/.git/HEAD", "VCS metadata"), ("/.git", "VCS metadata"),
+    ("/.svn/entries", "VCS metadata"), ("/.hg/hgrc", "VCS metadata"),
+    ("/.vscode/sftp.json", "VCS metadata"), ("/.DS_Store", "VCS metadata"),
+    ("/%252egit/config", "VCS metadata"),
+    ("/.htpasswd", "credentials file"), ("/.htaccess.bak", "credentials file"),
+    ("/.git-credentials", "credentials file"), ("/.aws/credentials", "credentials file"),
+    ("/home/.ssh/id_rsa", "credentials file"), ("/id_ed25519.pub", "credentials file"),
+    ("/.npmrc", "credentials file"), ("/../../etc/passwd", "credentials file"),
+    ("/proc/self/environ", "credentials file"),
+    ("/phpmyadmin/index.php", "admin/exploit endpoint"), ("/PhpMyAdmin", "admin/exploit endpoint"),
+    ("/cgi-bin/luci", "admin/exploit endpoint"), ("/boaform/admin/formLogin", "admin/exploit endpoint"),
+    ("/HNAP1/", "admin/exploit endpoint"), ("/server-status", "admin/exploit endpoint"),
+    ("/_ignition/execute-solution", "admin/exploit endpoint"),
+    ("/vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php", "admin/exploit endpoint"),
+    ("/phpinfo.php", "admin/exploit endpoint"), ("/uploads/shell.php", "admin/exploit endpoint"),
+    ("/manager/html", "admin/exploit endpoint"), ("/actuator/env", "admin/exploit endpoint"),
+    ("/dump.sql", "backup dump"), ("/db/prod.SQL.gz", "backup dump"),
+    ("/backup.zip", "backup dump"), ("/www.tar.gz", "backup dump"),
+    ("/.github/workflows", None), ("/.gitignore", None), ("/.well-known/acme-challenge/x", None),
+    ("/docs/git/config", None), ("/htaccess-guide", None), ("/api/ssh/keys", None),
+    ("/etc/passwords-guide", None), ("/admin", None), ("/actuator/health", None),
+    ("/manager", None), ("/information.php", None), ("/sql/schema", None),
+    ("/sqlite.db", None), ("/backup", None), ("/my-backup.zip", None),
+    ("/api?file=.git/config", None), ("/v2/library/sql/manifests/latest", None),
+])
+def test_extended_paths(path, kind):
+    assert probe_kind(path) == kind
+
+
+@pytest.mark.parametrize("agent,tool", [
+    ("sqlmap/1.8#stable (https://sqlmap.org)", "sqlmap"),
+    ("Mozilla/5.0 (compatible; Nmap Scripting Engine; https://nmap.org/book/nse.html)", "nmap"),
+    ("Mozilla/5.0 zgrab/0.x", "zgrab"), ("Nuclei - Open-source project", "nuclei"),
+    ("Mozilla/5.0 (X11; Linux x86_64) Firefox/131.0", None), ("", None), (None, None),
+])
+def test_scanner_agent(agent, tool):
+    assert scanner_agent(agent) == tool
+
+
+async def test_scanner_user_agent_bans_on_any_path(tmp_path, store, clock_now):
+    w = worker(tmp_path, store, clock_now[0])
+    w.logstore.client.rows = rows(
+        log(clock_now[0], path="/", **{"request_User-Agent": "sqlmap/1.8"}),
+        log(clock_now[0], ip="45.9.12.8", path="/", **{"request_User-Agent": "Mozilla/5.0"}))
+    await w.scan_once(clock_now[0])
+    assert store.blocked_entry("45.9.12.7")["reason"] == "Automatic probe: scanner sqlmap"
+    assert store.blocked_entry("45.9.12.8") is None
 
 
 @pytest.mark.parametrize("name", ["wp-admin", "wp-content", "wp-includes", "wp-json",

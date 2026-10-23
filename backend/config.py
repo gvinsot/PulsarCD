@@ -276,7 +276,7 @@ class MCPConfig(BaseModel):
 
 
 class AutoBanConfig(BaseModel):
-    """Automatic bans for .env, auth.json and WordPress probes on this edge."""
+    """Automatic bans for secret/exploit/WordPress probes and scanner agents."""
     enabled: bool = False
     duration_seconds: int = Field(default=86400, ge=60, le=31536000)
     poll_seconds: int = Field(default=10, ge=1, le=300)
