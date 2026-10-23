@@ -22,7 +22,7 @@ from shared.access_log import build_access_doc
 from shared.victorialogs import (
     KIND_ACCESS, KIND_CONTAINER_METRIC, KIND_HOST_METRIC, KIND_LOG, MAX_BUCKETS,
     VictoriaLogsClient, VictoriaLogsError, access_row, any_of, bucket_times, exact,
-    integer, interval_seconds, log_row, metric_row, num, parse_time, quote, stream,
+    integer, interval_seconds, iso_ms, log_row, metric_row, num, parse_time, quote, stream,
     text_filter,
 )
 
@@ -627,35 +627,62 @@ class LogStore:
     # ── Security & usage (access records) ──
 
     async def get_security_overview(self, minutes: int = security.DEFAULT_WINDOW_MINUTES,
-                                    include_internal: bool = False) -> Dict[str, Any]:
-        """Request volume, suspicious client IPs and hot endpoints (security view)."""
-        minutes = security.clamp_window(minutes)
+                                    include_internal: bool = False, start: Any = None,
+                                    end: Any = None) -> Dict[str, Any]:
+        """Request volume, suspicious client IPs and hot endpoints (security view).
+
+        The last ``minutes``, or the explicit ``start``/``end`` range (a bucket
+        picked on the timeline; see security.resolve_window).
+        """
         now = _now()
-        window = {"start": now - timedelta(minutes=minutes), "end": now}
+        begin, finish, minutes = security.resolve_window(minutes, start, end, now)
+        window = {"start": begin, "end": finish}
         try:
             overview = await self._run_queries(
                 security.build_overview_queries(minutes, include_internal), **window)
             details = await self._run_queries(
                 security.build_detail_queries(minutes, include_internal, overview), **window)
-            return security.summarize(overview, details, minutes=minutes,
-                                      include_internal=include_internal, start=window["start"],
-                                      end=now, generated_at=now)
+            result = security.summarize(overview, details, minutes=minutes,
+                                        include_internal=include_internal, start=begin,
+                                        end=finish, generated_at=now)
         except VictoriaLogsError as e:
             logger.error("Failed to get security overview", error=str(e))
-            return security.empty_overview(minutes, include_internal, now,
-                                           error="Access data unavailable")
+            result = security.empty_overview(minutes, include_internal, now,
+                                             error="Access data unavailable")
+        if start is not None:
+            result["range"] = {"start": iso_ms(begin), "end": iso_ms(finish)}
+        return result
 
-    async def get_security_ip_events(self, ip: str,
-                                     minutes: int = security.DEFAULT_WINDOW_MINUTES) -> List[Dict[str, Any]]:
+    async def get_security_ip_events(self, ip: str, minutes: int = security.DEFAULT_WINDOW_MINUTES,
+                                     start: Any = None, end: Any = None) -> List[Dict[str, Any]]:
         """Latest requests and WAF blocks of one client IP, newest first."""
-        start = _now() - timedelta(minutes=security.clamp_window(minutes))
+        begin, finish, _ = security.resolve_window(minutes, start, end, _now())
         try:
-            rows = await self._rows(security.build_ip_events_query(ip), start=start,
+            rows = await self._rows(security.build_ip_events_query(ip), start=begin, end=finish,
                                     limit=security.MAX_IP_EVENTS)
         except VictoriaLogsError as e:
             logger.error("Failed to get security IP events", ip=ip, error=str(e))
             return []
         return [security.event_from_row(row) for row in rows]
+
+    async def get_security_requests(self, filters: Dict[str, Any],
+                                    minutes: int = security.DEFAULT_WINDOW_MINUTES,
+                                    include_internal: bool = False, start: Any = None,
+                                    end: Any = None) -> Dict[str, Any]:
+        """The request explorer: latest requests and WAF blocks matching ``filters``.
+
+        ``filters`` are build_requests_query's keyword arguments; an invalid
+        one raises ValueError, as an invalid range does.
+        """
+        begin, finish, _ = security.resolve_window(minutes, start, end, _now())
+        query = security.build_requests_query(include_internal, **filters)
+        try:
+            rows = await self._rows(query, start=begin, end=finish, limit=security.MAX_REQUESTS)
+        except VictoriaLogsError as e:
+            logger.error("Failed to get security requests", error=str(e))
+            return {"events": [], "limit": security.MAX_REQUESTS, "error": "Access data unavailable"}
+        return {"events": [security.event_from_row(row) for row in rows],
+                "limit": security.MAX_REQUESTS}
 
     async def get_usage_overview(self, minutes: int = usage.DEFAULT_WINDOW_MINUTES,
                                  include_internal: bool = False,

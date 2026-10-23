@@ -9,14 +9,21 @@ backend/routes/__init__.py).
 Tests patch _client_address on backend.api, so it is read through it as well.
 """
 
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
+
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from shared.access_log import is_internal_ip, normalize_ip
+from shared.access_log import (
+    MAX_HOST_LENGTH, MAX_PATH_LENGTH, MAX_RULE_MSG_LENGTH, MAX_URI_LENGTH, is_internal_ip,
+    normalize_ip,
+)
 
 from ..ip_blocklist import (
     covers as ip_blocklist_covers,
     validate_target as ip_blocklist_validate,
 )
+from ..security_analytics import resolve_window
 from .. import api
 
 router = APIRouter()
@@ -24,14 +31,33 @@ router = APIRouter()
 
 # ============== Security ==============
 
+# start/end (ISO 8601) select an explicit range instead of the last `minutes`:
+# a bucket picked on the timeline, which the tabs of the view then focus on.
+_RANGE_START = Query(default=None, max_length=40, description="Range start (ISO 8601), with end")
+_RANGE_END = Query(default=None, max_length=40, description="Range end (ISO 8601), with start")
+
+
+def _range(minutes: int, start: Optional[str], end: Optional[str]) -> Dict[str, Any]:
+    """The logstore's range arguments; 400 for an invalid explicit range."""
+    if start is None and end is None:
+        return {}
+    try:
+        resolve_window(minutes, start, end, datetime.now(timezone.utc))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"start": start, "end": end}
+
+
 @router.get("/api/security/overview")
 async def get_security_overview(
     minutes: int = Query(default=60, ge=5, le=10080),
     include_internal: bool = Query(default=False),
+    start: Optional[str] = _RANGE_START,
+    end: Optional[str] = _RANGE_END,
 ):
-    """Suspicious client IPs and hot endpoints, from the Traefik access logs."""
+    """Suspicious client IPs, hot endpoints and attack categories, from the Traefik access logs."""
     overview = await api.logstore.get_security_overview(
-        minutes=minutes, include_internal=include_internal)
+        minutes=minutes, include_internal=include_internal, **_range(minutes, start, end))
     # Which of those clients the edge is already refusing.  Resolved here
     # rather than in the browser because an address can be blocked through a
     # CIDR range that covers it, and the view has to say so instead of
@@ -46,17 +72,50 @@ async def get_security_overview(
 async def get_security_ip_events(
     ip: str,
     minutes: int = Query(default=60, ge=5, le=10080),
+    start: Optional[str] = _RANGE_START,
+    end: Optional[str] = _RANGE_END,
 ):
     """Latest requests and WAF blocks of one client IP."""
     normalized = normalize_ip(ip)
     if normalized is None:
         raise HTTPException(status_code=400, detail="Invalid IP address")
+    window = _range(minutes, start, end)
     return {
         "ip": normalized,
         "internal": is_internal_ip(normalized),
         "blocked": api.ip_blocklist.blocked_entry(normalized) if api.ip_blocklist else None,
-        "events": await api.logstore.get_security_ip_events(normalized, minutes=minutes),
+        "events": await api.logstore.get_security_ip_events(normalized, minutes=minutes, **window),
     }
+
+
+@router.get("/api/security/requests")
+async def get_security_requests(
+    minutes: int = Query(default=60, ge=5, le=10080),
+    include_internal: bool = Query(default=False),
+    start: Optional[str] = _RANGE_START,
+    end: Optional[str] = _RANGE_END,
+    ip: Optional[str] = Query(default=None, max_length=64),
+    host: Optional[str] = Query(default=None, max_length=MAX_HOST_LENGTH),
+    path: Optional[str] = Query(default=None, max_length=MAX_PATH_LENGTH),
+    uri: Optional[str] = Query(default=None, max_length=MAX_URI_LENGTH),
+    rule: Optional[str] = Query(default=None, max_length=MAX_RULE_MSG_LENGTH, description="WAF rule message"),
+    q: Optional[str] = Query(default=None, max_length=200, description="Words searched in the URI"),
+    status: Optional[str] = Query(default=None, max_length=16),
+    category: Optional[str] = Query(default=None, max_length=32),
+):
+    """Request explorer: the latest requests and WAF blocks matching every filter given."""
+    if ip:
+        ip = normalize_ip(ip)
+        if ip is None:
+            raise HTTPException(status_code=400, detail="Invalid IP address")
+    filters = {"ip": ip, "host": host, "path": path, "uri": uri, "rule": rule, "text": q,
+               "status": status, "category": category}
+    try:
+        return await api.logstore.get_security_requests(
+            {k: v for k, v in filters.items() if v}, minutes=minutes,
+            include_internal=include_internal, **_range(minutes, start, end))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ---- Blocking a client at the edge -----------------------------------------

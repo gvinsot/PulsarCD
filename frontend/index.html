@@ -736,7 +736,7 @@
                     <div class="header-actions">
                         <div class="filter-group">
                             <label for="security-window">Window:</label>
-                            <select id="security-window" data-change="loadSecurity">
+                            <select id="security-window" data-change="changeSecurityWindow">
                                 <option value="15">15 min</option>
                                 <option value="60" selected>1 hour</option>
                                 <option value="360">6 hours</option>
@@ -850,92 +850,173 @@
                 </div>
 
                 <div class="chart-card security-chart-card">
-                    <h3>Requests per <span id="security-interval">minute</span></h3>
+                    <h3>Requests per <span id="security-interval">minute</span> <span class="security-hint">click a bar to focus the tabs below on it</span></h3>
                     <div class="chart-wrapper"><canvas id="security-chart"></canvas></div>
                 </div>
 
-                <div class="chart-card security-table-card">
-                    <h3>Blocked at the edge <span class="security-hint">refused by Traefik in front of the WAF, for every host it serves</span></h3>
-                    <div class="security-blocklist-warning start-hidden" id="security-blocklist-warning"></div>
-                    <div class="security-block-form">
-                        <input type="text" id="security-block-ip" class="security-block-input"
-                               placeholder="Address or CIDR range, e.g. 45.9.12.7 or 103.4.8.0/24"
-                               autocomplete="off" spellcheck="false" maxlength="49">
-                        <input type="text" id="security-block-reason" class="security-block-input"
-                               placeholder="Reason (optional)" autocomplete="off" maxlength="200">
-                        <button class="btn btn-danger btn-sm" data-click="blockIpFromForm">Block</button>
+                <!-- Not .tab-btn: the container modal's tab handler drives every .tab-btn. -->
+                <div class="chart-card security-tabs-card">
+                    <div class="security-tabs" role="tablist" aria-label="Security details">
+                        <button class="security-tab active" role="tab" aria-selected="true" aria-controls="security-panel-ips" data-tab="ips" data-click="switchSecurityTab" data-args='["ips"]'>Client IPs <span class="security-tab-count" id="security-count-ips"></span></button>
+                        <button class="security-tab" role="tab" aria-selected="false" aria-controls="security-panel-endpoints" data-tab="endpoints" data-click="switchSecurityTab" data-args='["endpoints"]'>Endpoints <span class="security-tab-count" id="security-count-endpoints"></span></button>
+                        <button class="security-tab" role="tab" aria-selected="false" aria-controls="security-panel-attacks" data-tab="attacks" data-click="switchSecurityTab" data-args='["attacks"]'>Attacks <span class="security-tab-count" id="security-count-attacks"></span></button>
+                        <button class="security-tab" role="tab" aria-selected="false" aria-controls="security-panel-requests" data-tab="requests" data-click="switchSecurityTab" data-args='["requests"]'>Requests</button>
+                        <button class="security-tab" role="tab" aria-selected="false" aria-controls="security-panel-edge" data-tab="edge" data-click="switchSecurityTab" data-args='["edge"]'>Blocked &amp; WAF <span class="security-tab-count" id="security-count-edge"></span></button>
                     </div>
-                    <div class="security-table-scroll">
-                        <table class="security-table">
-                            <thead>
-                                <tr>
-                                    <th>Address</th>
-                                    <th>Reason</th>
-                                    <th>Blocked by</th>
-                                    <th>Blocked</th>
-                                    <th>Expires</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody id="security-blocklist-body">
-                                <tr><td colspan="6" class="security-empty">Loading&hellip;</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
 
-                <div class="chart-card security-table-card">
-                    <h3>Client IPs <span class="security-hint">flagged first &middot; click a row for its requests</span></h3>
-                    <div class="security-table-scroll">
-                        <table class="security-table">
-                            <thead>
-                                <tr>
-                                    <th>IP</th>
-                                    <th>Signals</th>
-                                    <th class="num">Requests</th>
-                                    <th class="num" title="Busiest minute of the window. Beyond 6 hours, busiest 5 minutes (beyond 24 hours, busiest hour) divided back to a per-minute rate, so short bursts show smaller there.">Peak/min</th>
-                                    <th class="num">4xx</th>
-                                    <th class="num">WAF</th>
-                                    <th class="num" title="Distinct paths requested">Paths</th>
-                                    <th>Top hosts</th>
-                                    <th>User agent</th>
-                                    <th>Last seen</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody id="security-ips-body">
-                                <tr><td colspan="11" class="security-empty">Loading&hellip;</td></tr>
-                            </tbody>
-                        </table>
+                    <div class="security-focus start-hidden" id="security-focus" role="status">
+                        <span>Focused on <strong id="security-focus-label"></strong>: client IPs, endpoints, attacks, requests and WAF rules cover this slot only.</span>
+                        <button class="btn btn-sm btn-secondary" data-click="clearSecuritySlice">Show the whole window</button>
                     </div>
-                </div>
 
-                <div class="chart-card security-table-card">
-                    <h3>Endpoints <span class="security-hint">host + path, query string ignored</span></h3>
-                    <div class="security-table-scroll">
-                        <table class="security-table">
-                            <thead>
-                                <tr>
-                                    <th>Endpoint</th>
-                                    <th>Signals</th>
-                                    <th class="num">Requests</th>
-                                    <th class="num" title="Busiest minute of the window (averaged over 5 minutes beyond 6 hours, over 1 hour beyond 24 hours)">Peak/min</th>
-                                    <th class="num">Client IPs</th>
-                                    <th class="num">4xx</th>
-                                    <th class="num">5xx</th>
-                                    <th>Top client</th>
-                                </tr>
-                            </thead>
-                            <tbody id="security-endpoints-body">
-                                <tr><td colspan="8" class="security-empty">Loading&hellip;</td></tr>
-                            </tbody>
-                        </table>
+                    <div class="security-tab-panel" id="security-panel-ips" role="tabpanel">
+                        <p class="security-panel-hint">Flagged first &middot; click a row for its requests</p>
+                        <div class="security-table-scroll">
+                            <table class="security-table">
+                                <thead>
+                                    <tr>
+                                        <th>IP</th>
+                                        <th>Signals</th>
+                                        <th class="num">Requests</th>
+                                        <th class="num" title="Busiest minute of the window. Beyond 6 hours, busiest 5 minutes (beyond 24 hours, busiest hour) divided back to a per-minute rate, so short bursts show smaller there.">Peak/min</th>
+                                        <th class="num">4xx</th>
+                                        <th class="num">WAF</th>
+                                        <th class="num" title="Distinct paths requested">Paths</th>
+                                        <th>Top hosts</th>
+                                        <th>User agent</th>
+                                        <th>Last seen</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="security-ips-body">
+                                    <tr><td colspan="11" class="security-empty">Loading&hellip;</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
-                </div>
 
-                <div class="chart-card security-table-card start-hidden" id="security-waf-card">
-                    <h3>WAF rules triggered</h3>
-                    <div id="security-waf-rules" class="security-waf-rules"></div>
+                    <div class="security-tab-panel start-hidden" id="security-panel-endpoints" role="tabpanel">
+                        <p class="security-panel-hint">Host + path, query string ignored &middot; click a row for its requests</p>
+                        <div class="security-table-scroll">
+                            <table class="security-table">
+                                <thead>
+                                    <tr>
+                                        <th>Endpoint</th>
+                                        <th>Signals</th>
+                                        <th class="num">Requests</th>
+                                        <th class="num" title="Busiest minute of the window (averaged over 5 minutes beyond 6 hours, over 1 hour beyond 24 hours)">Peak/min</th>
+                                        <th class="num">Client IPs</th>
+                                        <th class="num">4xx</th>
+                                        <th class="num">5xx</th>
+                                        <th>Top client</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="security-endpoints-body">
+                                    <tr><td colspan="8" class="security-empty">Loading&hellip;</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="security-tab-panel start-hidden" id="security-panel-attacks" role="tabpanel">
+                        <p class="security-panel-hint">What the requests were after, read from their path or query string &middot; <strong>Answered 2xx</strong>: requests of that kind that got a success answer, check nothing leaked &middot; click a row, a target or a client to see the requests</p>
+                        <div class="security-table-scroll">
+                            <table class="security-table">
+                                <thead>
+                                    <tr>
+                                        <th>Attack</th>
+                                        <th class="num">Requests</th>
+                                        <th class="num">Clients</th>
+                                        <th class="num" title="Requests of this kind answered with a 2xx: the target may exist and have been served">Answered 2xx</th>
+                                        <th>Top targets</th>
+                                        <th>Top clients</th>
+                                        <th>Last seen</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="security-attacks-body">
+                                    <tr><td colspan="7" class="security-empty">Loading&hellip;</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="security-tab-panel start-hidden" id="security-panel-requests" role="tabpanel">
+                        <form id="security-request-filters" class="security-request-filters">
+                            <input type="text" id="security-filter-ip" class="security-block-input" placeholder="Client IP" autocomplete="off" spellcheck="false" maxlength="64" aria-label="Client IP">
+                            <input type="text" id="security-filter-host" class="security-block-input" placeholder="Host" autocomplete="off" spellcheck="false" maxlength="255" aria-label="Host">
+                            <input type="text" id="security-filter-q" class="security-block-input" placeholder="Words in the URI, e.g. env or &quot;wp-login&quot;" autocomplete="off" spellcheck="false" maxlength="200" aria-label="Words in the URI">
+                            <select id="security-filter-status" class="security-block-input" aria-label="Status">
+                                <option value="">Any status</option>
+                                <option value="2xx">2xx</option>
+                                <option value="3xx">3xx</option>
+                                <option value="4xx">4xx</option>
+                                <option value="404">404</option>
+                                <option value="denied">401/403</option>
+                                <option value="429">429</option>
+                                <option value="5xx">5xx</option>
+                                <option value="waf">WAF blocks</option>
+                                <option value="edge">Refused at the edge</option>
+                            </select>
+                            <select id="security-filter-category" class="security-block-input" aria-label="Attack">
+                                <option value="">Any request</option>
+                            </select>
+                            <button type="submit" class="btn btn-primary btn-sm">Search</button>
+                            <button type="button" class="btn btn-secondary btn-sm" data-click="resetSecurityRequestFilters">Reset</button>
+                        </form>
+                        <div class="security-request-chips" id="security-request-chips"></div>
+                        <p class="security-panel-hint" id="security-requests-status" role="status"></p>
+                        <div class="security-table-scroll">
+                            <table class="security-table">
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Client</th>
+                                        <th>Status</th>
+                                        <th>Method</th>
+                                        <th>Host</th>
+                                        <th>URI</th>
+                                        <th>User agent</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="security-requests-body">
+                                    <tr><td colspan="7" class="security-empty">Loading&hellip;</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="security-tab-panel start-hidden" id="security-panel-edge" role="tabpanel">
+                        <h4 class="security-panel-title">Blocked at the edge <span class="security-hint">refused by Traefik in front of the WAF, for every host it serves</span></h4>
+                        <div class="security-blocklist-warning start-hidden" id="security-blocklist-warning"></div>
+                        <div class="security-block-form">
+                            <input type="text" id="security-block-ip" class="security-block-input"
+                                   placeholder="Address or CIDR range, e.g. 45.9.12.7 or 103.4.8.0/24"
+                                   autocomplete="off" spellcheck="false" maxlength="49">
+                            <input type="text" id="security-block-reason" class="security-block-input"
+                                   placeholder="Reason (optional)" autocomplete="off" maxlength="200">
+                            <button class="btn btn-danger btn-sm" data-click="blockIpFromForm">Block</button>
+                        </div>
+                        <div class="security-table-scroll">
+                            <table class="security-table">
+                                <thead>
+                                    <tr>
+                                        <th>Address</th>
+                                        <th>Reason</th>
+                                        <th>Blocked by</th>
+                                        <th>Blocked</th>
+                                        <th>Expires</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="security-blocklist-body">
+                                    <tr><td colspan="6" class="security-empty">Loading&hellip;</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <h4 class="security-panel-title">WAF rules triggered <span class="security-hint">click a rule for the blocked requests</span></h4>
+                        <div id="security-waf-rules" class="security-waf-rules"></div>
+                    </div>
                 </div>
             </section>
 
@@ -1580,7 +1661,10 @@
                     </div>
                     <div class="modal-footer">
                         <span id="security-ip-modal-action"></span>
-                        <button class="btn btn-secondary" data-click="closeSecurityIpModal">Close</button>
+                        <span class="security-modal-buttons">
+                            <button class="btn btn-secondary" data-click="showSecurityIpRequests" title="Open the Requests tab on this client, with every filter">Explore requests</button>
+                            <button class="btn btn-secondary" data-click="closeSecurityIpModal">Close</button>
+                        </span>
                     </div>
                 </div>
             </div>

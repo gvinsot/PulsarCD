@@ -1,19 +1,42 @@
 /**
- * PulsarCD frontend: Security view: client IPs, endpoints, WAF rules and the edge blocklist.
+ * PulsarCD frontend: Security view: client IPs, endpoints, attacks, a request
+ * explorer, WAF rules and the edge blocklist.
  * Classic script sharing the page's globals; index.html sets the load order.
  */
 
 // ============== Security ==============
 
 // Requests per client IP and per endpoint, from the Traefik access logs the
-// agents copy into the access index. The detection rules (flags) are computed
-// by the backend, see backend/security_analytics.py.
+// agents copy into the access index. The detection rules (flags) and the
+// attack categories are computed by the backend, see
+// backend/security_analytics.py.
+//
+// The stat cards and the chart always cover the selected window. Clicking a
+// bar focuses the tabs (client IPs, endpoints, attacks, requests, WAF rules)
+// on that bucket: they are then computed over its time slot only.
 
 const SECURITY_POLL_INTERVAL = 30000;
 const SECURITY_INTERVAL_LABELS = { '1m': 'minute', '5m': '5 minutes', '15m': '15 minutes', '1h': 'hour' };
+const SECURITY_INTERVAL_SECONDS = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600 };
+const SECURITY_TABS = ['ips', 'endpoints', 'attacks', 'requests', 'edge'];
+const SECURITY_TAB_KEY = 'pulsarcd.security.tab';
+// Request explorer filters typed in its form; the others (path, uri, rule)
+// come from a click elsewhere and show as removable chips.
+const SECURITY_FORM_FILTERS = { ip: 'security-filter-ip', host: 'security-filter-host', q: 'security-filter-q',
+    status: 'security-filter-status', category: 'security-filter-category' };
+const SECURITY_CHIP_FILTERS = { path: 'path', uri: 'URI', rule: 'WAF rule' };
+const SECURITY_EDGE_ROUTER = 'pulsarcd-blocklist';
 let securityPollTimer = null;
 let securityLoading = false;
-let securityData = null;
+let securityReloadPending = false;
+let securityData = null;      // the whole window: cards and chart
+let securityDetail = null;    // what the tabs show: the window, or the focused slot
+let securitySlice = null;     // { start, end } (ISO) of the bar picked on the chart
+let securitySelectedBar = -1;
+let securitySliceFailed = false;
+let securityTab = 'ips';
+let securityRequestFilters = {};
+let securityRequestsRequest = 0;
 let securityIpRequest = 0;
 let securityIpModalIp = null;
 
@@ -35,34 +58,72 @@ function securityWindow() {
     return document.getElementById('security-window').value;
 }
 
+function securityInternal() {
+    return document.getElementById('security-internal').checked;
+}
+
 /** Access-record timestamps are UTC; one written without a zone is taken as such. */
 function parseUtc(iso) {
     if (!iso) return null;
     return new Date(/(Z|[+-]\d\d:?\d\d)$/.test(iso) ? iso : `${iso}Z`);
 }
 
+/** Query parameters of the range the tabs cover: the focused slot, or the window. */
+function securityRangeParams() {
+    const params = new URLSearchParams({ minutes: securityWindow() });
+    if (securitySlice) {
+        params.set('start', securitySlice.start);
+        params.set('end', securitySlice.end);
+    }
+    return params;
+}
+
 async function loadSecurity() {
-    if (securityLoading) return;
+    // A bar clicked while a load is in flight must not be lost: it is loaded
+    // once the current one is done.
+    if (securityLoading) {
+        securityReloadPending = true;
+        return;
+    }
     securityLoading = true;
     try {
-        const internal = document.getElementById('security-internal').checked;
-        const [data, blocklist] = await Promise.all([
+        const slice = securitySlice;
+        const internal = securityInternal();
+        const sliceParams = securityRangeParams();
+        sliceParams.set('include_internal', internal);
+        const [data, blocklist, sliceData] = await Promise.all([
             apiGet(`/security/overview?minutes=${encodeURIComponent(securityWindow())}&include_internal=${internal}`),
             apiGet('/security/blocklist'),
+            slice ? apiGet(`/security/overview?${sliceParams}`) : null,
         ]);
         if (blocklist) renderSecurityBlocklist(blocklist);
         if (!data) return;
         securityData = data;
-        renderSecurity(data);
+        if (slice !== securitySlice) return;  // refocused meanwhile: the pending load renders
+        securitySliceFailed = Boolean(slice) && !sliceData;
+        securityDetail = slice ? sliceData : data;
+        renderSecurity(data, securityDetail);
+        if (securityTab === 'requests') loadSecurityRequests();
     } finally {
         securityLoading = false;
+        if (securityReloadPending) {
+            securityReloadPending = false;
+            loadSecurity();
+        }
     }
 }
 
-function renderSecurity(data) {
+function changeSecurityWindow() {
+    // A slot of the previous window may not exist in the new one.
+    securitySlice = null;
+    loadSecurity();
+}
+
+function renderSecurity(data, detail) {
     const errorEl = document.getElementById('security-error');
-    if (data.error) {
-        errorEl.textContent = `${data.error}. The access index is filled by the PulsarCD agent running on the Traefik node, from Traefik's JSON access log.`;
+    const error = data.error || (detail && detail.error);
+    if (error) {
+        errorEl.textContent = `${error}. The access index is filled by the PulsarCD agent running on the Traefik node, from Traefik's JSON access log.`;
         errorEl.style.display = '';
     } else {
         errorEl.style.display = 'none';
@@ -80,10 +141,72 @@ function renderSecurity(data) {
         SECURITY_INTERVAL_LABELS[data.timeline_interval] || data.timeline_interval;
 
     renderSecurityChart(data.timeline, data.window_minutes);
-    renderSecurityIps(data.ips);
-    renderSecurityEndpoints(data.endpoints);
-    renderSecurityWafRules(data.waf_rules);
+    renderSecurityCategories(data.attack_categories || []);
+    renderSecurityFocus();
+    renderSecurityDetail(detail);
 }
+
+/** The tabs' content, or a placeholder while the focused slot loads (or failed to). */
+function renderSecurityDetail(detail) {
+    if (!detail) {
+        const text = securitySliceFailed ? 'Could not load this time slot' : 'Loading&hellip;';
+        document.getElementById('security-ips-body').innerHTML = `<tr><td colspan="11" class="security-empty">${text}</td></tr>`;
+        document.getElementById('security-endpoints-body').innerHTML = `<tr><td colspan="8" class="security-empty">${text}</td></tr>`;
+        document.getElementById('security-attacks-body').innerHTML = `<tr><td colspan="7" class="security-empty">${text}</td></tr>`;
+        document.getElementById('security-waf-rules').innerHTML = '';
+        ['ips', 'endpoints', 'attacks'].forEach(tab => setSecurityTabCount(tab, ''));
+        return;
+    }
+    const scope = securitySlice ? 'in this time slot' : 'in this window';
+    renderSecurityIps(detail.ips, scope);
+    renderSecurityEndpoints(detail.endpoints, scope);
+    renderSecurityAttacks(detail.attacks || [], scope);
+    renderSecurityWafRules(detail.waf_rules, scope);
+
+    const flagged = detail.totals.flagged_ips;
+    setSecurityTabCount('ips', formatNumber(detail.ips.length), flagged > 0,
+        flagged ? `${flagged} flagged` : '');
+    setSecurityTabCount('endpoints', formatNumber(detail.endpoints.length), detail.totals.flagged_endpoints > 0);
+    const answered = detail.totals.attack_answered || 0;
+    setSecurityTabCount('attacks', formatNumber(detail.totals.attack_requests || 0), answered > 0,
+        answered ? `${answered} answered with a 2xx` : '');
+}
+
+function setSecurityTabCount(tab, text, alert = false, title = '') {
+    const el = document.getElementById(`security-count-${tab}`);
+    el.textContent = text;
+    el.title = title;
+    el.classList.toggle('security-tab-count-alert', alert);
+}
+
+// ---- Tabs ----------------------------------------------------------------
+
+function switchSecurityTab(tab) {
+    if (!SECURITY_TABS.includes(tab)) return;
+    const changed = tab !== securityTab;
+    securityTab = tab;
+    try { localStorage.setItem(SECURITY_TAB_KEY, tab); } catch { /* private mode */ }
+    document.querySelectorAll('#security-view .security-tab').forEach(btn => {
+        const active = btn.dataset.tab === tab;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-selected', String(active));
+    });
+    SECURITY_TABS.forEach(name => {
+        document.getElementById(`security-panel-${name}`).style.display = name === tab ? '' : 'none';
+    });
+    if (tab === 'requests' && changed) loadSecurityRequests();
+}
+
+function restoreSecurityTab() {
+    let saved = null;
+    try { saved = localStorage.getItem(SECURITY_TAB_KEY); } catch { /* private mode */ }
+    if (saved && SECURITY_TABS.includes(saved)) {
+        securityTab = null;
+        switchSecurityTab(saved);
+    }
+}
+
+// ---- Timeline and the focused time slot --------------------------------------
 
 function formatSecurityBucket(iso, windowMinutes) {
     const date = parseUtc(iso);
@@ -93,6 +216,65 @@ function formatSecurityBucket(iso, windowMinutes) {
     return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
+function formatSecuritySlice(slice) {
+    const start = parseUtc(slice.start);
+    const end = parseUtc(slice.end);
+    const day = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const time = d => d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return `${day}, ${time(start)}–${time(end)}`;
+}
+
+/** The slot of bar `index`, or null to clear the focus (the focused bar clicked again). */
+function securitySliceFor(timeline, interval, index, current) {
+    const point = timeline[index];
+    if (!point) return current;
+    const start = parseUtc(point.timestamp);
+    if (current && parseUtc(current.start).getTime() === start.getTime()) return null;
+    const seconds = SECURITY_INTERVAL_SECONDS[interval] || 60;
+    return { start: start.toISOString(), end: new Date(start.getTime() + seconds * 1000).toISOString() };
+}
+
+function focusSecurityBar(index) {
+    if (!securityData) return;
+    securitySlice = securitySliceFor(securityData.timeline, securityData.timeline_interval, index, securitySlice);
+    // The blocklist does not depend on time: show what the slot is about.
+    if (securitySlice && securityTab === 'edge') switchSecurityTab('endpoints');
+    securityDetail = securitySlice ? null : securityData;
+    securitySliceFailed = false;
+    renderSecurity(securityData, securityDetail);
+    if (securitySlice) {
+        loadSecurity();
+    } else if (securityTab === 'requests') {
+        loadSecurityRequests();
+    }
+}
+
+function clearSecuritySlice() {
+    if (!securitySlice) return;
+    securitySlice = null;
+    securityDetail = securityData;
+    if (securityData) renderSecurity(securityData, securityDetail);
+    if (securityTab === 'requests') loadSecurityRequests();
+}
+
+function renderSecurityFocus() {
+    const banner = document.getElementById('security-focus');
+    if (securitySlice) {
+        document.getElementById('security-focus-label').textContent = formatSecuritySlice(securitySlice);
+        banner.style.display = '';
+    } else {
+        banner.style.display = 'none';
+    }
+}
+
+// Colours of the 2xx/3xx, 4xx and 5xx series.
+const SECURITY_SERIES_COLORS = [['34, 197, 94', 0.6], ['245, 158, 11', 0.75], ['239, 68, 68', 0.8]];
+
+/** A bar's colour, dimmed when another bar is focused. */
+function securityBarColor([rgb, alpha]) {
+    return ctx => `rgba(${rgb}, ${securitySelectedBar >= 0 && ctx.dataIndex !== securitySelectedBar ? alpha * 0.3 : alpha})`;
+}
+
 function renderSecurityChart(timeline, windowMinutes) {
     const labels = timeline.map(p => formatSecurityBucket(p.timestamp, windowMinutes));
     const series = [
@@ -100,6 +282,9 @@ function renderSecurityChart(timeline, windowMinutes) {
         timeline.map(p => p.client_errors || 0),
         timeline.map(p => p.server_errors || 0),
     ];
+    const focused = securitySlice ? parseUtc(securitySlice.start).getTime() : null;
+    securitySelectedBar = focused === null ? -1
+        : timeline.findIndex(p => parseUtc(p.timestamp).getTime() === focused);
 
     // Updated in place on refresh: rebuilding the chart every 30 s flickers.
     if (charts.security) {
@@ -115,20 +300,38 @@ function renderSecurityChart(timeline, windowMinutes) {
     options.scales.y.stacked = true;
     options.scales.x.ticks.autoSkip = true;
     options.scales.x.ticks.maxTicksLimit = 12;
+    const barAt = (event, chart) =>
+        chart.getElementsAtEventForMode(event, 'index', { intersect: false }, true)[0];
+    options.onClick = (event, _elements, chart) => {
+        const bar = barAt(event, chart);
+        if (bar) focusSecurityBar(bar.index);
+    };
+    options.onHover = (event, _elements, chart) => {
+        chart.canvas.style.cursor = barAt(event, chart) ? 'pointer' : 'default';
+    };
+    // A bar chart's legend takes the colour of its first bar, dimmed when
+    // another one is focused: give it the series colour instead.
+    options.plugins.legend.labels.generateLabels = chart =>
+        Chart.defaults.plugins.legend.labels.generateLabels(chart).map(item => {
+            const [rgb, alpha] = SECURITY_SERIES_COLORS[item.datasetIndex];
+            return { ...item, fillStyle: `rgba(${rgb}, ${alpha})`, strokeStyle: `rgba(${rgb}, ${alpha})` };
+        });
 
     charts.security = new Chart(document.getElementById('security-chart').getContext('2d'), {
         type: 'bar',
         data: {
             labels,
             datasets: [
-                { label: '2xx/3xx', data: series[0], backgroundColor: 'rgba(34, 197, 94, 0.6)' },
-                { label: '4xx', data: series[1], backgroundColor: 'rgba(245, 158, 11, 0.75)' },
-                { label: '5xx', data: series[2], backgroundColor: 'rgba(239, 68, 68, 0.8)' },
+                { label: '2xx/3xx', data: series[0], backgroundColor: securityBarColor(SECURITY_SERIES_COLORS[0]) },
+                { label: '4xx', data: series[1], backgroundColor: securityBarColor(SECURITY_SERIES_COLORS[1]) },
+                { label: '5xx', data: series[2], backgroundColor: securityBarColor(SECURITY_SERIES_COLORS[2]) },
             ],
         },
         options,
     });
 }
+
+// ---- Client IPs, endpoints, attacks, WAF rules -----------------------------
 
 function securityFlagBadges(flags) {
     if (!flags || !flags.length) return '<span class="text-muted">&mdash;</span>';
@@ -147,10 +350,14 @@ function securityShare(part, total) {
     return total ? ` <span class="text-muted">(${Math.round(100 * part / total)}%)</span>` : '';
 }
 
-function renderSecurityIps(ips) {
+function securityIpLink(ip) {
+    return `<span class="mono security-link" data-click="openSecurityIp" data-args="${uiArgs(ip)}" data-click-stop>${escapeHtml(ip)}</span>`;
+}
+
+function renderSecurityIps(ips, scope) {
     const body = document.getElementById('security-ips-body');
     if (!ips.length) {
-        body.innerHTML = '<tr><td colspan="11" class="security-empty">No request in this window</td></tr>';
+        body.innerHTML = `<tr><td colspan="11" class="security-empty">No request ${scope}</td></tr>`;
         return;
     }
     body.innerHTML = ips.map(ip => {
@@ -172,20 +379,18 @@ function renderSecurityIps(ips) {
     }).join('');
 }
 
-function renderSecurityEndpoints(endpoints) {
+function renderSecurityEndpoints(endpoints, scope) {
     const body = document.getElementById('security-endpoints-body');
     if (!endpoints.length) {
-        body.innerHTML = '<tr><td colspan="8" class="security-empty">No request in this window</td></tr>';
+        body.innerHTML = `<tr><td colspan="8" class="security-empty">No request ${scope}</td></tr>`;
         return;
     }
     body.innerHTML = endpoints.map(ep => {
         const top = ep.top_ips[0];
-        const topClient = top
-            ? `<span class="mono security-link" data-click="openSecurityIp" data-args="${uiArgs(top.key)}">${escapeHtml(top.key)}</span>${securityShare(top.count, ep.requests)}`
-            : '&mdash;';
+        const topClient = top ? `${securityIpLink(top.key)}${securityShare(top.count, ep.requests)}` : '&mdash;';
         const endpoint = `${ep.host}${ep.path}`;
         return `
-        <tr class="${securityRowClass(ep.score)}">
+        <tr class="security-row ${securityRowClass(ep.score)}" data-click="showSecurityRequests" data-args="${uiArgs({ host: ep.host, path: ep.path })}" title="Show the requests of this endpoint">
             <td class="mono security-ellipsis" title="${escapeHtml(endpoint)}"><span class="text-muted">${escapeHtml(ep.host)}</span>${escapeHtml(ep.path)}</td>
             <td class="security-flags-cell">${securityFlagBadges(ep.flags)}</td>
             <td class="num">${formatNumber(ep.requests)}</td>
@@ -198,17 +403,177 @@ function renderSecurityEndpoints(endpoints) {
     }).join('');
 }
 
-function renderSecurityWafRules(rules) {
-    const card = document.getElementById('security-waf-card');
-    if (!rules || !rules.length) {
-        card.style.display = 'none';
+function renderSecurityAttacks(attacks, scope) {
+    const body = document.getElementById('security-attacks-body');
+    if (!attacks.length) {
+        body.innerHTML = `<tr><td colspan="7" class="security-empty">No known attack pattern ${scope}</td></tr>`;
         return;
     }
-    document.getElementById('security-waf-rules').innerHTML = rules.map(r =>
-        `<span class="rerr-service-chip">${escapeHtml(r.key)} <span class="text-muted">&times;${formatNumber(r.count)}</span></span>`
-    ).join('');
-    card.style.display = '';
+    body.innerHTML = attacks.map(cat => {
+        // A category read from the URI shows the whole URI: its payload is the point.
+        const targets = cat.top_targets.map(t => {
+            const filters = cat.field === 'uri' ? { uri: t.target } : { path: t.target };
+            const title = `${t.target}: ${t.count} request(s)${t.answered ? `, ${t.answered} answered with a 2xx` : ''}`
+                + ` on ${t.hosts.join(', ')}`;
+            return `<span class="security-chip mono${t.answered ? ' security-chip-alert' : ''}" title="${escapeHtml(title)}" data-click="showSecurityRequests" data-args="${uiArgs(filters)}" data-click-stop>${escapeHtml(t.target)} <span class="text-muted">&times;${formatNumber(t.count)}</span></span>`;
+        }).join('');
+        const clients = cat.top_ips.map(c =>
+            `<span class="security-chip mono" data-click="openSecurityIp" data-args="${uiArgs(c.key)}" data-click-stop>${escapeHtml(c.key)} <span class="text-muted">&times;${formatNumber(c.count)}</span></span>`
+        ).join('');
+        const answered = cat.answered
+            ? `<span class="security-status-error" title="Check these targets did not serve anything sensitive">${formatNumber(cat.answered)}</span>`
+            : '<span class="text-muted">0</span>';
+        return `
+        <tr class="security-row${cat.answered ? ' security-row-high' : ''}" data-click="showSecurityRequests" data-args="${uiArgs({ category: cat.code })}" title="Show these requests">
+            <td><strong>${escapeHtml(cat.label)}</strong><div class="security-attack-desc">${escapeHtml(cat.description)}</div></td>
+            <td class="num">${formatNumber(cat.requests)}</td>
+            <td class="num">${formatNumber(cat.clients)}</td>
+            <td class="num">${answered}</td>
+            <td><div class="security-chips">${targets || '&mdash;'}</div></td>
+            <td><div class="security-chips">${clients || '&mdash;'}</div></td>
+            <td class="security-nowrap">${formatRelativeTime(cat.last_seen)}</td>
+        </tr>`;
+    }).join('');
 }
+
+function renderSecurityWafRules(rules, scope) {
+    const el = document.getElementById('security-waf-rules');
+    if (!rules || !rules.length) {
+        el.innerHTML = `<span class="text-muted">No WAF block ${scope}</span>`;
+        return;
+    }
+    el.innerHTML = rules.map(r =>
+        `<span class="security-chip" data-click="showSecurityRequests" data-args="${uiArgs({ status: 'waf', rule: r.key })}">${escapeHtml(r.key)} <span class="text-muted">&times;${formatNumber(r.count)}</span></span>`
+    ).join('');
+}
+
+/** The explorer's attack choices, from the backend's catalogue (filled once). */
+function renderSecurityCategories(categories) {
+    const select = document.getElementById('security-filter-category');
+    if (select.options.length > 1 || !categories.length) return;
+    categories.forEach(cat => select.add(new Option(cat.label, cat.code)));
+    select.value = securityRequestFilters.category || '';
+}
+
+// ---- Request explorer ------------------------------------------------------
+
+/** Open the Requests tab on these filters (from a row, a chip or a rule elsewhere). */
+function showSecurityRequests(filters) {
+    securityRequestFilters = { ...filters };
+    for (const [name, id] of Object.entries(SECURITY_FORM_FILTERS)) {
+        document.getElementById(id).value = securityRequestFilters[name] || '';
+    }
+    if (securityTab === 'requests') {
+        loadSecurityRequests();
+    } else {
+        switchSecurityTab('requests');
+    }
+}
+
+function applySecurityRequestFilters() {
+    const filters = {};
+    for (const name of Object.keys(SECURITY_CHIP_FILTERS)) {
+        if (securityRequestFilters[name]) filters[name] = securityRequestFilters[name];
+    }
+    for (const [name, id] of Object.entries(SECURITY_FORM_FILTERS)) {
+        const value = document.getElementById(id).value.trim();
+        if (value) filters[name] = value;
+    }
+    securityRequestFilters = filters;
+    loadSecurityRequests();
+}
+
+function resetSecurityRequestFilters() {
+    showSecurityRequests({});
+}
+
+function removeSecurityRequestFilter(name) {
+    delete securityRequestFilters[name];
+    loadSecurityRequests();
+}
+
+function renderSecurityRequestChips() {
+    document.getElementById('security-request-chips').innerHTML = Object.entries(SECURITY_CHIP_FILTERS)
+        .filter(([name]) => securityRequestFilters[name])
+        .map(([name, label]) => `
+            <span class="security-chip security-chip-filter">
+                <span class="text-muted">${label}:</span> <span class="mono">${escapeHtml(securityRequestFilters[name])}</span>
+                <button class="security-chip-remove" title="Remove this filter" data-click="removeSecurityRequestFilter" data-args="${uiArgs(name)}">&times;</button>
+            </span>`).join('');
+}
+
+function securityStatusClass(status) {
+    if (status >= 500) return 'security-status-error';
+    if (status >= 400) return 'security-status-warning';
+    return 'security-status-ok';
+}
+
+function securityEventStatus(e) {
+    if (e.event === 'waf_block') {
+        return `<span class="security-flag security-flag-high" title="${escapeHtml(e.rule_msg || '')}">WAF</span>`;
+    }
+    const status = `<span class="${securityStatusClass(e.status)}">${escapeHtml(String(e.status ?? '-'))}</span>`;
+    return (e.router || '').startsWith(SECURITY_EDGE_ROUTER)
+        ? `${status} <span class="security-flag security-flag-high" title="Refused at the edge: this client is blocked">Edge</span>`
+        : status;
+}
+
+/** One request or WAF block; `withClient` adds the client column (explorer). */
+function securityEventRow(e, withClient) {
+    const time = parseUtc(e.timestamp).toLocaleString('en-US', {
+        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    });
+    const host = e.request_host || e.router || '';
+    return `
+        <tr>
+            <td class="mono security-nowrap">${escapeHtml(time)}</td>
+            ${withClient ? `<td>${e.client_ip ? securityIpLink(e.client_ip) : ''}</td>` : ''}
+            <td class="security-nowrap">${securityEventStatus(e)}</td>
+            <td>${escapeHtml(e.method || '')}</td>
+            <td class="security-ellipsis" title="${escapeHtml(host)}">${escapeHtml(host)}</td>
+            <td class="mono security-uri" title="${escapeHtml(e.uri || '')}">${escapeHtml(e.uri || '')}</td>
+            <td class="security-ellipsis" title="${escapeHtml(e.user_agent || '')}">${escapeHtml(e.user_agent || '')}</td>
+        </tr>`;
+}
+
+async function loadSecurityRequests() {
+    const body = document.getElementById('security-requests-body');
+    const status = document.getElementById('security-requests-status');
+    renderSecurityRequestChips();
+    const params = securityRangeParams();
+    params.set('include_internal', securityInternal());
+    for (const [name, value] of Object.entries(securityRequestFilters)) {
+        if (value) params.set(name, value);
+    }
+    // A slower answer for earlier filters must not overwrite this one.
+    const requestId = ++securityRequestsRequest;
+    status.textContent = 'Loading…';
+    const { data, error } = await apiGetOrError(`/security/requests?${params}`);
+    if (requestId !== securityRequestsRequest) return;
+    const scope = securitySlice ? `in ${formatSecuritySlice(securitySlice)}` : 'in this window';
+    if (error || data.error) {
+        status.textContent = '';
+        body.innerHTML = `<tr><td colspan="7" class="security-empty">${escapeHtml(error || data.error)}</td></tr>`;
+        return;
+    }
+    const events = data.events;
+    if (!events.length) {
+        status.textContent = '';
+        body.innerHTML = `<tr><td colspan="7" class="security-empty">No matching request ${escapeHtml(scope)}</td></tr>`;
+        return;
+    }
+    status.textContent = events.length >= data.limit
+        ? `The ${formatNumber(data.limit)} most recent matching requests ${scope}: narrow the filters or pick a bar to see older ones.`
+        : `${formatNumber(events.length)} matching request(s) ${scope}, newest first.`;
+    body.innerHTML = events.map(e => securityEventRow(e, true)).join('');
+}
+
+document.getElementById('security-request-filters').addEventListener('submit', (e) => {
+    e.preventDefault();
+    applySecurityRequestFilters();
+});
+
+restoreSecurityTab();
 
 // ---- Blocking a client at the edge ----------------------------------------
 // A blocked address is refused by Traefik in front of Coraza, for every host
@@ -256,6 +621,8 @@ function renderSecurityBlocklist(data) {
 
     const body = document.getElementById('security-blocklist-body');
     const entries = data.entries || [];
+    setSecurityTabCount('edge', entries.length ? formatNumber(entries.length) : '', false,
+        entries.length ? `${entries.length} blocked address(es) or range(s)` : '');
     if (!entries.length) {
         body.innerHTML = '<tr><td colspan="6" class="security-empty">No address is blocked</td></tr>';
         return;
@@ -343,11 +710,6 @@ function setSecurityIpModalAction(ip, blocked, internal) {
         securityBlockButton(ip, blocked, internal, false);
 }
 
-function securityStatusClass(status) {
-    if (status >= 500) return 'security-status-error';
-    if (status >= 400) return 'security-status-warning';
-    return 'security-status-ok';
-}
 
 function securityIpSummary(ip) {
     const paths = ip.top_paths.map(p =>
@@ -370,7 +732,8 @@ function securityIpSummary(ip) {
 async function openSecurityIp(ip) {
     const modal = document.getElementById('security-ip-modal');
     const eventsBody = document.getElementById('security-ip-modal-events');
-    const known = securityData && securityData.ips.find(i => i.ip === ip);
+    const known = securityDetail && securityDetail.ips.find(i => i.ip === ip);
+    const scope = securitySlice ? 'in this time slot' : 'in this window';
     document.getElementById('security-ip-modal-ip').textContent = ip;
     document.getElementById('security-ip-modal-summary').innerHTML = known ? securityIpSummary(known) : '';
     eventsBody.innerHTML = '<tr><td colspan="6" class="security-empty">Loading&hellip;</td></tr>';
@@ -382,8 +745,7 @@ async function openSecurityIp(ip) {
 
     // A slower answer for a previously opened IP must not overwrite this one.
     const requestId = ++securityIpRequest;
-    const data = await apiGet(
-        `/security/ips/${encodeURIComponent(ip)}?minutes=${encodeURIComponent(securityWindow())}`);
+    const data = await apiGet(`/security/ips/${encodeURIComponent(ip)}?${securityRangeParams()}`);
     if (requestId !== securityIpRequest) return;
     if (data) setSecurityIpModalAction(ip, data.blocked, data.internal);
     if (!data) {
@@ -391,27 +753,17 @@ async function openSecurityIp(ip) {
         return;
     }
     if (!data.events.length) {
-        eventsBody.innerHTML = '<tr><td colspan="6" class="security-empty">No request from this client in this window</td></tr>';
+        eventsBody.innerHTML = `<tr><td colspan="6" class="security-empty">No request from this client ${scope}</td></tr>`;
         return;
     }
-    eventsBody.innerHTML = data.events.map(e => {
-        const status = e.event === 'waf_block'
-            ? `<span class="security-flag security-flag-high" title="${escapeHtml(e.rule_msg || '')}">WAF</span>`
-            : `<span class="${securityStatusClass(e.status)}">${escapeHtml(String(e.status ?? '-'))}</span>`;
-        const time = parseUtc(e.timestamp).toLocaleString('en-US', {
-            month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-        });
-        const host = e.request_host || e.router || '';
-        return `
-        <tr>
-            <td class="mono security-nowrap">${escapeHtml(time)}</td>
-            <td>${status}</td>
-            <td>${escapeHtml(e.method || '')}</td>
-            <td class="security-ellipsis" title="${escapeHtml(host)}">${escapeHtml(host)}</td>
-            <td class="mono security-uri" title="${escapeHtml(e.uri || '')}">${escapeHtml(e.uri || '')}</td>
-            <td class="security-ellipsis" title="${escapeHtml(e.user_agent || '')}">${escapeHtml(e.user_agent || '')}</td>
-        </tr>`;
-    }).join('');
+    eventsBody.innerHTML = data.events.map(e => securityEventRow(e, false)).join('');
+}
+
+/** Leave the modal for the request explorer, filtered on this client. */
+function showSecurityIpRequests() {
+    const ip = securityIpModalIp;
+    closeSecurityIpModal();
+    if (ip) showSecurityRequests({ ip });
 }
 
 function closeSecurityIpModal() {

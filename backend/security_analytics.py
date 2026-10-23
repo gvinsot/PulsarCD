@@ -7,13 +7,18 @@ candidate client IPs and hot endpoints, the detail round computes statistics
 for those candidates only.
 """
 
-from datetime import datetime
+import math
+import re
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from shared.access_log import EVENT_REQUEST, EVENT_WAF_BLOCK
 from shared.victorialogs import (
-    KIND_ACCESS, any_of, bucket_times, exact, integer, iso_ms, num, parse_time, stream,
+    KIND_ACCESS, any_of, bucket_times, exact, field, integer, iso_ms, num, parse_time, quote,
+    stream, text_filter,
 )
+
+from .ip_blocklist import ROUTER_NAME as EDGE_ROUTER_NAME
 
 MIN_WINDOW_MINUTES = 5
 MAX_WINDOW_MINUTES = 7 * 24 * 60
@@ -22,6 +27,12 @@ DEFAULT_WINDOW_MINUTES = 60
 # Candidates taken from each ranking (by requests, by 4xx, by WAF blocks).
 TOP_N = 25
 MAX_IP_EVENTS = 200
+# Rows of the request explorer, newest first.
+MAX_REQUESTS = 500
+# (host, uri, client) groups read to rank each attack category's targets and
+# clients. The category totals are exact; only these top lists are sampled.
+ATTACK_SAMPLES = 1000
+ATTACK_TOP = 5
 
 # --- Detection thresholds -------------------------------------------------
 # A client's peak is its busiest minute in the window. Over long windows the
@@ -54,8 +65,97 @@ NOT_FOUND = "status:=404"
 IS_REQUEST = exact("event", EVENT_REQUEST)
 IS_WAF_BLOCK = exact("event", EVENT_WAF_BLOCK)
 
+ANSWERED = "status:range[200, 300)"
+# Requests the edge refused because the client is on the blocklist (both the
+# HTTPS and the HTTP router of ip_blocklist share this prefix).
+REFUSED_AT_EDGE = f"router:{quote(EDGE_ROUTER_NAME)}*"
+
 _STATUS_COUNTS = (f"count() if ({OK}) as ok, count() if ({CLIENT_ERRORS}) as client_errors, "
                   f"count() if ({SERVER_ERRORS}) as server_errors")
+
+# --- Attack categories --------------------------------------------------------
+# What a request was after, read from its path, or from its whole URI for the
+# payloads a query string carries. The same patterns (the common subset of RE2
+# and Python's re) drive the exact LogsQL counts and the Python classification
+# of the sampled requests, so both put a request in the same category. Ordered
+# by severity: a request matching several categories counts for the first.
+ATTACK_CATEGORIES: Tuple[Dict[str, str], ...] = (
+    {"code": "injection", "label": "Injection", "field": "uri",
+     "description": "SQL, script, template or command injection payloads",
+     "pattern": (r"(?i)union(\s|\+|%20)+(all(\s|\+|%20)+)?select|<script|%3cscript|javascript:"
+                 r"|\$\{jndi|%24%7bjndi|\$\{\{|information_schema|xp_cmdshell|sleep\([0-9]"
+                 r"|benchmark\(|/bin/(ba)?sh|cmd\.exe|(\s|\+|%20|;|%3b|\||%7c)(wget|curl)(\s|\+|%20)")},
+    {"code": "traversal", "label": "Path traversal", "field": "uri",
+     "description": "Climbing out of the web root to read system files",
+     "pattern": (r"(?i)\.\./|\.\.\\|\.\.%2f|\.\.%5c|%2e%2e|%252e%252e|/etc/(passwd|shadow|hosts)"
+                 r"|win\.ini|boot\.ini|/proc/self/")},
+    {"code": "secrets", "label": "Secrets & source", "field": "path",
+     "description": "Environment files, credentials, keys and version-control folders",
+     "pattern": (r"(?i)(^|/)\.(env|git|svn|hg|bzr|aws|ssh|docker|kube|npmrc|pypirc|netrc|htpasswd"
+                 r"|htaccess|ds_store|vscode|idea)([./~;_-]|$)|\.env([./~;]|$)"
+                 r"|(^|/)(auth|credentials|secrets?|appsettings|parameters)\.(json|ya?ml|ini|xml|toml)"
+                 r"|(^|/)(id_rsa|id_ed25519|id_ecdsa)([./~;]|$)")},
+    {"code": "exploits", "label": "Known exploits", "field": "path",
+     "description": "Routers, VPN appliances, frameworks and tooling with public exploits",
+     "pattern": (r"(?i)(^|/)(cgi-bin|boaform|hnap1|gponform|vendor/phpunit|_ignition|actuator"
+                 r"|server-status|solr|jenkins|manager/html|telescope|_profiler|owa|ecp|autodiscover"
+                 r"|remote/login|global-protect|dana-na|containers/json|api/v1/pods|setup\.cgi)"
+                 r"([/;._-]|$)")},
+    {"code": "wordpress", "label": "WordPress", "field": "path",
+     "description": "WordPress admin, login and plugin paths: no WordPress runs here",
+     "pattern": (r"(?i)(^|/)((wp-admin|wp-content|wp-includes|wp-json)([/;]|$)"
+                 r"|(wp-login|wp-config|wp-cron|wp-signup|wp-activate|wp-blog-header|wp-load"
+                 r"|wp-mail|wp-comments-post|wp-trackback|xmlrpc)\.php)")},
+    {"code": "php", "label": "PHP & admin panels", "field": "path",
+     "description": "PHP scripts and database admin tools",
+     "pattern": (r"(?i)\.php[0-9]?([/;.]|$)|(^|/)(phpmyadmin|pma|myadmin|mysqladmin|adminer"
+                 r"|phpinfo|pgadmin)([/._-]|$)")},
+    {"code": "backups", "label": "Backups & dumps", "field": "path",
+     "description": "Archives, database dumps and editor leftovers",
+     "pattern": (r"(?i)\.(bak|backup|old|orig|save|swp|sql|sqlite3?|db|dump|tar|tgz|gz|bz2|xz|zip"
+                 r"|rar|7z)$")},
+)
+_ATTACKS_BY_CODE = {cat["code"]: cat for cat in ATTACK_CATEGORIES}
+_ATTACK_RES = [(cat["code"], cat["field"], re.compile(cat["pattern"])) for cat in ATTACK_CATEGORIES]
+
+# Status choices of the request explorer.
+REQUEST_STATUSES = {
+    "2xx": ANSWERED,
+    "3xx": "status:range[300, 400)",
+    "4xx": CLIENT_ERRORS,
+    "404": NOT_FOUND,
+    "denied": DENIED,
+    "429": RATE_LIMITED,
+    "5xx": SERVER_ERRORS,
+    "edge": REFUSED_AT_EDGE,
+}
+
+
+def _attack_match(category: Dict[str, str]) -> str:
+    return f"{field(category['field'])}:~{quote(category['pattern'])}"
+
+
+ANY_ATTACK = "(" + " OR ".join(_attack_match(cat) for cat in ATTACK_CATEGORIES) + ")"
+
+
+def attack_filter(code: str) -> str:
+    """Requests of one category: its pattern, and none of the categories above it."""
+    filters = []
+    for cat in ATTACK_CATEGORIES:
+        if cat["code"] == code:
+            return "(" + " ".join([_attack_match(cat)] + filters) + ")"
+        filters.append(f"NOT {_attack_match(cat)}")
+    raise ValueError(f"Unknown attack category: {code}")
+
+
+def classify_request(uri: Any) -> Optional[str]:
+    """Attack category of a request URI, as attack_filter would count it."""
+    uri = str(uri or "")
+    path = uri.split("?", 1)[0]
+    for code, name, pattern in _ATTACK_RES:
+        if pattern.search(uri if name == "uri" else path):
+            return code
+    return None
 
 
 def clamp_window(minutes: Any) -> int:
@@ -64,6 +164,27 @@ def clamp_window(minutes: Any) -> int:
     except (TypeError, ValueError):
         return DEFAULT_WINDOW_MINUTES
     return max(MIN_WINDOW_MINUTES, min(value, MAX_WINDOW_MINUTES))
+
+
+def resolve_window(minutes: Any, start: Any, end: Any, now: datetime) -> Tuple[datetime, datetime, int]:
+    """``(start, end, minutes)`` of the requested range.
+
+    Without ``start``/``end`` it is the last ``minutes``. With both, it is that
+    explicit range -- a bucket picked on the timeline, possibly one minute
+    long -- ending at ``now`` at the latest. Raises ValueError otherwise.
+    """
+    if start is None and end is None:
+        minutes = clamp_window(minutes)
+        return now - timedelta(minutes=minutes), now, minutes
+    begin, finish = parse_time(start), parse_time(end)
+    if begin is None or finish is None:
+        raise ValueError("start and end must both be ISO 8601 timestamps")
+    finish = min(finish, now)
+    if finish <= begin:
+        raise ValueError("The range must end after it starts, and start in the past")
+    if finish - begin > timedelta(minutes=MAX_WINDOW_MINUTES):
+        raise ValueError("The range cannot exceed 7 days")
+    return begin, finish, max(1, math.ceil((finish - begin).total_seconds() / 60))
 
 
 def timeline_interval(minutes: int) -> str:
@@ -131,6 +252,15 @@ def build_overview_queries(minutes: int, include_internal: bool) -> Dict[str, st
         "waf_ips": (f"{waf} client_ip:* | stats by (client_ip) count() as n "
                     f"| sort by (n desc) limit {TOP_N}"),
         "waf_rules": f"{waf} rule_msg:* | stats by (rule_msg) count() as n | sort by (n desc) limit 10",
+        "attack_samples": (f"{requests} {ANY_ATTACK} | stats by (request_host, uri, client_ip) "
+                           f"count() as n, count() if ({ANSWERED}) as answered "
+                           f"| sort by (n desc) limit {ATTACK_SAMPLES}"),
+        # One query per category: a single one would repeat every exclusive
+        # filter for each of its statistics.
+        **{f"attack_{code}": (f"{requests} {attack_filter(code)} | stats count() as requests, "
+                              f"count_uniq(client_ip) as clients, count() if ({ANSWERED}) as answered, "
+                              "max(_time) as last_seen")
+           for code in _ATTACKS_BY_CODE},
     }
 
 
@@ -193,10 +323,49 @@ def build_detail_queries(minutes: int, include_internal: bool,
     return queries
 
 
+_EVENT_FIELDS = ("_time, event, client_ip, request_host, method, uri, status, router, user_agent, "
+                 "rule_msg, duration_ms")
+
+
 def build_ip_events_query(ip: str) -> str:
     """Latest requests and WAF blocks of one client (newest first via limit=)."""
-    return (f"{stream(KIND_ACCESS)} {exact('client_ip', ip)} | fields _time, event, request_host, "
-            "method, uri, status, router, user_agent, rule_msg, duration_ms")
+    return f"{stream(KIND_ACCESS)} {exact('client_ip', ip)} | fields {_EVENT_FIELDS}"
+
+
+def build_requests_query(include_internal: bool, *, ip: Optional[str] = None,
+                         host: Optional[str] = None, path: Optional[str] = None,
+                         uri: Optional[str] = None, rule: Optional[str] = None,
+                         text: Optional[str] = None, status: Optional[str] = None,
+                         category: Optional[str] = None) -> str:
+    """Requests and WAF blocks matching the request explorer's filters.
+
+    Every value is quoted, and ``text`` goes through the log search's own
+    parser: nothing typed can change the query. ``status`` is a key of
+    REQUEST_STATUSES, or ``waf`` for the WAF blocks; ``category`` a code of
+    ATTACK_CATEGORIES. Raises ValueError for an unknown one. A client asked
+    for by address is shown even when it is internal.
+    """
+    parts = [base_filter(include_internal or bool(ip))]
+    if status == "waf":
+        parts.append(IS_WAF_BLOCK)
+    elif status:
+        if status not in REQUEST_STATUSES:
+            raise ValueError(f"Unknown status filter: {status}")
+        parts += [IS_REQUEST, REQUEST_STATUSES[status]]
+    if category:
+        if category not in _ATTACKS_BY_CODE:
+            raise ValueError(f"Unknown attack category: {category}")
+        if not status:
+            parts.append(IS_REQUEST)
+        parts.append(attack_filter(category))
+    for name, value in (("client_ip", ip), ("request_host", host), ("path", path), ("uri", uri),
+                        ("rule_msg", rule)):
+        if value:
+            parts.append(exact(name, value))
+    search = text_filter(text, "uri", default_op="AND")
+    if search:
+        parts.append(f"({search})")
+    return f"{' '.join(parts)} | fields {_EVENT_FIELDS}"
 
 
 def event_from_row(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -204,6 +373,7 @@ def event_from_row(row: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "timestamp": row.get("_time"),
         "event": row.get("event"),
+        "client_ip": row.get("client_ip"),
         "request_host": row.get("request_host"),
         "method": row.get("method"),
         "uri": row.get("uri"),
@@ -333,6 +503,62 @@ def _endpoint_entry(row: Dict[str, Any], detail: Dict[str, Dict[Any, Any]], minu
     return ep
 
 
+def _ranked(counts: Dict[Any, Dict[str, Any]]) -> List[Tuple[Any, Dict[str, Any]]]:
+    return sorted(counts.items(), key=lambda item: item[1]["count"], reverse=True)[:ATTACK_TOP]
+
+
+def attacks(overview: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """The attack categories seen in the window, most severe first.
+
+    Totals come from each category's own query, exact; the top targets and
+    clients from the sampled (host, uri, client) groups. A target is the path,
+    or the whole URI for a category read from it (its payload is the point),
+    with the hosts it was asked of, busiest first.
+    """
+    samples: Dict[str, Dict[str, Dict[Any, Dict[str, Any]]]] = {
+        code: {"targets": {}, "clients": {}} for code in _ATTACKS_BY_CODE}
+    for row in overview.get("attack_samples", []):
+        uri = str(row.get("uri") or "")
+        code = classify_request(uri)
+        if code is None:
+            continue
+        n, answered = integer(row.get("n")), integer(row.get("answered"))
+        target = uri if _ATTACKS_BY_CODE[code]["field"] == "uri" else uri.split("?", 1)[0]
+        # One entry per target, whichever host it was asked of: a scanner
+        # sends the same probe to every host it finds.
+        entry = samples[code]["targets"].setdefault(target, {"count": 0, "answered": 0, "hosts": {}})
+        entry["count"] += n
+        entry["answered"] += answered
+        host = row.get("request_host") or "-"
+        entry["hosts"][host] = entry["hosts"].get(host, 0) + n
+        client = samples[code]["clients"].setdefault(row.get("client_ip"), {"count": 0})
+        client["count"] += n
+
+    result = []
+    for cat in ATTACK_CATEGORIES:
+        code = cat["code"]
+        totals = (overview.get(f"attack_{code}") or [{}])[0]
+        requests = integer(totals.get("requests"))
+        if not requests:
+            continue
+        result.append({
+            "code": code,
+            "label": cat["label"],
+            "description": cat["description"],
+            "field": cat["field"],
+            "requests": requests,
+            "clients": integer(totals.get("clients")),
+            "answered": integer(totals.get("answered")),
+            "last_seen": totals.get("last_seen"),
+            "top_targets": [{"target": target, "count": counts["count"], "answered": counts["answered"],
+                             "hosts": sorted(counts["hosts"], key=counts["hosts"].get, reverse=True)}
+                            for target, counts in _ranked(samples[code]["targets"])],
+            "top_ips": [{"key": ip, "count": counts["count"]}
+                        for ip, counts in _ranked(samples[code]["clients"])],
+        })
+    return result
+
+
 def empty_overview(minutes: int, include_internal: bool, generated_at: datetime,
                    error: Optional[str] = None) -> Dict[str, Any]:
     result = {
@@ -343,12 +569,14 @@ def empty_overview(minutes: int, include_internal: bool, generated_at: datetime,
         "totals": {
             "requests": 0, "unique_ips": 0, "client_errors": 0, "server_errors": 0,
             "denied": 0, "rate_limited": 0, "waf_blocks": 0, "flagged_ips": 0,
-            "flagged_endpoints": 0,
+            "flagged_endpoints": 0, "attack_requests": 0, "attack_answered": 0,
         },
         "timeline": [],
         "ips": [],
         "endpoints": [],
         "waf_rules": [],
+        "attacks": [],
+        "attack_categories": [{"code": cat["code"], "label": cat["label"]} for cat in ATTACK_CATEGORIES],
     }
     if error:
         result["error"] = error
@@ -401,6 +629,7 @@ def summarize(overview: Dict[str, List[Dict[str, Any]]], details: Dict[str, List
     result["endpoints"] = endpoints
 
     result["waf_rules"] = _top(overview.get("waf_rules", []), "rule_msg")
+    result["attacks"] = attacks(overview)
     result["totals"] = {
         "requests": integer(totals.get("requests")),
         "unique_ips": integer(totals.get("unique_ips")),
@@ -411,5 +640,7 @@ def summarize(overview: Dict[str, List[Dict[str, Any]]], details: Dict[str, List
         "waf_blocks": integer(waf_total.get("n")),
         "flagged_ips": sum(1 for ip in ips if ip["flags"]),
         "flagged_endpoints": sum(1 for ep in endpoints if ep["flags"]),
+        "attack_requests": sum(cat["requests"] for cat in result["attacks"]),
+        "attack_answered": sum(cat["answered"] for cat in result["attacks"]),
     }
     return result

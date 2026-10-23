@@ -94,7 +94,7 @@ are reported as **unattributed** rather than dropped, so the per-stack rows
 always add up to the total above them.
 
 ### Security
-- **Attack Detection**: Client IPs and endpoints ranked from the Traefik access logs and Coraza WAF blocks - floods, scanners, credential probing
+- **Attack Detection**: Client IPs and endpoints ranked from the Traefik access logs and Coraza WAF blocks - floods, scanners, credential probing - attack categories (injection, traversal, secrets, known exploits, WordPress, PHP, backups) with the probes that got a 2xx, and a request explorer; click a bar of the timeline to focus everything on that time slot
 - **Block at the Edge**: Refuse an address or CIDR range in Traefik, in front of the WAF, without redeploying anything
 
 ### Container Management
@@ -466,8 +466,9 @@ pulsarcd/
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/security/overview` | GET | Suspicious client IPs and hot endpoints, from the Traefik access logs |
-| `/api/security/ips/{ip}` | GET | Latest requests and WAF blocks of one client |
+| `/api/security/overview` | GET | Suspicious client IPs, hot endpoints and attack categories, from the Traefik access logs. `start`/`end` (ISO 8601) replace `minutes` with an explicit range |
+| `/api/security/ips/{ip}` | GET | Latest requests and WAF blocks of one client (`start`/`end` too) |
+| `/api/security/requests` | GET | Request explorer: the latest 500 requests and WAF blocks matching `ip`, `host`, `path`, `uri`, `rule`, `q` (words in the URI), `status` (`2xx`, `3xx`, `4xx`, `404`, `denied`, `429`, `5xx`, `waf`, `edge`) and `category` |
 | `/api/security/blocklist` | GET | Addresses refused at the edge |
 | `/api/security/blocklist` | POST | Block an address or CIDR range (admin) |
 | `/api/security/blocklist?ip=...` | DELETE | Unblock one (admin) |
@@ -880,6 +881,27 @@ handler, so a route added later is protected by default:
 
 Adding a POST to the read-only allowlist means asserting it triggers no side effect
 at all - no background job, no LLM agent run, no remote command.
+
+### Exploring attacks
+
+The Security view's stat cards and timeline cover the selected window. Below
+them, tabs: **Client IPs**, **Endpoints**, **Attacks**, **Requests** and
+**Blocked & WAF**. Clicking a bar of the timeline focuses every tab except the
+blocklist on that bucket's time slot (click it again, or *Show the whole
+window*, to go back).
+
+**Attacks** sorts the requests by what they were after, from their path or,
+for payloads, their whole URI: injection, path traversal, secrets and source
+(`.env`, `.git`, keys), known exploits (routers, VPN appliances, exposed
+tooling), WordPress, PHP and admin panels, backups and dumps. A request counts
+for its most severe category only. **Answered 2xx** is the column to watch: a
+probe that got a success answer may have been served something. The patterns
+are in `backend/security_analytics.py` (`ATTACK_CATEGORIES`).
+
+**Requests** is the raw access log, newest first, filtered by client, host,
+words in the URI, status (including WAF blocks and requests refused at the
+edge) and attack category. An endpoint, an attack row, one of its targets, a WAF
+rule or a client's *Explore requests* opens it on the matching requests.
 
 ### Blocking a client at the edge
 
