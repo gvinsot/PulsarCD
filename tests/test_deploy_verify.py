@@ -59,16 +59,31 @@ exit 0
 '''
 
 # Fake curl: prints the next status code listed in $STUB_DIR/curl_statuses
-# (the last one repeats), in the shape of the -w format it was given.
+# (the last one repeats), in the shape of the -w format it was given. The body
+# is $STUB_DIR/curl_body when present, written to the -o file if one is given.
 CURL_STUB = r'''#!/bin/bash
 echo "$*" >> "$STUB_DIR/curl.log"
+# Linux refuses to start any program whose environment holds one variable over
+# 128 KiB ("Argument list too long"); Windows does not, so record them instead.
+awk 'BEGIN { for (k in ENVIRON) if (length(ENVIRON[k]) > 131072) print k }' >> "$STUB_DIR/big_env"
 n=0
 [ -f "$STUB_DIR/count_curl" ] && n=$(cat "$STUB_DIR/count_curl")
 n=$((n + 1)); echo "$n" > "$STUB_DIR/count_curl"
 status=$(sed -n "${n}p" "$STUB_DIR/curl_statuses")
 [ -z "$status" ] && status=$(tail -n 1 "$STUB_DIR/curl_statuses")
+out=""
+prev=""
+for arg in "$@"; do
+  [ "$prev" = "-o" ] && out="$arg"
+  prev="$arg"
+done
+if [ -n "$out" ]; then
+  if [ -f "$STUB_DIR/curl_body" ]; then cp "$STUB_DIR/curl_body" "$out"; else printf 'body' > "$out"; fi
+fi
 case "$*" in
-  *HTTP_STATUS*) printf 'body\nHTTP_STATUS:%s' "$status" ;;
+  *HTTP_STATUS*)
+    if [ -f "$STUB_DIR/curl_body" ]; then cat "$STUB_DIR/curl_body"; else printf 'body'; fi
+    printf '\nHTTP_STATUS:%s' "$status" ;;
   *) printf '%s' "$status" ;;
 esac
 '''
@@ -395,6 +410,39 @@ class DeployServiceVerificationTests(_StubbedBash):
         self.assertIn("Bad Gateway from web.example.com", result.stdout)
         calls = (self.stub / "calls.log").read_text()
         self.assertIn("service\tupdate\t--force\tprivatenetwork_traefik", calls)
+
+    def test_a_large_page_does_not_break_the_commands_after_the_probe(self):
+        # Sourcing devops/.env turns on allexport for the rest of the script.
+        # A probed page kept in a variable was then exported, and a page over
+        # Linux's 128 KiB per-variable limit made every later command fail
+        # with "Argument list too long" (PulsarCD's own index.html did).
+        (self.repo / "devops" / ".env").write_text("APP_NAME=web\n", newline="\n")
+        self.write("inspect_repo_web", inspect_line("1"))
+        self.write("ps_repo_web", task("t1"))
+        self.write("inspect_privatenetwork_traefik", "exists\n")
+        self.write("curl_statuses", "200\n")
+        self.write("curl_body", "<html>" + "x" * 200_000 + "</html>")
+        # The health check runs curl again after the probe: it sees the
+        # environment every later command gets.
+        result = self.deploy(env={"TRAEFIK_HOST": "web.example.com", "DEPLOY_HEALTHCHECK_PATH": "/health"})
+        output = result.stdout + result.stderr
+        self.assertEqual(result.returncode, 0, output)
+        self.assertNotIn("Argument list too long", output)
+        self.assertIn("Got HTTP 200 from web.example.com", result.stdout)
+        self.assertIn("/health", (self.stub / "curl.log").read_text())
+        self.assertEqual((self.stub / "big_env").read_text(), "")
+
+    def test_a_bad_gateway_page_is_still_detected_without_a_502(self):
+        self.write("inspect_repo_web", inspect_line("1"))
+        self.write("ps_repo_web", task("t1"))
+        self.write("inspect_privatenetwork_traefik", "exists\n")
+        self.write("curl_statuses", "200\n")
+        self.write("curl_body", "<h1>502 Bad Gateway</h1>")
+        result = self.deploy(env={"TRAEFIK_HOST": "web.example.com"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Bad Gateway from web.example.com (HTTP 200", result.stdout)
+        self.assertIn("service\tupdate\t--force\tprivatenetwork_traefik",
+                      (self.stub / "calls.log").read_text())
 
 
 if __name__ == "__main__":

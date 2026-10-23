@@ -976,20 +976,24 @@ if [ "$STACK_NAME" != "privatenetwork" ] && docker service inspect privatenetwor
     else
         NEEDS_TRAEFIK_RESYNC=false
         BAD_GATEWAY_HOST=""
+        # The page goes to a file, never into a variable: sourcing .env left
+        # allexport on, so a variable holding it would be exported, and one
+        # over Linux's 128 KiB per-variable limit makes every later command
+        # fail with "Argument list too long".
+        PROBE_BODY_FILE=$(mktemp)
 
         for host in "${CHECK_HOSTS[@]}"; do
             log_info "Probing https://$host for Bad Gateway..."
             # Retry a few times so we don't false-positive while replicas
             # are still starting up after the rolling update.
             for attempt in 1 2 3; do
-                RESPONSE=$(curl -k -sS \
+                : > "$PROBE_BODY_FILE"
+                STATUS=$(curl -k -sS \
                     --connect-timeout 5 --max-time 10 \
-                    -w $'\nHTTP_STATUS:%{http_code}' \
+                    -o "$PROBE_BODY_FILE" -w '%{http_code}' \
                     "https://$host" 2>/dev/null || true)
-                STATUS=$(printf '%s' "$RESPONSE" | grep -oE 'HTTP_STATUS:[0-9]+' | tail -1 | cut -d: -f2)
-                BODY=$(printf '%s' "$RESPONSE" | sed '$d')
 
-                if [ "$STATUS" = "502" ] || printf '%s' "$BODY" | grep -qi "Bad Gateway"; then
+                if [ "$STATUS" = "502" ] || grep -qi "Bad Gateway" "$PROBE_BODY_FILE"; then
                     log_warning "Bad Gateway from $host (HTTP ${STATUS:-?}, attempt ${attempt}/3)"
                     if [ "$attempt" -lt 3 ]; then
                         sleep 3
@@ -1006,6 +1010,7 @@ if [ "$STACK_NAME" != "privatenetwork" ] && docker service inspect privatenetwor
 
             [ "$NEEDS_TRAEFIK_RESYNC" = true ] && break
         done
+        rm -f "$PROBE_BODY_FILE"
 
         if [ "$NEEDS_TRAEFIK_RESYNC" = true ]; then
             log_info "Persistent Bad Gateway on $BAD_GATEWAY_HOST — force-updating privatenetwork_traefik..."
