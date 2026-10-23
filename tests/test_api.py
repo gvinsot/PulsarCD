@@ -1569,6 +1569,56 @@ class TestSearchLogsServiceFilter:
 
         assert recorded["query"].compose_services == ["agent", "swarm-manager"]
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("window,expected_hours", [
+        ({"last_hours": 2}, 2),
+        # The format the tool documents: no zone, read as UTC.
+        ({"start_time": "{start:%Y-%m-%dT%H:%M:%S}"}, 3),
+        ({"start_time": "{start:%Y-%m-%dT%H:%M:%S}Z", "end_time": "{end:%Y-%m-%dT%H:%M:%S}Z"}, 3),
+        # An explicit offset is honoured: that wall time is 2 h earlier in UTC.
+        ({"start_time": "{start:%Y-%m-%dT%H:%M:%S}+02:00"}, 5),
+    ])
+    async def test_logsql_mode_accepts_every_documented_window(self, window, expected_hours):
+        """last_hours and zone-less timestamps used to crash comparing naive and aware datetimes."""
+        try:
+            from backend import mcp_server
+        except Exception:
+            pytest.skip("MCP support not installed in this environment")
+        from datetime import datetime, timedelta, timezone
+
+        from backend.config import VictoriaLogsConfig
+        from backend.log_store import LogStore
+
+        store = LogStore(VictoriaLogsConfig())
+        seen = {}
+
+        async def iter_query(query, **kwargs):
+            seen.update(kwargs)
+            yield {"n": "1"}
+        store.client.iter_query = iter_query
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        start, end = now - timedelta(hours=3), now
+        args = {k: v.format(start=start, end=end) if isinstance(v, str) else v for k, v in window.items()}
+        try:
+            with patch.object(api_module, "logstore", store):
+                result = json.loads(await mcp_server.search_logs(logsql="* | stats count() as n", **args))
+        finally:
+            await store.close()
+        assert result == {"returned": 1, "rows": [{"n": "1"}]}
+        assert seen["start"].tzinfo is not None and seen["end"].tzinfo is not None
+        span = seen["end"] - seen["start"]
+        assert abs(span - timedelta(hours=expected_hours)) < timedelta(minutes=1), span
+
+    @pytest.mark.asyncio
+    async def test_an_invalid_timestamp_is_reported(self):
+        try:
+            from backend import mcp_server
+        except Exception:
+            pytest.skip("MCP support not installed in this environment")
+        with patch.object(api_module, "logstore", object()):
+            result = json.loads(await mcp_server.search_logs(logsql="*", start_time="yesterday"))
+        assert result["error"].startswith("Invalid start_time / end_time")
+
     def test_the_query_builder_filters_on_the_service(self):
         from backend.log_store import log_filters
         from backend.models import LogSearchQuery

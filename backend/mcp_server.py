@@ -9,7 +9,7 @@ import asyncio
 import json
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 import structlog
@@ -604,6 +604,19 @@ async def get_log_metadata() -> str:
 # ---------------------------------------------------------------------------
 # Tool 7: search_logs
 # ---------------------------------------------------------------------------
+def _utc(value: Optional[str]) -> Optional[datetime]:
+    """An ISO 8601 timestamp as an aware UTC datetime; one without a zone is UTC.
+
+    Raises ValueError for anything else. A trailing Z is accepted on every
+    Python version.
+    """
+    if not value:
+        return None
+    text = value.strip()
+    parsed = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith(("Z", "z")) else text)
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+
 _SEARCH_DOCS = """
 Search the container logs stored in VictoriaLogs.
 
@@ -692,15 +705,17 @@ async def search_logs(
     if not logstore:
         return json.dumps({"error": "Log store not available"})
 
-    # Time window: last_hours shorthand
+    # Time window: last_hours shorthand. Every bound is made UTC-aware: a
+    # timestamp without a zone (the documented "2024-01-15T10:00:00") is taken
+    # as UTC, as the log store reads it, and comparing a naive bound with the
+    # store's aware clamps raised a TypeError.
     try:
-        parsed_start = datetime.fromisoformat(start_time) if start_time else None
-        parsed_end = datetime.fromisoformat(end_time) if end_time else None
+        parsed_start = _utc(start_time)
+        parsed_end = _utc(end_time)
     except ValueError as exc:
         return json.dumps({"error": f"Invalid start_time / end_time: {exc}"})
     if last_hours is not None and parsed_start is None and parsed_end is None:
-        from datetime import timedelta
-        parsed_start = datetime.utcnow() - timedelta(hours=max(1, min(last_hours, 720)))
+        parsed_start = datetime.now(timezone.utc) - timedelta(hours=max(1, min(last_hours, 720)))
 
     # ── LogsQL passthrough ──────────────────────────────────────────────────
     if logsql:
@@ -1102,7 +1117,6 @@ async def get_pipeline_history(
     limit: int = 20,
 ) -> str:
     """Recorded pipeline runs, newest first."""
-    from datetime import timedelta, timezone
 
     rec = run_history.recorder
     if not rec.available:

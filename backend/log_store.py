@@ -419,8 +419,10 @@ class LogStore:
         filter VictoriaLogs applies to it and every subquery, whatever it
         says; its time window, row count and duration are bounded here.
         """
-        end = end or _now()
-        start = start or end - timedelta(hours=24)
+        # A bound without a zone is UTC, as everywhere in the store; mixed with
+        # the aware clock below it would make the comparisons raise.
+        end = parse_time(end) or _now()
+        start = parse_time(start) or end - timedelta(hours=24)
         start = max(start, end - timedelta(hours=MAX_RAW_QUERY_HOURS))
         limit = _clamp_int(limit, 1, MAX_RAW_QUERY_ROWS, 100)
         rows: List[Dict[str, Any]] = []
