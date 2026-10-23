@@ -204,7 +204,8 @@ services:
       # without refusing anything, which the view reports. The same value goes
       # into the edge's providers.http.headers.
       - PULSARCD_AUTH__EDGE_KEY=${PULSARCD_AUTH__EDGE_KEY:-}
-      # This edge never hosts WordPress: one .env/auth.json/WordPress probe bans the
+      # This edge never hosts WordPress: one secret/exploit/WordPress probe or scanner
+      # User-Agent (see backend/auto_ban.py) bans the
       # public source IP for 24h. Requires the edge provider key above.
       - PULSARCD_AUTOBAN__ENABLED=${PULSARCD_AUTOBAN__ENABLED:-true}
       - PULSARCD_AUTOBAN__DURATION_SECONDS=${PULSARCD_AUTOBAN__DURATION_SECONDS:-86400}

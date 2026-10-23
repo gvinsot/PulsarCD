@@ -1,4 +1,7 @@
-"""Block external clients probing secrets or WordPress on our non-WP edge.
+"""Block external clients probing secrets, exploits or WordPress on our edge.
+
+Path probes cover dotenv/auth.json/credential files, VCS metadata, database
+dumps, well-known exploit endpoints and WordPress; scanner User-Agents too.
 
 Only Docker-attributed Traefik access logs are trusted. The access records
 deliberately drop container provenance, so enforcement reads the same
@@ -46,6 +49,49 @@ _WORDPRESS = re.compile(
     r"wp-load|wp-mail|wp-comments-post|wp-trackback|xmlrpc)\.php(?:[./;~]|$))",
     re.IGNORECASE,
 )
+# Keep these patterns in sync with PrivateNetwork's edge/dynamic.yml rules
+# 1009-1012, which reject the same paths with 403 before they reach a service.
+_VCS = re.compile(
+    r"(?:^|/)\.(?:git|svn|hg|bzr|idea|vscode)(?:[/;]|$)|(?:^|/)\.ds_store(?:[;~]|$)",
+    re.IGNORECASE,
+)
+_CREDENTIALS = re.compile(
+    r"(?:^|/)(?:\.htpasswd|\.htaccess|\.git-credentials|\.gitconfig|\.npmrc|\.pypirc"
+    r"|\.netrc|\.pgpass|\.bash_history|\.zsh_history|\.ssh|\.aws|\.kube"
+    r"|id_(?:rsa|dsa|ecdsa|ed25519))(?:[./;~]|$)"
+    r"|(?:^|/)etc/(?:passwd|shadow)(?:[;~]|$)|(?:^|/)proc/self/environ(?:[;~]|$)",
+    re.IGNORECASE,
+)
+_EXPLOIT = re.compile(
+    r"(?:^|/)(?:phpmyadmin|myadmin|adminer|cgi-bin|boaform|hnap1|server-status"
+    r"|_ignition|vendor/phpunit)(?:[/;.]|$)"
+    r"|(?:^|/)(?:phpinfo|info|eval-stdin|shell|cmd|c99|r57|wso|alfa|webshell)\.php(?:[./;~]|$)"
+    r"|(?:^|/)manager/html(?:[/;]|$)|(?:^|/)actuator/(?:env|heapdump|gateway)(?:[/;]|$)",
+    re.IGNORECASE,
+)
+_BACKUP = re.compile(
+    r"\.sql(?:\.(?:gz|zip|bz2|xz|7z|tar))?$"
+    r"|(?:^|/)(?:backup|backups|dump|db|database|site|www|wwwroot|htdocs|public_html)"
+    r"\.(?:zip|rar|7z|tar|tgz|tar\.gz|gz|bz2)$",
+    re.IGNORECASE,
+)
+# Offensive tools announcing themselves. Mirrors (and extends) WAF rule 1005.
+_SCANNER_AGENT = re.compile(
+    r"nikto|sqlmap|nmap|masscan|zgrab|nuclei|wpscan|dirbuster|gobuster|feroxbuster"
+    r"|ffuf|wfuzz|acunetix|nessus|openvas|hydra|fimap|w3af|jorgee|l9explore|l9tcpid",
+    re.IGNORECASE,
+)
+_PATH_PROBES = (
+    (_ENV, ".env"), (_AUTH_JSON, "auth.json"), (_WORDPRESS, "WordPress"),
+    (_VCS, "VCS metadata"), (_CREDENTIALS, "credentials file"),
+    (_EXPLOIT, "admin/exploit endpoint"), (_BACKUP, "backup dump"),
+)
+
+
+def scanner_agent(user_agent):
+    """Return the attack tool named by a User-Agent header, if any."""
+    match = _SCANNER_AGENT.search(str(user_agent or ""))
+    return match.group(0).lower() if match else None
 
 
 def probe_kind(uri: str):
@@ -53,12 +99,9 @@ def probe_kind(uri: str):
     path = str(uri).split("?", 1)[0]
     path = unquote(unquote(path)).replace("\\", "/")
     path = posixpath.normpath(path)
-    if _ENV.search(path):
-        return ".env"
-    if _AUTH_JSON.search(path):
-        return "auth.json"
-    if _WORDPRESS.search(path):
-        return "WordPress"
+    for pattern, kind in _PATH_PROBES:
+        if pattern.search(path):
+            return kind
     return None
 
 
@@ -167,6 +210,9 @@ class AutoBanWorker:
         if stamp is None or stamp > now or stamp < now - timedelta(seconds=self.config.duration_seconds):
             return
         kind = probe_kind(fields["RequestPath"])
+        if not kind:
+            tool = scanner_agent(fields.get("request_User-Agent"))
+            kind = f"scanner {tool}" if tool else None
         if kind:
             entry = await self.blocklist.add_automatic(
                 str(address), f"Automatic probe: {kind}", stamp, self.config.duration_seconds)
