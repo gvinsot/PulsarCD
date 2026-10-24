@@ -1,17 +1,20 @@
 # ============================================================================
 # Stage: base - Common dependencies
 # ============================================================================
-FROM python:3.11-slim AS base
+FROM python:3.11-slim-trixie AS base
 
 WORKDIR /app
 
 # Install system dependencies including Docker CLI for build/deploy scripts
+# CVE-2026-111497: require Debian's Brotli security backport (also used by curl).
 RUN apt-get update && apt-get install -y \
     curl \
+    libbrotli1 \
     git \
     openssh-client \
     ca-certificates \
     gnupg \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libbrotli1)" ge '1.1.0-2+deb13u1' \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
     && chmod a+r /etc/apt/keyrings/docker.gpg \
@@ -21,8 +24,11 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
-COPY requirements.txt .
+COPY requirements.txt security-constraints.txt ./
+ENV PIP_CONSTRAINT=/app/security-constraints.txt
+COPY scripts/check_brotli.py ./scripts/check_brotli.py
 RUN pip install --no-cache-dir -r requirements.txt
+RUN python scripts/check_brotli.py
 # Validate runtime compatibility too: package metadata does not catch MCP's
 # dependency on private Pydantic APIs. Fail the build before publishing images.
 RUN pip check && python -c "from mcp.server.fastmcp import FastMCP"
@@ -50,6 +56,7 @@ COPY --from=victoriametrics/victoria-logs:v1.53.0 /victoria-logs-prod /usr/local
 RUN pip install --no-cache-dir pytest pytest-asyncio "httpx>=0.23.0,<0.28.0"
 # Static-check tools, pinned so a new release cannot fail an unchanged commit.
 RUN pip install --no-cache-dir "ruff==0.17.1" "mypy==2.4.0" "pip-audit==2.10.1"
+RUN python scripts/check_brotli.py
 
 # pytest.ini carries asyncio_mode=auto (async tests are collected but not run
 # without it, they fail as "async def not natively supported") and

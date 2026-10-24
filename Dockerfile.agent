@@ -1,13 +1,16 @@
 # PulsarCD Agent Dockerfile
-FROM python:3.11-slim
+FROM python:3.11-slim-trixie
 
 WORKDIR /app
 
 # Install system dependencies
+# CVE-2026-111497: require Debian's Brotli security backport (also used by curl).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     curl \
+    libbrotli1 \
     gnupg \
+    && dpkg --compare-versions "$(dpkg-query -W -f='${Version}' libbrotli1)" ge '1.1.0-2+deb13u1' \
     && rm -rf /var/lib/apt/lists/*
 
 # Install AMD ROCm SMI for GPU monitoring (amd64 only — not available on ARM)
@@ -30,8 +33,12 @@ ENV LD_LIBRARY_PATH="/opt/rocm/lib:/opt/rocm/lib64${LD_LIBRARY_PATH:+:$LD_LIBRAR
 # No install needed here — just ensure NVIDIA_VISIBLE_DEVICES is set in docker-compose.
 
 # Install Python dependencies
-COPY agent/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY security-constraints.txt ./
+ENV PIP_CONSTRAINT=/app/security-constraints.txt
+COPY agent/requirements.txt ./agent/requirements.txt
+COPY scripts/check_brotli.py ./scripts/check_brotli.py
+RUN pip install --no-cache-dir -r agent/requirements.txt
+RUN pip check && python scripts/check_brotli.py
 
 # Copy shared utilities and agent code
 COPY shared/ ./shared/

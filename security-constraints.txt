@@ -1,0 +1,6 @@
+# CVE-2026-111497: optional HTTP Brotli decoders must include the upstream fix.
+# Constraints do not install/enable these optional decoders by themselves.
+# https://github.com/google/brotli/releases/tag/v1.2.1
+# https://github.com/python-hyper/brotlicffi/releases/tag/v1.2.1.0
+Brotli>=1.2.1
+brotlicffi>=1.2.1.0
