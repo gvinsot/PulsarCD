@@ -114,9 +114,8 @@ body {
 
 /* Top Bar */
 .topbar {
-    background: rgba(15, 23, 42, 0.7);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    /* Opaque equivalent over --bg-primary; the fixed app shell needs no blur. */
+    background: #0e1423;
     border-bottom: 1px solid var(--border-color);
     position: sticky;
     top: 0;
@@ -299,12 +298,7 @@ body {
     border-radius: 50%;
     background: var(--status-success);
     box-shadow: 0 0 8px var(--status-success);
-    animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
+    /* A persistent status must let the compositor idle between user actions. */
 }
 
 /* Main Content */
