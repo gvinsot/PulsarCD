@@ -1,7 +1,9 @@
 # ============================================================================
 # Stage: base - Common dependencies
 # ============================================================================
-FROM python:3.11-slim-trixie AS base
+# CVE-2026-115557: 3.11.18 rejects compromised eMudhra intermediate CA keys.
+# Pin the patched release so a cached 3.11 image cannot retain the vulnerable SSL module.
+FROM python:3.11.18-slim-trixie AS base
 
 WORKDIR /app
 

@@ -282,6 +282,13 @@ volumes:
 
 ### Without Docker
 
+Use Python **3.11.18 or a later 3.11 security release**. Earlier 3.11 releases
+are affected by [CVE-2026-115557](https://www.python.org/downloads/release/python-31118/):
+the SSL module can accept certificate chains containing compromised eMudhra
+intermediate CA keys. Updating Python packages alone does not fix the interpreter.
+Both Docker images use Python 3.11.18; existing backend and agent containers must
+be rebuilt and redeployed to receive the fix.
+
 ```bash
 # Create virtual environment
 python -m venv venv

@@ -1,5 +1,6 @@
 # PulsarCD Agent Dockerfile
-FROM python:3.11-slim-trixie
+# CVE-2026-115557: keep the agent on the same patched Python as the backend.
+FROM python:3.11.18-slim-trixie
 
 WORKDIR /app
 
