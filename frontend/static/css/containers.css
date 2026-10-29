@@ -387,3 +387,19 @@
     color: var(--accent-purple, #a78bfa);
 }
 
+/* On-demand host inventory, including long IPv6 addresses and GPU names. */
+.host-info-grid {
+    display: grid;
+    grid-template-columns: minmax(110px, 1fr) minmax(0, 2fr);
+    gap: 12px 20px;
+    margin: 0 0 20px;
+}
+
+.host-info-grid dt { color: var(--text-secondary); }
+.host-info-grid dd { margin: 0; overflow-wrap: anywhere; white-space: pre-line; }
+#host-info-title { overflow-wrap: anywhere; min-width: 0; }
+
+@media (max-width: 768px) {
+    #host-info-modal .modal-header { padding-right: 56px; }
+    #host-info-title { white-space: normal; }
+}

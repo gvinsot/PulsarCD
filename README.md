@@ -403,6 +403,15 @@ pulsarcd/
 | `/api/containers/{host}/{id}/logs` | GET | Get container logs |
 | `/api/containers/{host}/{id}/env` | GET | Get container environment variables |
 | `/api/containers/action` | POST | Execute container action |
+| `/api/hosts/{host}/info` | GET | Host hardware/OS inventory (admin only) |
+
+In **Computers**, administrators can open **Info** on each machine, including
+hosts without containers. The dialog loads the hostname, OS, kernel, IP addresses,
+CPU model, physical cores/logical CPUs, RAM, GPU and Docker version on demand.
+SSH hosts use read-only Linux utilities; Docker hosts and discovered Swarm nodes
+use the selected daemon/node's API. Fields that the connection cannot report
+(notably CPU model, physical cores and GPU through Docker/Swarm) show
+**Unavailable**. Host addresses remain restricted to administrators.
 
 ### Logs Search
 

@@ -7,7 +7,19 @@
 // Close modal on escape key
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+        closeHostInfoModal();
         closeModal();
+    }
+});
+
+document.getElementById('host-info-modal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) closeHostInfoModal();
+});
+document.getElementById('host-info-modal').addEventListener('keydown', (e) => {
+    // The close button is the dialog's only focusable control.
+    if (e.key === 'Tab') {
+        e.preventDefault();
+        e.currentTarget.querySelector('.modal-close').focus();
     }
 });
 
@@ -54,7 +66,7 @@ const UI_HANDLERS = Object.freeze({
     blockIpFromForm, unblockIp, cancelAction, changeSecurityWindow, clearSecuritySlice,
     cancelCurrentActionLogs, cleanupRepoTags, clearLLMChat, clearRecentQueries,
     closeActionLogsModal, closeActivityDiff, closeActivityModal, closeAgentModal,
-    closeBuildModal, closeCreateTaskModal, closeDeployModal, closeModal, closePipelineModal,
+    closeBuildModal, closeCreateTaskModal, closeDeployModal, closeHostInfoModal, closeModal, closePipelineModal,
     closeRecurringErrorModal, closeSecurityIpModal, closeServiceDeployModal,
     closeServiceLogsModal, closeServiceStatusModal, closeSettingsModal, closeStackEnvModal,
     closeStackOutputModal, closeTestModal, containerAction, createUser, deleteRecentQuery,
@@ -62,7 +74,7 @@ const UI_HANDLERS = Object.freeze({
     filterContainerLogs, filterContainers, filterServiceLogs, hostAction, loadAgentHistory,
     loadContainerMetrics, loadSecurity, loadStackEnvVersion, loadUsage, logout, nextPage,
     onPipelineBranchChange,
-    openActionLogs, openAgentModal, openContainer,
+    openActionLogs, openAgentModal, openContainer, openHostInfo,
     openCreateTaskModal, openSecurityIp, openServiceDeploy, openServiceLogs, openServiceStatus,
     openTransitionConfig, pipelineStepClick, prevPage, quickAction, reconnectTerminal,
     refreshContainerEnv, refreshContainerLogs, refreshContainers, refreshDashboard,

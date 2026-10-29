@@ -86,6 +86,7 @@ _ADMIN_ONLY_GET_RE = re.compile(
     r"|containers/[^/]+/[^/]+/env"     # container environment variables (secrets)
     r"|stacks/test-permissions/.*"     # probes the deployment's GitHub token
     r"|github/check-access"            # ditto, across every starred repository
+    r"|hosts/[^/]+/info"               # host addresses and remote inventory probe
     r")$"
 )
 

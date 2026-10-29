@@ -18,6 +18,8 @@ from .models import (
     HostMetrics, LogEntry, ContainerAction
 )
 from . import utils
+from .host_info import SSH_HOST_INFO_COMMAND, parse_ssh_host_info
+from .models import HostInfo
 
 logger = structlog.get_logger()
 
@@ -555,6 +557,18 @@ class SSHClient:
         """Parse I/O string like '100MB / 50MB'."""
         return utils.parse_io_string(io_str)
     
+    async def get_host_info(self) -> HostInfo:
+        """Inspect this SSH/local host without requiring privileged commands."""
+        stdout, _, code = await asyncio.wait_for(
+            self.run_command(SSH_HOST_INFO_COMMAND), timeout=15
+        )
+        if code != 0:
+            raise RuntimeError("Host inventory command failed")
+        info = parse_ssh_host_info(stdout)
+        if not info.hostname:
+            raise RuntimeError("Host inventory is unavailable")
+        return info
+
     async def get_host_metrics(self) -> HostMetrics:
         """Get host-level resource metrics.
 

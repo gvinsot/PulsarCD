@@ -4,12 +4,14 @@ App state is read from backend.api at call time, as ``api.<name>`` (see
 backend/routes/__init__.py).
 """
 
+import asyncio
 from typing import Any, Dict, List
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request
 
 from .. import api
+from ..models import HostInfo
 
 logger = structlog.get_logger()
 
@@ -70,6 +72,21 @@ async def get_hosts_metrics() -> Dict[str, Dict[str, Any]]:
         logger.error("Failed to get host metrics", error=str(e))
     
     return result
+
+
+@router.get("/api/hosts/{host_name}/info", response_model=HostInfo)
+async def get_host_info(host_name: str) -> HostInfo:
+    """On-demand inventory; admin-only like other infrastructure details."""
+    client = api.collector.clients.get(host_name)
+    if not client:
+        raise HTTPException(status_code=404, detail="Host not found")
+    try:
+        return await asyncio.wait_for(client.get_host_info(), timeout=20)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="Host information request timed out")
+    except Exception as exc:
+        logger.warning("Failed to get host information", host=host_name, error=str(exc))
+        raise HTTPException(status_code=502, detail="Host information is unavailable. Check the host connection.")
 
 
 @router.post("/api/hosts/{host_name}/action")

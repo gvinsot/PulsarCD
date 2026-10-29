@@ -8,7 +8,7 @@ import structlog
 from .config import HostConfig
 from .models import (
     ContainerInfo, ContainerStats, ContainerAction,
-    HostMetrics, LogEntry
+    HostInfo, HostMetrics, LogEntry
 )
 
 if TYPE_CHECKING:
@@ -25,6 +25,7 @@ class HostClientProtocol(Protocol):
     async def get_containers(self) -> List[ContainerInfo]: ...
     async def get_container_stats(self, container_id: str, container_name: str) -> Optional[ContainerStats]: ...
     async def get_host_metrics(self) -> HostMetrics: ...
+    async def get_host_info(self) -> HostInfo: ...
     async def get_container_logs(
         self,
         container_id: str,
@@ -158,6 +159,9 @@ class SwarmProxyClient:
     async def get_container_stats(self, container_id: str, container_name: str) -> Optional[ContainerStats]:
         """Get container stats via manager."""
         return await self._manager.get_container_stats(container_id, container_name)
+
+    async def get_host_info(self) -> HostInfo:
+        return await self._manager.get_node_host_info(self._node_id)
 
     async def get_host_metrics(self) -> HostMetrics:
         """Get host metrics (limited for proxy nodes).

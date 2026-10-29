@@ -55,6 +55,21 @@ class ContainerStats(BaseModel):
     gpu_memory_used_mb: Optional[float] = None
 
 
+class HostInfo(BaseModel):
+    """Host inventory. None means the connection cannot report that field."""
+    hostname: Optional[str] = None
+    os: Optional[str] = None
+    kernel: Optional[str] = None
+    architecture: Optional[str] = None
+    ip_addresses: List[str] = Field(default_factory=list)
+    cpu_model: Optional[str] = None
+    cpu_cores: Optional[int] = None
+    cpu_threads: Optional[int] = None
+    memory_total_mb: Optional[float] = None
+    gpus: List[str] = Field(default_factory=list)
+    docker_version: Optional[str] = None
+
+
 class HostMetrics(BaseModel):
     """Host-level metrics."""
     host: str

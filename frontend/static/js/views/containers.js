@@ -64,11 +64,18 @@ async function loadContainers(forceRefresh = false) {
     }
     
     // Fetch containers and host metrics in parallel
-    const [grouped, hostMetrics] = await Promise.all([
+    const [grouped, hostMetrics, hosts] = await Promise.all([
         apiGet(endpoint),
-        apiGet('/hosts/metrics')
+        apiGet('/hosts/metrics'),
+        apiGet('/hosts')
     ]);
     if (!grouped) return;
+    // Keep inventory accessible even for hosts with no matching containers.
+    for (const host of hosts || []) {
+        if (!Object.hasOwn(grouped, host.name)) {
+            Object.defineProperty(grouped, host.name, { value: {}, enumerable: true });
+        }
+    }
     
     // Get stored group states
     const storedGroups = getStoredGroups();
@@ -154,6 +161,12 @@ async function loadContainers(forceRefresh = false) {
                     ${topLevelVramDisplay}
                 </span>
                 <div class="host-header-actions" data-click-stop>
+                    ${isAdmin() ? `<button class="btn btn-sm btn-secondary" data-click="openHostInfo" data-args="${uiArgs(topLevel)}" title="Host information" aria-label="Information about ${escapeHtml(topLevel)}">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" aria-hidden="true">
+                            <circle cx="12" cy="12" r="10"/><path d="M12 11v6M12 7h.01"/>
+                        </svg>
+                        <span>Info</span>
+                    </button>` : ''}
                     <button class="btn btn-sm btn-warning" data-click="hostAction" data-args="${uiArgs(topLevel, 'reboot')}" title="Reboot this computer">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                             <polyline points="23 4 23 10 17 10"/>
@@ -373,6 +386,59 @@ function filterContainers() {
     saveFilter(filterValue);
     
     loadContainers();
+}
+
+let hostInfoRequest = 0;
+let hostInfoTrigger = null;
+
+function renderHostInfo(info) {
+    const rows = [
+        ['Hostname', info.hostname],
+        ['OS', info.os],
+        ['Kernel', info.kernel],
+        ['Architecture', info.architecture],
+        ['IP addresses', (info.ip_addresses || []).join(', ')],
+        ['Processor', info.cpu_model],
+        ['Physical cores', info.cpu_cores],
+        ['Logical CPUs / threads', info.cpu_threads],
+        ['RAM', info.memory_total_mb > 0 ? formatMemory(info.memory_total_mb) : null],
+        ['GPU', (info.gpus || []).join('\n')],
+        ['Docker version', info.docker_version],
+    ];
+    return `<dl class="host-info-grid">${rows.map(([label, value]) =>
+        `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value == null || value === '' ? 'Unavailable' : String(value))}</dd>`
+    ).join('')}</dl><p class="modal-help-text">Available details depend on the host connection. Docker and Swarm may not report the processor model, physical cores or GPU.</p>`;
+}
+
+async function openHostInfo(hostName) {
+    const request = ++hostInfoRequest;
+    const modal = document.getElementById('host-info-modal');
+    const body = document.getElementById('host-info-body');
+    if (!modal.classList.contains('open')) hostInfoTrigger = document.activeElement;
+    document.getElementById('host-info-title').textContent = `Host information — ${hostName}`;
+    body.textContent = 'Loading host information…';
+    body.setAttribute('aria-busy', 'true');
+    modal.classList.add('open');
+    modal.querySelector('.modal-close').focus();
+    const { data, error } = await apiGetOrError(`/hosts/${encodeURIComponent(hostName)}/info`);
+    // A slow response must not overwrite another host or reopen a closed modal.
+    if (request !== hostInfoRequest) return;
+    body.setAttribute('aria-busy', 'false');
+    if (error || !data) {
+        body.textContent = error || 'Host information is unavailable.';
+    } else {
+        body.innerHTML = renderHostInfo(data);
+    }
+}
+
+function closeHostInfoModal() {
+    const modal = document.getElementById('host-info-modal');
+    if (!modal.classList.contains('open')) return;
+    ++hostInfoRequest;
+    modal.classList.remove('open');
+    document.getElementById('host-info-body').setAttribute('aria-busy', 'false');
+    if (hostInfoTrigger && hostInfoTrigger.isConnected) hostInfoTrigger.focus();
+    hostInfoTrigger = null;
 }
 
 // Host action (reboot/shutdown)

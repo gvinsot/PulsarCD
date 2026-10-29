@@ -8,7 +8,7 @@ import re
 import subprocess
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import structlog
 
@@ -18,6 +18,8 @@ from .models import (
     HostMetrics, LogEntry, ContainerAction
 )
 from . import utils
+from .host_info import docker_host_info, swarm_host_info
+from .models import HostInfo
 
 logger = structlog.get_logger()
 
@@ -320,6 +322,22 @@ class DockerAPIClient:
             logger.error("Failed to parse container stats", container=container_id, error=str(e))
             return None
     
+    async def get_host_info(self) -> HostInfo:
+        """Inventory from the selected daemon, never from the backend machine."""
+        data, status = await self._request("GET", "/info")
+        if status != 200 or not isinstance(data, dict):
+            raise RuntimeError("Docker host inventory is unavailable")
+        # Standalone daemons have no Swarm NodeAddr; a literal TCP endpoint IP
+        # is also useful. Do not resolve DNS or inspect the backend's network.
+        return docker_host_info(data, urlsplit(self._base_url).hostname or "")
+
+    async def get_node_host_info(self, node_id: str) -> HostInfo:
+        """Read inventory for the exact Swarm worker requested."""
+        data, status = await self._request("GET", f"/nodes/{quote(node_id, safe='')}")
+        if status != 200 or not isinstance(data, dict):
+            raise RuntimeError("Swarm node inventory is unavailable")
+        return swarm_host_info(data)
+
     async def get_host_metrics(self) -> HostMetrics:
         """Get host-level metrics (limited via Docker API).
 
