@@ -77,7 +77,7 @@ def vlogs(tmp_path_factory):
 def _mock_settings():
     from backend.config import (
         AuthConfig, CollectorConfig, GitHubConfig,
-        MCPConfig, SwarmConfig, VictoriaLogsConfig,
+        MCPConfig, PreviewConfig, SwarmConfig, VictoriaLogsConfig,
     )
     s = MagicMock()
     s.auth = AuthConfig(
@@ -95,6 +95,9 @@ def _mock_settings():
     s.github = GitHubConfig()
     s.swarm = SwarmConfig(secret_key="")
     s.mcp = MCPConfig(enabled=False)
+    # A real field lets monkeypatch restore it between feature-toggle tests;
+    # a lazily created MagicMock attribute can be deleted during teardown.
+    s.previews = PreviewConfig()
     s.hosts = []
     s.debug = False
     return s

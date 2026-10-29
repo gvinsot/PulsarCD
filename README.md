@@ -310,15 +310,21 @@ python -m backend.main
 
 ### Tests and Static Checks
 
+Agents should start with [AGENTS.md](AGENTS.md) and the
+[development guide](docs/DEVELOPMENT.md) for repository navigation, scoped
+instructions, prerequisites and validation limits.
+
 ```bash
-pip install pytest pytest-asyncio "httpx>=0.23.0,<0.28.0" "ruff==0.17.1" "mypy==2.4.0" "pip-audit==2.10.1"  # same pins as the Dockerfile
-python -m pytest tests/ -q
-bash scripts/static-checks.sh   # ruff + mypy (blocking), pip-audit (warning only)
+bash scripts/dev.sh setup       # install shared dev dependencies into .venv
+bash scripts/dev.sh check       # static checks, shell syntax, Python + JS tests
+bash scripts/dev.sh python tests/test_api.py -q  # focused Python test run
+bash scripts/dev.sh frontend    # native Node test runner, no npm dependencies
 ```
 
 The Dockerfile `test` stage runs `scripts/static-checks.sh` while building, so a
 ruff or mypy error fails the test build (and `scripts/test.sh`) before any test
-runs. Both tools are configured permissively in `pyproject.toml`: they report
+runs. Starting that test image runs both Python and JavaScript suites. Both
+static tools are configured permissively in `pyproject.toml`: they report
 likely bugs (undefined names, unknown attributes, wrong call signatures), not
 style. pip-audit only warns because the deliberately pinned FastAPI/Starlette
 and PyJWT versions carry advisories until the framework upgrade; set

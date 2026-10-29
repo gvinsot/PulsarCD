@@ -62,8 +62,15 @@ class StaticCheckBuildWiringTests(unittest.TestCase):
         self.assertRegex(self.test_stage, r"RUN .*bash scripts/static-checks\.sh")
 
     def test_tool_versions_are_pinned(self):
+        self.assertIn("COPY requirements-dev.txt", self.test_stage)
+        self.assertIn("pip install --no-cache-dir -r requirements-dev.txt", self.test_stage)
+        requirements = (ROOT / "requirements-dev.txt").read_text(encoding="utf-8")
         for tool in ("ruff", "mypy", "pip-audit"):
-            self.assertRegex(self.test_stage, rf'"{tool}==[0-9][^"]*"')
+            self.assertRegex(requirements, rf"(?m)^{tool}==[0-9].*$")
+
+    def test_frontend_tests_run_in_the_test_image(self):
+        self.assertIn("gettext-base nodejs", self.test_stage)
+        self.assertIn('CMD ["bash", "scripts/dev.sh", "test"]', self.test_stage)
 
 
 @unittest.skipUnless(BASH, "Bash is required")

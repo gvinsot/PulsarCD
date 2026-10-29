@@ -12,3 +12,8 @@ id_ed25519*
 .claude/
 **/__pycache__/
 .git/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

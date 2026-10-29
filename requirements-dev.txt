@@ -1,0 +1,11 @@
+# Shared by local agent workspaces and the Dockerfile test stage.
+-r requirements.txt
+
+pytest
+pytest-asyncio
+# FastAPI/Starlette's pinned TestClient requires httpx before 0.28.
+httpx>=0.23.0,<0.28.0
+# Keep the existing CI tool versions stable across environments.
+ruff==0.17.1
+mypy==2.4.0
+pip-audit==2.10.1

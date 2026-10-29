@@ -47,17 +47,16 @@ FROM base AS test
 
 # The build-script tests execute Bash and its text-processing tools; git and
 # Docker are stubbed, but envsubst and awk run for real.
-RUN apt-get update && apt-get install -y --no-install-recommends bash gawk gettext-base \
+RUN apt-get update && apt-get install -y --no-install-recommends bash gawk gettext-base nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # A real VictoriaLogs for the storage integration tests (tests/conftest.py
 # starts it on a temporary directory). Same version as the stack file.
 COPY --from=victoriametrics/victoria-logs:v1.53.0 /victoria-logs-prod /usr/local/bin/victoria-logs
 
-# Install test dependencies
-RUN pip install --no-cache-dir pytest pytest-asyncio "httpx>=0.23.0,<0.28.0"
-# Static-check tools, pinned so a new release cannot fail an unchanged commit.
-RUN pip install --no-cache-dir "ruff==0.17.1" "mypy==2.4.0" "pip-audit==2.10.1"
+# Use the same dependency set as local agent workspaces.
+COPY requirements-dev.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt
 RUN python scripts/check_brotli.py
 
 # pytest.ini carries asyncio_mode=auto (async tests are collected but not run
@@ -85,10 +84,12 @@ RUN sed -i 's/\r$//' scripts/*.sh scripts/*.py \
 # unknown attributes, bad calls); pip-audit only warns. pyproject.toml holds
 # their configuration and scripts/static-checks.sh explains each choice.
 COPY pyproject.toml ./
+# Keep build-wiring regression tests active inside the test image too.
+COPY Dockerfile ./
 RUN bash scripts/static-checks.sh
 
 # Run tests on container start
-CMD ["python", "-m", "pytest", "tests/", "-v", "--tb=short", "-p", "no:warnings"]
+CMD ["bash", "scripts/dev.sh", "test"]
 
 # ============================================================================
 # Stage: production (default) - Run the application

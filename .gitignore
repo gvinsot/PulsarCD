@@ -58,6 +58,8 @@ id_ed25519*
 
 # Test
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 .tox/
