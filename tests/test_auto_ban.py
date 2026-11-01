@@ -64,11 +64,25 @@ def test_paths(path, kind):
     ("/.github/workflows", None), ("/.gitignore", None), ("/.well-known/acme-challenge/x", None),
     ("/docs/git/config", None), ("/htaccess-guide", None), ("/api/ssh/keys", None),
     ("/etc/passwords-guide", None), ("/admin", None), ("/actuator/health", None),
-    ("/manager", None), ("/information.php", None), ("/sql/schema", None),
+    ("/manager", None), ("/sql/schema", None),
     ("/sqlite.db", None), ("/backup", None), ("/my-backup.zip", None),
     ("/api?file=.git/config", None), ("/v2/library/sql/manifests/latest", None),
 ])
 def test_extended_paths(path, kind):
+    assert probe_kind(path) == kind
+
+
+@pytest.mark.parametrize("path,kind", [
+    ("/index.php", "PHP script"), ("/information.php", "PHP script"),
+    ("/INDEX.PHP", "PHP script"), ("/admin/config.php.bak", "PHP script"),
+    ("/index.php/api/v1", "PHP script"), ("/index.php?x=1", "PHP script"),
+    ("/upload/x.php5", "PHP script"), ("/shell.phtml", "PHP script"),
+    ("/app.phar", "PHP script"), ("/index%2ephp", "PHP script"),
+    ("/index%252ephp", "PHP script"), ("/a.php~", "PHP script"),
+    ("/api?page=index.php", None), ("/index.phpx", None), ("/php/guide", None),
+    ("/docs/php-guide", None), ("/wp-login.php-guide", None),
+])
+def test_php_paths(path, kind):
     assert probe_kind(path) == kind
 
 

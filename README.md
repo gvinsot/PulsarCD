@@ -991,7 +991,10 @@ The same applies to other paths no service here exposes:
   common web shells, Tomcat `manager/html`, Spring `actuator/env|heapdump|gateway`;
 - **backup dumps**: any `*.sql` (optionally compressed) and archives named
   `backup`, `dump`, `db`, `database`, `site`, `www`, `wwwroot`, `htdocs` or
-  `public_html`.
+  `public_html`;
+- **PHP scripts**: no site here runs PHP, so any `*.php`, `*.php3`-`*.php8`,
+  `*.phtml` or `*.phar` request (including `index.php/...` path info and
+  backups such as `config.php.bak`) is a probe.
 
 A request whose `User-Agent` names an attack tool (sqlmap, nikto, nmap, masscan,
 zgrab, nuclei, wpscan, gobuster, dirbuster, feroxbuster, ffuf, wfuzz, acunetix,

@@ -51,7 +51,7 @@ _WORDPRESS = re.compile(
     re.IGNORECASE,
 )
 # Keep these patterns in sync with PrivateNetwork's edge/dynamic.yml rules
-# 1009-1012, which reject the same paths with 403 before they reach a service.
+# 1009-1013, which reject the same paths with 403 before they reach a service.
 _VCS = re.compile(
     r"(?:^|/)\.(?:git|svn|hg|bzr|idea|vscode)(?:[/;]|$)|(?:^|/)\.ds_store(?:[;~]|$)",
     re.IGNORECASE,
@@ -76,6 +76,8 @@ _BACKUP = re.compile(
     r"\.(?:zip|rar|7z|tar|tgz|tar\.gz|gz|bz2)$",
     re.IGNORECASE,
 )
+# No site behind the edge runs PHP, so any PHP script request is a probe.
+_PHP = re.compile(r"\.(?:php[0-9]?|phtml|phar)(?:[./;~]|$)", re.IGNORECASE)
 # Offensive tools announcing themselves. Mirrors (and extends) WAF rule 1005.
 _SCANNER_AGENT = re.compile(
     r"nikto|sqlmap|nmap|masscan|zgrab|nuclei|wpscan|dirbuster|gobuster|feroxbuster"
@@ -86,6 +88,7 @@ _PATH_PROBES = (
     (_ENV, ".env"), (_AUTH_JSON, "auth.json"), (_WORDPRESS, "WordPress"),
     (_VCS, "VCS metadata"), (_CREDENTIALS, "credentials file"),
     (_EXPLOIT, "admin/exploit endpoint"), (_BACKUP, "backup dump"),
+    (_PHP, "PHP script"),
 )
 
 
