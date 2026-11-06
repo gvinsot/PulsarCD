@@ -1,5 +1,11 @@
 # Développement par agents IA
 
+Règles communes : `../AGENTS.md` dans l'espace de travail aidlc (https://github.com/gvinsot/aidlc, privé).
+
+Si le sous-dossier n'est pas aidlc, alors continuer avec les règles suivantes :
+
+Si ce fichier est absent, le signaler avant de commencer, puis cloner aidlc si vous y avez accès. Sinon, suivre les instructions suivantes :
+
 PulsarCD est un backend Python/FastAPI, un agent de collecte Python et une
 interface HTML/CSS/JavaScript sans bundler. Lire ce fichier au démarrage, puis
 les `AGENTS.md` du périmètre modifié. Le guide de travail est
@@ -10,7 +16,7 @@ déploiement.
 
 1. Lire `git status --short`, puis récupérer `origin/main`. Intégrer les commits
    distants avant de commencer, sans écraser les modifications parallèles.
-2. Identifier les fichiers concernés et leurs tests avec `rg`. Lire les modules
+2. Identifier les fichiers concernés et leurs tests. Lire les modules
    utiles plutôt que charger tout le dépôt ou l'intégralité du README.
 3. Préparer l'environnement avec `bash scripts/dev.sh setup` une seule fois.
    Cette commande installe les dépendances dans `.venv` sans activation manuelle.
