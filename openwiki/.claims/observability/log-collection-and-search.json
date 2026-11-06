@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:228b2ab4ca2dcbdc3b16820a0b2346c993d3fd4f5d185948b0e7f7182078dffe",
+  "claims": [
+    {
+      "id": "claim_a53e20f9be254cc3a0d9fd15119679b3",
+      "statement": "All records live in one VictoriaLogs instance separated by a kind stream field, and per-record values must not be stream fields.",
+      "evidence": [
+        {
+          "resource": "repo://shared/victorialogs.py#L1-L15",
+          "version": "repo-lines-v1:sha256:2fe9e1548eea40f19baeb0a12f94aa074b35b9152e1dbaaa815e54a10a88e083:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExNzYzMzJjYTc2MWMwMmNjZDI1ODJkMjg4MzM0MjE2Y2JkMjYxYTQxMWIxNmRmMjBiN2Y0YTM1NGQxNWE4ZGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3NWQ0NTg5ZTkxY2M4Y2I5NzQ4ODlkYWIwMWRlMTVkYjE1NzRjYTEwZWVjNzI5MGExMDliZjU4OGM5NGUwMWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE0NTNhZDIxZjI5NmIzZWFjZGRmYmIxZGQ5ZDkxZjdhZmE1YzczOTdmMzY3ZWVhNzIyNmM2NDc3MWI5YTZlMTMifQ"
+        },
+        {
+          "resource": "repo://shared/victorialogs.py#L24-L47",
+          "version": "repo-lines-v1:sha256:7982e21b64ae97d1de35070ecf9c64d1f0d2001e514602e0046b418e90a83a51:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU1MWYzNWVkYWNkYThlZWUxZWJiYzlmNmMyMmNmMTg4Y2E0MGY2ZTAzZTE1YjVlZjhiNWJhN2Q1NTY0ZWEwMjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNjM2U4YmJmZWE3MzRmNDJlMjU0MjRiM2ZlYzQyN2ZlZDYxNGIwMGRmZmIxM2E5YTRkNDY5YjA2NmU0NGVjMTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ffd7565e42164239bc26b20775a5ba47",
+      "statement": "Because records are appended without ids, the agent drops already-sent lines and resumes after the newest stored line at startup.",
+      "evidence": [
+        {
+          "resource": "repo://agent/docker_collector.py#L444-L450",
+          "version": "repo-lines-v1:sha256:e0c0605d8857208fdc0f12a72d3def5ef114bc8054836c3da1dc5745d618c643:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOWJiNjA4NWMyNzNmN2ZhYjY1Mjk3OTMwNTMwNTBiNmFjODVjYmU3MzEwZTZlN2E1MWE2NzhkMjM4MjZhMTQyZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNWM3OGQ0MWM3MGM3OWJmMjY2OTMyMDBhNjQ3YTFkZTA2ZjMyMDhkN2Y2YWEwMmJhZjU0YmQ0NjIxMzZmMWRlOSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZDExZGNmMzBjYzQxOWYyMWRmMmU4MzNhMzg1MDU2ZWU2YTAzZTIyZTg1NmNhYzljZTM3ZGZlMzVjYTdkOGUxNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjQzZDdiMmY3N2U5ZTI4ZjAwZTllMzE4NzU0ZmU0Mjg2YzE1Y2NmZGVkODVlNDIyOTZkNWEwOGI1YzhlY2ViOSJ9"
+        },
+        {
+          "resource": "repo://agent/docker_collector.py#L486-L487",
+          "version": "repo-lines-v1:sha256:d56d6d7ec1ed951907423d82ce50c625b24a63fa411cd6c91dd68a2ca5028fa5:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDk1MGU4M2UyNjY2YjkxMjljZjk5OGZhMWFjMTY5MmRkYjI4ZDIwNWQwMWFlYzQ0MmMyYmFiNDM4YjQ4ZjI5ZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiN2QzOGE2MThlYmZmNjRiZWFhMDFhYmZhNWQ5N2ExYzhlODQ5MTdkZDJjYmZjMDkwNWE4YTIyMmZhZTgxYzcxNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMzM4OTUyNjk1ZjQ5M2YxMTEzMTNjZmQyMWJmNmFlYTk2YjJkNWYwZmI2ZGZlYTEwZjVhNjE2M2VjOTBmNmNmNyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNzEyYmJmNGQ5N2Y4NDVhMzU5NzQxOGFjYjIxODNiOWMwYjYyOWQ3NWQzOTYyZjUyZWNlN2JiY2M3MDUwNTIyZiJ9"
+        },
+        {
+          "resource": "repo://agent/victorialogs_writer.py#L1-L7",
+          "version": "repo-lines-v1:sha256:03ac86e55b8ddb460ac70f6c87c394df57462946a7127d6306c303239991000b:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNzE4M2UyNzZmNzMxYjU4YjZhODY1YWY3MzFiMDUxODA3OGFlNmNjNDU2YTIxZjQ5MTA1ZWRjZjU3ZDMzNmY0OCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDc1ZDQ1ODllOTFjYzhjYjk3NDg4OWRhYjAxZGUxNWRiMTU3NGNhMTBlZWM3MjkwYTEwOWJmNTg4Yzk0ZTAxYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZDQyZmI0MjBiOTE0OWI0YjBiMDg4ZjFmN2NhMmZkOTdjMjU5NWZmMjQ1OTIxMGE4YWZlOGY2N2MzZjc2ZGZmNiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_74b924fe2d244e7aa585cfec53aa4c91",
+      "statement": "Only running containers are read during log collection.",
+      "evidence": [
+        {
+          "resource": "repo://agent/docker_collector.py#L451-L452",
+          "version": "repo-lines-v1:sha256:89dd2e21a9cf9aaf865139234f024a2195813892295424ef9922c95bee4aa6f2:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMjZlNTQ5NGRmZjIzZWY3NWJmYWUyMzgxYmVlZjVlZTQ3OTdjMWJkNWUxYmE5YzZiZTc4MzYxNTQyMzIzMmE3OSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMGFmYjZjZDQ1OWJhM2NiNmUzYjVkZDdiZTQxYzJlM2UyM2ZkMWFlYmFmNTEzNDRlZTAzYTNiYjdjZjUwYThmZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZWY0MGIxYjQ1ODBlYWE4YTA0MTFmYzA1MmQwYzM0OTM3MTBjMjVmMjIyZmRhZDk2YWRkYjk1ZTYyMzgzMDk3ZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNzE2NjNmYzRhN2U3YjU2ZThiNmQ1ZWYwZmJjMGQ5MTQyMmU4ZjJiM2UxOTg1NjlhZTc2Yzk5NDlmM2UxZTBhZSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_39879fe9ee004f58af1236f4181b6dc1",
+      "statement": "After 20 consecutive empty cycles, a container's timestamp is reset and collection falls back to a tail fetch.",
+      "evidence": [
+        {
+          "resource": "repo://agent/docker_collector.py#L28-L30",
+          "version": "repo-lines-v1:sha256:e17e0327004bf7f51896ea41410909c2ccd64c8d0f66903b6eaa4e22ce7ba37a:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYmVjZjMzODZkZDdkOWZjNzNhMmQ2YjM5MWQyMzdjNDc5MWUxNzA3OWUyMmVjMThlMDMwZTRkMWE4MTllODAxNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNmUyZDA2OTJmNmM5MWFlZmQxYzk2YjJmZjM0ZGY5N2I4MzQxNWYzMTI3NjcxZTVlNjEyZDIxNzgyNDJhMmYwNSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYmNjNGNlYWIzZDg5NDU0MTc0ZmI5YWZjODhiYTc1MDUwNzIzYjU3MDJlN2Y4NTFjMmIwYmYxOTFmNWYzYWFkZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMWJhZmQ5N2I5YjE3M2Y2NWRhNjhlZWNlODQ2NjY1YjYwNWUzYTY1MzVhYTI2ODJiMzkyM2U5NTIyNDRiYzQ1ZCJ9"
+        },
+        {
+          "resource": "repo://agent/docker_collector.py#L463-L476",
+          "version": "repo-lines-v1:sha256:7840988ecaa6e4feba5e4c8aeae26b2afdb44ecbad72273c212e51dc8382ae44:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxYTk0NjVjZDZjMzMwMTUxNmNkY2U5YWMwNGRiMzEyODE4YWQzMjQxYTIzYzJjOGFmMjEzN2U4MDEwOTdjZWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI3ZWRkYjc4NWEwOWZhZTI1NDBlNzhlNWVkYWU3MzU3MzMwMDFkNjBlNGQyYzkyYjhiNDliZjBhNDlhMTRjYmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQzYWU3MTU4NTdlNTM3MjkxY2E5ZDJhYTZjNjg2ZTAyMjVjZTZlZWVlZWNhOGRjZTRhZjQ4MTI4NTNkMTE3NzEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fd8909790a384ebeb1ad571517301425",
+      "statement": "text_filter passes every term as a quoted literal so typed syntax cannot change the query.",
+      "evidence": [
+        {
+          "resource": "repo://shared/victorialogs.py#L216-L224",
+          "version": "repo-lines-v1:sha256:6372b67b3f5199c2de7237ca864179156b760b10f5aa7151af73b47023dfc85d:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNmU2OWI3OGE3OWI3MmQ2YjRkMzA5Yjg1YjZmMzQ1NzU5ZTkyY2U1MGFmM2NlN2E0YTVmYjA2ZjViMjAzZGM5NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOWY4NzNlOGVkMDU3ZGJmYzlkYmRlMDc1YjVlNDcyZTk1YTcyMzNmYmM4MGJjNjg0Mjc5MmEyZDIxYmJmY2ZmYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiODdlNWExZjZiY2FkMGY1YzA5YThhMjUzNGQ5MjEzNDIxMmQwMWE2NjZhZmRlZDc4NjBiM2MxZjNiMzA3NGRjZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZmFhZmQ0ZjlhNjlmMzMwMWE4MTQ0MTM0NjliNWQ2MzcwZTM3OWMyMGJhNjM4ZDNiMzAzYWRmZWI0ZTM2YWJiZiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_16de239667584f7a81fb259128d433c9",
+      "statement": "Raw LogsQL is confined to log records by an extra stream filter, and its window and rows are bounded.",
+      "evidence": [
+        {
+          "resource": "repo://backend/log_store.py#L414-L435",
+          "version": "repo-lines-v1:sha256:ff1c6872acf6e8690b8e92ce3c3d6a94dc65fa0b2fdb431795c88d5394cad613:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg4OWVkNGNlOGI4NmIzMTY0MzRmNDRjYzA0NTViOGEzNDg3NTY1ZTNjN2U2MDM2YzUyZWYxZjE4MDVjNzliMDgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdlYWRhNmZhZWM4ODBjMWI5NzhiOWQ5OTViMzMyMTFlOGQ0YmNmZDI0ZmJlNzUwMmRkZDkzY2QxOWNjOWE0YmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdkODEzMTIzNWQ3YzI5ZDdkMzdhYzI0NDBiMjc1MTlhZjdmOWFjZWZjMDg1ODBlZjNhM2I0NTBjNzBhZTUzMjMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_24e2a22f8cbe424badf2add5c645b1e9",
+      "statement": "Search and raw query limits bound inputs because VictoriaLogs has no authentication.",
+      "evidence": [
+        {
+          "resource": "repo://backend/log_store.py#L40-L50",
+          "version": "repo-lines-v1:sha256:b09d388e7fb133e6b61aee8b0eb71336ba7d5fe7d72f368322a7c711cb6005db:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjZlOTgxYTFmMTc2Y2M0ZWM0YTdhMjYxMmQ1OGI5ZjZjMTAwOGQyNWE1ZjM3MzVkZjIyZTQ1MjdjMjI5M2I5NmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFhYjEzODEyMjA2ODMyYmRiNDc3NDM0MWFlNGRmZThjNTY3YTRiMTcxZTVjYmY2YTM1ZDRjMjUxNTQ0MWU1ZTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE2YTU0Yzc3ZWE4ZmM3NmRmZGFhNWZkMWY4MDBhMTU2ZGM5YmIxYzVlZTNmNmJmOGVlMjNiYmZiYjBkZjQwZDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZjNGY3ZGM4OTQ3YjRmYjM0NzIxYzQ2NTRkZmJjOTQzNWQ1NjhlOGJiZDdkZmJlZTgxN2QyMjBiM2MzZTdhZmUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3109c04bcdad46e1bc253cf29afdd587",
+      "statement": "POST /api/logs/search is allowlisted for viewers.",
+      "evidence": [
+        {
+          "resource": "repo://backend/auth_middleware.py#L72-L77",
+          "version": "repo-lines-v1:sha256:7659accf2c8962a6a8b2a4fd0acfbc9fb83171a69a632f5950b4c28b495705d1:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDE1NjVhODY1MDIyYTZiYzgzMjBjOWZjYmI4NWUzM2U1MmM2NjU2MzNmODJlMDA0MDY1NWRjNzNkMmE5YzczYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMTBhOGY2MGZlM2M1MGIwY2Y1MzQ3MjIxMTNmZTkwZDczNDE0Mzg3Y2U5MmU1OTc4YzgyY2JkODAxY2MwNTAwZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYWYzZDU0NjAwMzE4NzY4MjY4MGUyYWM4M2EzM2M2YTdjMjkyY2M0ODVjZGQ2NWI1YTA4Y2JmMTYzZGQ0NzY1MSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZjU5MzU2NWM2ZWNhYzc5ZjE4MmNkMjk1ZGI5MDkzMjZmM2QyNDQ1MDkyNjE4MWM3OWY5MjJiMTkwYTNjMTEwMyJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_22b1c894aa4842d985c6811135e2e217",
+      "statement": "Agent writes also derive access records from Traefik and WAF lines.",
+      "evidence": [
+        {
+          "resource": "repo://agent/victorialogs_writer.py#L84-L100",
+          "version": "repo-lines-v1:sha256:1b0767c77809b80666501c994577884eea3b86be863f6a5f1e969fd2be716e0a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYzYjM1YzJlZDJmMTQwZDI1ZTBlNTlhNmY3MTE0ODIxYjdlMTkxODRjMzE0NThjMzg2OGZjZTAxYmQ0ZDQzYjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY1NjBlNTAxMTVmNDlmNTdmYTIwNTJmMGZkYjUxZWY2MThmZDA5OTg0Y2ZhZGU2Yjk2ZDIyZGExNjAwNTllMjEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ4MmE3OTc1ZTBlZWNhMzRhMmNhMzUxNmM5Yjk4YzJlNzdjZTRkZTc2ZjQxYWJlMjJjZTJmNGFiZjQ4ZTdjOTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ0NDExYmUzN2YwNzg4ZjBkMWM0ZjhlNzc2ZTM0ZTliOGQ2MGJhZTY2NWNmNWNjNGIyOWQ1Yzg2MjhiMDliODMifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-06T10:52:04.857Z"
+  }
+}

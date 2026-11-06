@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:0f2b87078eba23d056efe7c7b9143f148e707944e55d6a7496a86b772a84b275",
+  "claims": [
+    {
+      "id": "claim_50e921c4587644179f6fd4bb0f43dd7f",
+      "statement": "The middleware protects routes by default: admin paths and mutating requests need admin unless allowlisted, and selected GETs that disclose secrets are admin-only.",
+      "evidence": [
+        {
+          "resource": "repo://backend/auth_middleware.py#L52-L94",
+          "version": "repo-lines-v1:sha256:0e0eafe6849d5c51e49da55b076311645bff2d6fdb75b0a2526524b0882ef76b:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc2YzE4OGIzODc0NjY0MzYzMGVmNGY3NTliMTg4YTUwOWZhYmJlOTVkMGE4NjdkMGQzZDU2OGEwZWY2Njc0MzMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUyZGZjMjMwOThmOGI1Y2JlNDFmOTQxNmVjNjE2M2ZhMmM2Y2UxYTg1MDk0YjQ3MGI5OGVkYTU5NmMyYWQ4MDkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYzOWNlYmQ0N2U2YTkxZDE5OGRkNWU2YWQyOTdiMzcwYmM0MDQ0NDkyMmExYzcwNDMyMjFkMDFjM2FjZmM2MjciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFlNzgzMjYyNjhhNzVlZjFlNmQ3YzYzOTM2Y2YwOGI1NTA5NDU4OTE0ZGQwMDkyNDU5OThlNjk2OWQ1Nzk4NTAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_64d6ed620b304e5bb6b5d8dde4a39f25",
+      "statement": "Only exact public paths are exempt, and sub-paths of the health route stay authenticated.",
+      "evidence": [
+        {
+          "resource": "repo://backend/auth_middleware.py#L29-L50",
+          "version": "repo-lines-v1:sha256:cbf486f0680e1b310ba143654a57c64bc5bba3441ed5836eb8c11b61a5d30913:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjliMzllMDIyZTBkODU0MTIwMDAzZDc5MGMyOGI3NTk2MmVkZDMwMzc1NmQ1MTMzM2RmNzQ1Y2ZiODZlYTExY2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRhNzhmMTJlZjA0NGM1NDdmOGI4MjRkMmU4MmY2M2EwNzc3MGVkYmUzMjkwMWNlZjkxNWFlNjQyMzFiMTc5N2IiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFlOTcwZDkzNTE2YzMwZDljMjgzMDZlYTFmMzQyM2U3ZTI5MjQ3OTZhZGZhZmVmMWI3ZTk5MTkwMzk4NWI0YjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_71f5c0c6bc3b4fd3a9a0ebd4c44aa7ee",
+      "statement": "Google verification pins RS256, checks the audience and requires a verified email, leaving permission to the allowlist.",
+      "evidence": [
+        {
+          "resource": "repo://backend/allowlist.py#L1-L9",
+          "version": "repo-lines-v1:sha256:9115cce67143bee1266a670e770fb2331375d572b839db7f74708d7ba16ecd65:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMzk0OWQxNThlYTFiNTFkMDMwOTA4YWI0MjYyY2U0NjVmZGU5ZmZjODVhNWEwYzZmNWUxNWMzNTRkMDg4ZjRkZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYTY2ZjE0MGM2MTQ2Y2VhMmUwNzA2MTk5ODk2YmQ5ZWYwYWMyYzNmMGUxNWQ3NzExM2EyNDQ4YTM5NGE4MjA4NyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODg3YTU0MzU3Y2JkMmM0NDNkYWU1MDZjYTRiMmVjZDM1NDZjMDE4NTRlM2JhMWYzY2QyMGQ3MWVmZmVhMzdmOCJ9"
+        },
+        {
+          "resource": "repo://backend/google_auth.py#L1-L27",
+          "version": "repo-lines-v1:sha256:dd2e556ee987e0577d64b2b3fb0b8955bb38d6b789fe5edf78f2e7912f10366e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBhZWZlYzM3N2NkMDVjYjcyOTljZDNiZmJkMDM3ODUwMTUwYzU3ZGQ2Y2ExOTUxZjcyMjllY2Y2YmU4ODllMzAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3NWQ0NTg5ZTkxY2M4Y2I5NzQ4ODlkYWIwMWRlMTVkYjE1NzRjYTEwZWVjNzI5MGExMDliZjU4OGM5NGUwMWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc4ZTgxNzU5YTU0MzlkMWI1M2ZlZTQ2MDE0YTM1MDU2M2ZkYTY4YWQ1MTc3Njk0OGI5ZjgxODE1ZTRmMDJkY2EifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c706adec610b4d92a663a3284ac29be4",
+      "statement": "Environment-listed addresses are reapplied on boot and cannot be removed through the UI.",
+      "evidence": [
+        {
+          "resource": "repo://backend/allowlist.py#L9-L19",
+          "version": "repo-lines-v1:sha256:d10d46f94f44d07b3ae42b5141ea50e119d5e6e03effbda6b813b14555fc1562:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE2NmYxNDBjNjE0NmNlYTJlMDcwNjE5OTg5NmJkOWVmMGFjMmMzZjBlMTVkNzcxMTNhMjQ0OGEzOTRhODIwODciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY5YzIzZjljMTc1YjhkMTk4MzIzNjgzNTg2YjFiZTEwMTk0M2JlMjE1N2ZlYzNlOTcwMjM2Yzc2OWMyMzM4OWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFlMzZkNDU0ZGI3MjY3NTlmNDJmZmRlZmRlNDhkM2Q1NTIyZDZjMmZiN2YwNGM3NDNjNTczZmJhYjI3ZDdmODkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2eb435a0c88948118f8a22e81f07df79",
+      "statement": "The break-glass account exists only when a password is provisioned, and the environment is authoritative.",
+      "evidence": [
+        {
+          "resource": "repo://backend/user_manager.py#L1-L25",
+          "version": "repo-lines-v1:sha256:55f9f841f0e5b0fee1454f0f1d72029baad088718a2d1e3e1711d93ff656e750:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0MjU1YTI5OWJiOTEwYWU4ZTY2YjI5NzlkOGU3MGI1NDk1MmJmZGY1ZjU2YjhjMjgzYzljNTQyZWYxOTQ4ZWEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkzYzhmOTlkZTNkMDliYjg5ZDRlNjUzMzJiMTNlM2VkZWFhYjFhN2FiYTc3ZjQ4YWQzM2UzZDI5ZjExOWExMzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFiMDNiYzgwOGNjNThlNDI1MGNjZTNlNmU2NmI5MWMyYjVlMzNlYTIyMTVlNTY3MGYzMjM5MjRiNGRhMTA5ZDMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b44fdb9ce9f8449eb4a786604a8ec27e",
+      "statement": "Tokens carry a revocation epoch that invalidates sessions after a role change, allowlist removal or password change.",
+      "evidence": [
+        {
+          "resource": "repo://backend/allowlist.py#L20-L22",
+          "version": "repo-lines-v1:sha256:1e36d454db726759f42ffdefde48d3d5522d6c2fb7f04c743c573fbab27d7f89:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiN2VkZTE1MzY1ZTgyY2VlZDhmNTdlMmNmZGI0MTU3MzliMjRjMDllZmQ5MjQ1NjUyMTQ5N2EwY2Q5YzdlNDE4YyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiODZiODBjZTJiYThhMjEzMjRjNmFhMTg5ZWNlYTIwODFhMDYxNTQzNjljN2ZkOTQ2YjQ3Y2Q2YTZjNzk5MzBjOCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNzNjZjgyNWQ1MmMxMGY1NWRhNzExMzdiODE5ZjhmNjU3YjUyNGNmYTEwNDI0Y2U4YzRlNjQzZDdmNzQ1YzNmZSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMWIwM2JjODA4Y2M1OGU0MjUwY2NlM2U2ZTY2YjkxYzJiNWUzM2VhMjIxNWU1NjcwZjMyMzkyNGI0ZGExMDlkMyJ9"
+        },
+        {
+          "resource": "repo://backend/auth.py#L28-L55",
+          "version": "repo-lines-v1:sha256:ea50669fb28ce40f742f576248e1358139a11cb45c37fc68a3123f4f2912fcf5:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5OTdmMjQ0MDU1ZTU2OTAxYTFmMTI0MDE2ZDEwZmE4MjVkZTlhNTU4NDgzNmFlZGIzYTI1YmFkNWFlMzAzMzciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4OWFlNzZmZjU2N2FkMmM2MjkxZWU0MTVhYzBjNzczNTAyOTRjZjg1MmU4ZjkzM2NiYzRkMTgxOWUwZDQxOWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImMxNjYzMmI3MTRkNzRmZDllNjBmYzBiMGVlMTI3ODlhODJhZGMzNmVkOThmMTc2YzFiMDU5ZDMxMDI0YjE2MjAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjYwNjQ1ZDcwOTE1MjE1NjhkZTY5ZGEwZGE0YWI3MmY2ZTQ4NmI3MTJjNjk4NDM0YjRkNjg5M2VkYTYxZDZiYzUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_81396f119658463d8735373e036fa508",
+      "statement": "Query string tokens are honoured only for the SSE stream and terminal WebSocket.",
+      "evidence": [
+        {
+          "resource": "repo://backend/auth_middleware.py#L127-L138",
+          "version": "repo-lines-v1:sha256:a6c46694234c98dc0466ae5d6f550786a6f5517c484e00c01ab3cc04fd0f80a7:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg3YmY3MDE2NTgzYjkwYTRkMjFhZTYxY2FlMzI0NWQ4YzNjOWE3MTIwNTViM2YyYzc4NjVjMzJlY2M5YTk0N2QiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBiMjU0ZDNmMzZiMzBiYTZhMjU1ODZhNzQ0NjZiYmE0NDIyY2QyZGJmOGNmNmEzZmZiMDZiZmM2MWVmZDU1MTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc5YWNjNThmNTM5OGVjNTliYTU5ZWUyMjFiYzNmMGRhMzk0MzM0Zjc0NWU1ZjI2NDFlMjIyYTkzYzM4ZTY1NzMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e1fc8084728b400e9606bbf377c72f76",
+      "statement": "Uvicorn log records have secret query values redacted before formatting because logs are searchable by viewers.",
+      "evidence": [
+        {
+          "resource": "repo://backend/main.py#L12-L26",
+          "version": "repo-lines-v1:sha256:bb80fd26ff64bccf367d2a164fbfa3e4b286ba02a7edde23578c237e63a30a11:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNjZmJmNTg2NDYyN2E0NDE1MzAwODA5MzZlZWVkNTAyZmJhNjAyNjc0ZTcyNTA2MjJkOGZlM2ZlNzQ3MzgxYWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImEyYWExY2VlNThhZDQyNDg3OGIxY2U2OTgwZWU5YTM1ZmE2YzY0ZDU3OTRmMWFiZWRmZTExZGQxZjkxNDljODkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQzNTJkN2E5MTRkYWNhNzQzNGNhNTVkYmIwNjk5NGM4ODM4MjkyMDI5NmUzYjAwNjYyOGFhYmRmZTdiOTIzMjAifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_47a481a5e44841f7864abd123d327577",
+      "statement": "Login attempts are limited per account and address and per address, and X-Forwarded-For is trusted only by opt-in.",
+      "evidence": [
+        {
+          "resource": "repo://backend/routes/auth.py#L24-L43",
+          "version": "repo-lines-v1:sha256:3326cf5f9570d1bd4a665df72087d15a01820a3adc8b205d918b7f0f6544fb5d:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJiOWJmNjZkYjgwNjA5ZTkwYzYzZjYxMjAzNDJjNmQ5MDhjZmZiOTU4YzM3MzgxMjlmYzc0MzlhYTU4NjMyYmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBlZGVmNjBmZWU5YjZhNTUxZGZlMjkzN2E0YzAzNzkxZGMyNjcyMzg4NWZkNGRiZDM1Nzc3MTRmN2ZiNjQzN2EiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQxYzkyYmFkZDcyMTdmZDM5MWZhYTI3M2ZmNTI1MjQ4NTVhZTBmOGJjY2EzYzE4MTdiOGUxOWNmY2Q2NzZjZmQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_faab430f08c84222867b0ed04ce7f57f",
+      "statement": "The Host header is echoed into the CSP only if it has a plain host and port shape.",
+      "evidence": [
+        {
+          "resource": "repo://backend/security_headers.py#L52-L72",
+          "version": "repo-lines-v1:sha256:9523606f0c42891efc10d2deedc32e8889af3518497ec59374b480d80678328e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRhOTMxMmRhOTg2MDRiYjRhMTY3MjZlZmZjMzUzNmY3ZDg0Yjg5NzFmZjdkYTgyMzE4NjFkZmRmM2ZjMGQxMTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU2ZGYwMTQyNDMyOGM0NTlkNzJmMjljZjY0MTQ4NzdjZDU5OTYwZTljZWU5NGRmNDI2NDkyZGQ0ODllNGY0MzEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE0ZjkzNjg3YjM4NTcwZmRlZDUwMDQ1NzIyODQ1ZTZmNmQ5NjU4ODE5NzZlNTJlZTI0NTk5Y2QyM2Q4NTM2ODYifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-06T10:52:04.857Z"
+  }
+}

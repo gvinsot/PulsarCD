@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "pages": {
+    "/openwiki/ai/mcp-and-llm-agent.md": {
+      "pageVersion": "sha256:c1a40c37b09140305d477f43c4d0453a34c95bb70b2d98924f9b42a79000c86c",
+      "completedBy": "claude-code",
+      "completedRunId": "912c8b39-3027-4f1c-af66-5b0e260dd120",
+      "gitHead": "e91445969ce5ac53e3618fa3d9d480349e1bed84",
+      "sourceFingerprint": "sha256:53a95770cef2829d84c930b62f3dcffe96e9105b1286e4e2d24dab696b899a33"
+    },
+    "/openwiki/architecture/system-overview.md": {
+      "pageVersion": "sha256:e15dc8df9254db8383c2cd5f274d6ac674bcbd7e2948a5d5e4337c9ddf4da075",
+      "completedBy": "claude-code",
+      "completedRunId": "912c8b39-3027-4f1c-af66-5b0e260dd120",
+      "gitHead": "e91445969ce5ac53e3618fa3d9d480349e1bed84",
+      "sourceFingerprint": "sha256:53a95770cef2829d84c930b62f3dcffe96e9105b1286e4e2d24dab696b899a33"
+    },
+    "/openwiki/development/testing-and-checks.md": {
+      "pageVersion": "sha256:1b39b3b02b498f48bca11102a4bff5f5dc88e23b2ef6d4aa15a56436931b6267",
+      "completedBy": "claude-code",
+      "completedRunId": "912c8b39-3027-4f1c-af66-5b0e260dd120",
+      "gitHead": "e91445969ce5ac53e3618fa3d9d480349e1bed84",
+      "sourceFingerprint": "sha256:53a95770cef2829d84c930b62f3dcffe96e9105b1286e4e2d24dab696b899a33"
+    },
+    "/openwiki/frontend/ui-architecture.md": {
+      "pageVersion": "sha256:8e9c17aac1cc3ed3432f0044fc8156156749eefeb9c177cf09e09116b49e5a1d",
+      "completedBy": "claude-code",
+      "completedRunId": "912c8b39-3027-4f1c-af66-5b0e260dd120",
+      "gitHead": "e91445969ce5ac53e3618fa3d9d480349e1bed84",
+      "sourceFingerprint": "sha256:53a95770cef2829d84c930b62f3dcffe96e9105b1286e4e2d24dab696b899a33"
+    },
+    "/openwiki/hosts/actions-and-remote-execution.md": {
+      "pageVersion": "sha256:5eafc58cc71be2e3cc91d0a665ba4057b3ef651a9937873e718695380b9ceec2",
+      "completedBy": "claude-code",
+      "completedRunId": "912c8b39-3027-4f1c-af66-5b0e260dd120",
+      "gitHead": "e91445969ce5ac53e3618fa3d9d480349e1bed84",
+      "sourceFingerprint": "sha256:53a95770cef2829d84c930b62f3dcffe96e9105b1286e4e2d24dab696b899a33"
+    },
+    "/openwiki/observability/errors-and-notifications.md": {
+      "pageVersion": "sha256:59cba98b178cb99186df8aeffa2f127923f0b40487ba8e3978d87f27c7cf01da",
+      "completedBy": "claude-code",
+      "completedRunId": "912c8b39-3027-4f1c-af66-5b0e260dd120",
+      "gitHead": "e91445969ce5ac53e3618fa3d9d480349e1bed84",
+      "sourceFingerprint": "sha256:53a95770cef2829d84c930b62f3dcffe96e9105b1286e4e2d24dab696b899a33"
+    },
+    "/openwiki/observability/log-collection-and-search.md": {
+      "pageVersion": "sha256:228b2ab4ca2dcbdc3b16820a0b2346c993d3fd4f5d185948b0e7f7182078dffe",
+      "completedBy": "claude-code",
+      "completedRunId": "912c8b39-3027-4f1c-af66-5b0e260dd120",
+      "gitHead": "e91445969ce5ac53e3618fa3d9d480349e1bed84",
+      "sourceFingerprint": "sha256:53a95770cef2829d84c930b62f3dcffe96e9105b1286e4e2d24dab696b899a33"
+    },
+    "/openwiki/pipeline/build-test-deploy.md": {
+      "pageVersion": "sha256:52799e79a24f360cfef0523dd8a1e854673b7bd44d4e7e05a4a796ca7b953533",
+      "completedBy": "claude-code",
+      "completedRunId": "912c8b39-3027-4f1c-af66-5b0e260dd120",
+      "gitHead": "e91445969ce5ac53e3618fa3d9d480349e1bed84",
+      "sourceFingerprint": "sha256:53a95770cef2829d84c930b62f3dcffe96e9105b1286e4e2d24dab696b899a33"
+    },
+    "/openwiki/pipeline/preview-environments.md": {
+      "pageVersion": "sha256:c2ee9b77534c67ae81218bf2b7036e4ff29d65c43b0eee5bccc74062b3216318",
+      "completedBy": "claude-code",
+      "completedRunId": "912c8b39-3027-4f1c-af66-5b0e260dd120",
+      "gitHead": "e91445969ce5ac53e3618fa3d9d480349e1bed84",
+      "sourceFingerprint": "sha256:53a95770cef2829d84c930b62f3dcffe96e9105b1286e4e2d24dab696b899a33"
+    },
+    "/openwiki/pipeline/project-integration-and-secrets.md": {
+      "pageVersion": "sha256:87eafb863c224bdc3fa7a572120fe7a027a0e7993cbec8d14510b5c2af49ba9a",
+      "completedBy": "claude-code",
+      "completedRunId": "912c8b39-3027-4f1c-af66-5b0e260dd120",
+      "gitHead": "e91445969ce5ac53e3618fa3d9d480349e1bed84",
+      "sourceFingerprint": "sha256:53a95770cef2829d84c930b62f3dcffe96e9105b1286e4e2d24dab696b899a33"
+    },
+    "/openwiki/quickstart.md": {
+      "pageVersion": "sha256:a0852419283de0b326c189c4bb45fbd9bd1e0b00b3c1ba28b752188eda64d95e",
+      "completedBy": "claude-code",
+      "completedRunId": "912c8b39-3027-4f1c-af66-5b0e260dd120",
+      "gitHead": "e91445969ce5ac53e3618fa3d9d480349e1bed84",
+      "sourceFingerprint": "sha256:53a95770cef2829d84c930b62f3dcffe96e9105b1286e4e2d24dab696b899a33"
+    },
+    "/openwiki/security/authentication-and-access.md": {
+      "pageVersion": "sha256:0f2b87078eba23d056efe7c7b9143f148e707944e55d6a7496a86b772a84b275",
+      "completedBy": "claude-code",
+      "completedRunId": "912c8b39-3027-4f1c-af66-5b0e260dd120",
+      "gitHead": "e91445969ce5ac53e3618fa3d9d480349e1bed84",
+      "sourceFingerprint": "sha256:53a95770cef2829d84c930b62f3dcffe96e9105b1286e4e2d24dab696b899a33"
+    },
+    "/openwiki/security/edge-security-and-usage.md": {
+      "pageVersion": "sha256:fb1f904edf08c79623506bea79c8d94325a8fbe989725d9e5b067e264e9a3ec5",
+      "completedBy": "claude-code",
+      "completedRunId": "912c8b39-3027-4f1c-af66-5b0e260dd120",
+      "gitHead": "e91445969ce5ac53e3618fa3d9d480349e1bed84",
+      "sourceFingerprint": "sha256:53a95770cef2829d84c930b62f3dcffe96e9105b1286e4e2d24dab696b899a33"
+    }
+  }
+}

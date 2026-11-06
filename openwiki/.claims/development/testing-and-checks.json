@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:1b39b3b02b498f48bca11102a4bff5f5dc88e23b2ef6d4aa15a56436931b6267",
+  "claims": [
+    {
+      "id": "claim_c624b26398d24b918dae916441b73524",
+      "statement": "scripts/dev.sh runs static checks, shell syntax and both test suites locally, continuing after failures, without deploying.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/dev.sh#L1-L22",
+          "version": "repo-lines-v1:sha256:92b313ef5195415c883f1aa516b13aa8e299404eb270f3a898ec674388ac4ff2:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNkMWFkNmNmZTYwOThjNTY4YjczOTVjYjhiNTY4YjBlZmM3Y2E0MjgxZDQxOTIxNmQ0NDZmYzhhYTExOTU1YmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY3NDI4YzIyZGQ5M2Q1NTQ3OGViYmNmOGI5YjlmMTNlMDMzZDFkNzU0NWJiYWZmZDA4MzQ4ODRiMGNiMDRlYjYifQ"
+        },
+        {
+          "resource": "repo://scripts/dev.sh#L58-L100",
+          "version": "repo-lines-v1:sha256:d9c202ecde432f81123175ce127003f0efc16fbc98c49fc813694ab8f107de2f:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjczNThjMjUxZDQ4NDZiNjI4NDc2ZGU5ZDY5MjA4ZDFiYTNmNzYyYjE2MDk4NTY1ZDMzYzQxMjQ5ZjNiNmVjNjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjExZDM5MDEyZTdlYmM0ZGQ3NzkxY2I4MGIzOTdmMDljZjRjN2FiYWIyYjUyN2YyOTRiOTI1NDcxYjRmOTQ2NWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRjMDlmMjYyMGRlMTQ3NmNiOTFiNDU3NjlkM2EyZTBhMzI0MjlkNmRmODU1ZmNjOTc3MDU4MzQ5MzE0YWNlNTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_58915891ca4f4c08bd603e86f7a23991",
+      "statement": "scripts/test.sh is the pipeline's runner for deployed projects rather than this repository's test runner.",
+      "evidence": [
+        {
+          "resource": "repo://docs/DEVELOPMENT.md",
+          "version": "repo-file-v1:sha256:97f9103e08051e230b370686676b49bd288573905a1abcd90b23260a8b7a2da6"
+        },
+        {
+          "resource": "repo://scripts/test.sh#L1-L12",
+          "version": "repo-lines-v1:sha256:7c938cb44ac38adb4426bd80bc9f6b35205deaa9f2894417ae4f6d8f02789c62:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNkMWFkNmNmZTYwOThjNTY4YjczOTVjYjhiNTY4YjBlZmM3Y2E0MjgxZDQxOTIxNmQ0NDZmYzhhYTExOTU1YmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM5YmNiMjdjZjI5ZjJiZDc0MDJlZDRiMmE4YmJmODMzOGI2NWY4N2U1ZjZhN2IxNjc4ZWUzNTU5MGNmOTEyZjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY4ZDIzY2IyODQ0MDkxMTAyNmQzMzQyNzk3YzI5NDk5NTZlMjY3MjMxOWZlMzNhM2U4MzFmYjhiNjlmZWU1YWEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_443887bef0634aeab535f24b65d71182",
+      "statement": "ruff and mypy block, while pip-audit only warns because pinned frameworks carry advisories.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/static-checks.sh#L1-L30",
+          "version": "repo-lines-v1:sha256:e309acd6010a4a5746f897b6202451f145dffc788f6848d81a1b8870ef02d314:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNkMWFkNmNmZTYwOThjNTY4YjczOTVjYjhiNTY4YjBlZmM3Y2E0MjgxZDQxOTIxNmQ0NDZmYzhhYTExOTU1YmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjliZDkwNTA4NDE5MzYyNzc2OTI3MTI3ZGM5MGVmNDU3ZjFjMTI4Yzc0ZGYyNmE4ZDcxYTNhOTBiYWIxYzhhMzUifQ"
+        },
+        {
+          "resource": "repo://scripts/static-checks.sh#L44-L56",
+          "version": "repo-lines-v1:sha256:6728d3551296ac33c919044fff3e703905743e6ddd6ac5af8b36477ac406df9b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYxODRkMDI5YWVkZDliMTJjOTg5YmJlMTNlODlhZjRlMTA0ZmZkNjAwMzBkMDMxOWJhMTY2YTNjMjBiZmM4MGUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg4NDMzMDU1NmM0ZWQ0MjhjMzM1Mzc0ZjA4YmRmMmE0YTI2ODc4YWNiMWRmODI1NTAxYTViYzJlNjMxYTc2NjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkxNGU1YTE4M2Q1NjliYTZiN2MxNGVjZWVlZGNjZmUyMjBlMTNiYTYxNjE0NjA2ZjhmOWJhNzVkYmEyNmIxMTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_37866c53a63e4e1a91eed8c6ffbba936",
+      "statement": "The Dockerfile test stage runs the static checks during the build, so a failure stops the test image.",
+      "evidence": [
+        {
+          "resource": "repo://Dockerfile#L46-L46",
+          "version": "repo-lines-v1:sha256:08678f0622cc5325e30a09401cb182b34adf99c1d8463746d0ca26506d1820a3:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDg2NzhmMDYyMmNjNTMyNWUzMGEwOTQwMWNiMTgyYjM0YWRmOTljMWQ4NDYzNzQ2ZDBjYTI2NTA2ZDE4MjBhMyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDg2NzhmMDYyMmNjNTMyNWUzMGEwOTQwMWNiMTgyYjM0YWRmOTljMWQ4NDYzNzQ2ZDBjYTI2NTA2ZDE4MjBhMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNGNlZGIyMGExNDU4ZGIyMGUzOTQ3MTFlYjQyNTg2ZTk1YTk0MDZmOGI2ZmIxYmM4ZmMxYTE5NGM2MGViNjEwYSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZjlkZDFjMzQwOGUxZjc0MmQ5NTc0OWFhMzUwYTY2OWM4MzJiMmU4NDZlNWRiYmM1Mjk0ZTU3NTJlNjgzMzY0NiJ9"
+        },
+        {
+          "resource": "repo://Dockerfile#L89-L89",
+          "version": "repo-lines-v1:sha256:1a47199dfacf7293720e00a5534231fa749519072e03e6e69d8ed103723651d2:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMWE0NzE5OWRmYWNmNzI5MzcyMGUwMGE1NTM0MjMxZmE3NDk1MTkwNzJlMDNlNmU2OWQ4ZWQxMDM3MjM2NTFkMiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMWE0NzE5OWRmYWNmNzI5MzcyMGUwMGE1NTM0MjMxZmE3NDk1MTkwNzJlMDNlNmU2OWQ4ZWQxMDM3MjM2NTFkMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZWYxODMxNTQ2NDRjYzI0Y2Q4Nzc2MTZjOTA2MTc0MGQ1NzBmMzliNmE2ZjBhYmZlMWVkOGFhZjUzY2QwZjg1ZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiN2ZjOTJmMTVjYWI1NmNhOWZjNWU1MzM4MjU5ZjlhYjk3NDdiZjNiMGFhZTcxOWM4ZGQyODI5MzUwOGI1MGYyYiJ9"
+        },
+        {
+          "resource": "repo://pyproject.toml#L1-L4",
+          "version": "repo-lines-v1:sha256:13f133f6682ede1f2f28f344f104c32cddba622147acd94e8c4cad239d5fc6d2:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYTMyYmJlZjljZTRiZmZhMDBhZTM5ZDhkOTU3MTM4MTJlMDAxNmI2YWVlMTQ0ZTZkYzZhMTFhMTE3ZTBlNWZjZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDYwOTJmNmE3YzQwNDVmNzcwNWYzMTIyMDJmOTc5Y2I4ZWU1MzU4NDJhYTYxMTBhY2M1YmUzYzVhOGIxODIwOSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMjg0MGQ5Mzc1MzQwNWZkNjNjNTRkMTk4NWViMmFlYmVmMTFmYWZkYzk3NDEzZDg0ZjEyNWNmMGQ5ZmQwZDVmYSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_655463bb863d46019fce572475430881",
+      "statement": "FastAPI, Starlette and PyJWT are pinned because authentication depends on their behaviour.",
+      "evidence": [
+        {
+          "resource": "repo://requirements.txt#L24-L25",
+          "version": "repo-lines-v1:sha256:dbcacce5124f7955ec044ea31a2d8278002c94a5a4514f960f047f4e99752ce7:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNWJlNTk5OTQxODBjYzBkOTNhYTFjNjVjNDFkM2VjOGVhZGY3NTIwYTE0Y2U1ZDE5MWU5OWI1ODE5NmRjZGI2ZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjNlY2RlNjZkOWM0ZjljZWQyMzliYjdkMmI4YjY0ZDEwOWZkY2YyMWRkYjZiYTg2OWFjNGZlYmY0ZGMxZDdjZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNTczOTU3ZDFkZmIxNzFiYjU0MjdmMTRlYTEyODhiZGFkYTlmYzU4OGEzMDRjZTBjM2YwYTZhOGY1ZjY1NjhiNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMGU3OTJkYWM5YzMxOWYyMzRkZDViNzRlNjFhMWJhYTBjM2U3NTM5NTQyMGJlOWRlMWFmMzI5MTAwMmEzMDU0NSJ9"
+        },
+        {
+          "resource": "repo://requirements.txt#L3-L6",
+          "version": "repo-lines-v1:sha256:1c1c9973e4fb17bfa6bfcd0e643141a632ac74b0750b0d310759f01fa0eb8485:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjEyZDFkZmVkM2U1YzY5NTgyZDIyYTI3NTQ3NDY1ZDZhZGJjZDQyMzZlYzNjNzVkZjJhYTM3ZjcwNmFkZTkxNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZWZlNzI5YjZhNjM0NDRhMDBiM2YwM2ZmZTRlMDk0OGJjZTc0MTYwM2Q1MTBkYTJiNzM1YmRhZWU3M2M1ZDQzMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjIsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiY2U3YTFmMTY1ZWRhNmI3M2JkOWM4YzYyNGE2ZTk5NmFkNGRjMjU4MDUyZTE4MTNjN2VhNWJlMzA3MGIyMjFkMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiY2ZhZmU0Mjc3ODYwNzM3OTI3NWIzNWFlY2EzMDZmMzRlYjQ5MzkzOTY1ZDFhOTYxZDFmNzE1OWJkMjE1ZTkzOSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_07cb8b8b3e2346418a6ceba12ef3e19a",
+      "statement": "Image builds fail if an unsafe optional Brotli decoder is installed.",
+      "evidence": [
+        {
+          "resource": "repo://Dockerfile#L33-L33",
+          "version": "repo-lines-v1:sha256:279d90666e4aea00eac7507a6d1e9eec14d9960acba2d4fe7f0fa4574ff0ecad:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMjc5ZDkwNjY2ZTRhZWEwMGVhYzc1MDdhNmQxZTllZWMxNGQ5OTYwYWNiYTJkNGZlN2YwZmE0NTc0ZmYwZWNhZCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjc5ZDkwNjY2ZTRhZWEwMGVhYzc1MDdhNmQxZTllZWMxNGQ5OTYwYWNiYTJkNGZlN2YwZmE0NTc0ZmYwZWNhZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMGFlMjU1MGRiZmEyNjM5NTNlYzYzOTcyMjU2ZmVjMTYxZGQ4MDUxYTlmZjkwOTVkZDg3ZWRlMTRmODgzMzAxNyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTkwODIxNDU0MDQ5NTZlMjFiMWZiNzIwODgwYjRmNGNkNDBlZjY4ZTZiNGI2NmIwMjJmYWQ4OWY3MjVjNTEyZSJ9"
+        },
+        {
+          "resource": "repo://scripts/check_brotli.py#L1-L20",
+          "version": "repo-lines-v1:sha256:e6b80326e18fbffd5b2c5460395333eba1023f8c7cfe5ff079ef3fbb49741986:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAyMzFiM2Q0MGRkNGJjN2RkNWVjZmQ1YjVjODUzZjE3ZWUwNmJlYzlhOTE4Y2Y4N2EwOTlhMjNiYzIyODJiMjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEzMzQ3MzJkYjcyMzUzNTAxZDY2NGYyNjBiYmVlMmVmOWEzNjA1MmZjZDA1N2ZmODhhNjk5NDEwYTFhNmYyNjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUwMzBhYWE5OTU0MzliY2I0OTM0YWJjYWQxNzdlNDQ5MmIzNmZkMzlhODkwNjJhZmVlNjkzMWI4NmIxNjBmOTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f14ab221367447afab525a7add12d4d3",
+      "statement": "Storage and recovery tests skip without disposable services.",
+      "evidence": [
+        {
+          "resource": "repo://tests/AGENTS.md",
+          "version": "repo-file-v1:sha256:3876e5acb635c8c095236a78db2d897b58c560641545d4e13d2fad5afd0c219b"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-06T10:52:04.857Z"
+  }
+}

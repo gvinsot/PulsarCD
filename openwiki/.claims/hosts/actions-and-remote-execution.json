@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:5eafc58cc71be2e3cc91d0a665ba4057b3ef651a9937873e718695380b9ceec2",
+  "claims": [
+    {
+      "id": "claim_2561c528a0f0425c9690682197c615af",
+      "statement": "The action queue is mirrored to a JSON file so pending actions survive a restart within their TTL, in-progress ones become failed, and results are never written to disk.",
+      "evidence": [
+        {
+          "resource": "repo://backend/actions_queue.py#L1-L34",
+          "version": "repo-lines-v1:sha256:eb4e458925d31ac1d95c5ca88b8cff38369c595fec1df7884d1a7350fb3751d4:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY1YWEyNTFlZDIzYWYyM2ExMzg1N2EzMzM4ZTM0ZDA0OWExYTU4YWUyZjQ2YTk2ZTkyMmQxZjc4YzcwZjM2N2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3NWQ0NTg5ZTkxY2M4Y2I5NzQ4ODlkYWIwMWRlMTVkYjE1NzRjYTEwZWVjNzI5MGExMDliZjU4OGM5NGUwMWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc4ZTgxNzU5YTU0MzlkMWI1M2ZlZTQ2MDE0YTM1MDU2M2ZkYTY4YWQ1MTc3Njk0OGI5ZjgxODE1ZTRmMDJkY2EifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_20743d3ebdcb491782c8086399c0dba6",
+      "statement": "Action types are container_action, exec, get_logs and get_env.",
+      "evidence": [
+        {
+          "resource": "repo://backend/actions_queue.py#L85-L90",
+          "version": "repo-lines-v1:sha256:65da0220ebc49b4e37add8d22e8af2b1b1c15d15188cabe4fce713b268f31168:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZmE0YWZjZTcyNzk1NGE5ZjBmZWQzZDY4ZDFkNDAxNzk0OTE3ZDVhZWM4YzY4YWRmZTNmYjRjNGUzNjQ2Mjg1YyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZDEyNTA4NGU0NDI0OTgwYzQ5YWQ2NzA2ZTEzZTNkMmM1ZGIyZDBlODIwM2ZjYmYzY2MyOGQyZjFhYzE4N2RhYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDEzNTM0N2E2MDRkZDBlNDZiMDI0MzdlZGQ1ZTMyOGIwZGQ5ZjI3NjY3NWUzMTM3ZDg2NWFlZjIyMWQ2YjE2NyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNGQ2ODUxNmFmMWViODgxYTMzN2NlMmZmZDlhODNkNWZhMDExN2Q2MjU2OTEzYWYyMjEyYTg3YjFkMGViNDFiYiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_fb1f4296e14440c2a994e5355bf5e487",
+      "statement": "A container action uses an online agent, matching by exact then short hostname, and falls back to direct execution.",
+      "evidence": [
+        {
+          "resource": "repo://backend/routes/containers.py#L300-L351",
+          "version": "repo-lines-v1:sha256:deb1741f5fc24ac7c70a880649e95c6bceeeb53f2cc62b06a5f6242d97579a3f:eyJzZWxlY3RlZExpbmVDb3VudCI6NTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdiNzRiOGQ5ZTMyNTdmMmYwNzNlODY5YjEwM2Y1Y2ZjZmEwNWQ5YmQyNDJiZjQwMGYwMzBiMjFjMWZjY2I5ZTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk2ZmYyZGVkMTYyYzRkODRjNzZlZWI3NTY1YmU2MzFhYWQxNTJlYTMzNTVkMzc5YWYwNjQ5MWYyYTA0ZGRiNGIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNiZDhkMWU1MjFkN2RiOGU1YTIzZmNhMWU5Y2M4MDhhYTI2NDUwYzYwN2RkZWU4MWE3ZWY5ZDRiODYzMTE4ZjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc2ZGY3NzE3NjJlMjg2ZWE4Y2JkODIyYjdjYTU3YmFiZGRkMTdhMDAyYjM3ZmI0MTZlMTU0MDJiYTIxY2ZkYzQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_686100a52f994c34ad28556322a280b9",
+      "statement": "Only three routes accept an agent key, and POST /api/agent/action requires an admin JWT because it can queue exec anywhere.",
+      "evidence": [
+        {
+          "resource": "repo://backend/auth_middleware.py#L95-L104",
+          "version": "repo-lines-v1:sha256:d0b9a6bf1aebba4d248fd8f34972939a24f22a54b99fc8b7bcac8b48a2e0155a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY3MGJiYzMxMDVhMmZkMTY4NjM4MTYzNzM4MTY0ZGJiYzAxYWE0ZGY5NGY3MzViMGZmNGI4ZGJiYTkwZDgwMmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEwYThmNjBmZTNjNTBiMGNmNTM0NzIyMTEzZmU5MGQ3MzQxNDM4N2NlOTJlNTk3OGM4MmNiZDgwMWNjMDUwMGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkzODZmNzU2OGNiOTIyMDVhOTJiYWI4NjZlN2IzY2ViZDRjMDUzMmIyZmZjODZhNWRlOGFlNGJmNTljOWQzMWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQxYTZlMzcxMjc4MmIwZWIxNzRmMGJhNDI3Y2ZiZWQxYThiYWE5MmQwMDU5MWQzODcyZjY0ZmZjNDU3NmIwYTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4b20cf3d5c5240dcb0065e4c76cf8866",
+      "statement": "Per-agent keys make the shared key unacceptable, and conflicting agent_id values are rejected.",
+      "evidence": [
+        {
+          "resource": "repo://backend/auth_middleware.py#L148-L176",
+          "version": "repo-lines-v1:sha256:5c429ebf73a2d8ad3809a0d33eed0420e084250638a0e517505d08810bb18895:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExNDhkNzcxM2ZiZWJhN2VjMDE2ZTcyNGU1ZDc4ZGU3NDRkMDIyZmY4MjkyNTQyYjhjMDhkZjhlYjA3YjY1YjAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJiZWRiOGQ4MjAwZjZiY2M4ZDg3YTlhNjVhNmNhZDNhYjM0YThmNDEzMzEyNjRiOTk3NjBmNTExMTY5YmViNzMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhjZDA3NDk1ZDE4YzRiZWYyMjhhM2FiZWUzMzI3NGMyMDg2M2JjOGNhMGNkNTYyMWQ1MmIzOTIxMzZmYWU5NTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJhNDQ1OGNkMDJiZGVhZmIxNWYzZmNiMTQ0NjE5ZjE0MjdiOGRlNjUxMmYyM2EyZTM5N2Y5NjVmYjY0MzkyNWQifQ"
+        },
+        {
+          "resource": "repo://backend/config.py#L14-L21",
+          "version": "repo-lines-v1:sha256:8e2b6309743d6bf46318a7a14fb709b719ebc10573264de618be7efae40b74ab:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDc2M2RhNTkwY2Y1ZTdlMGZjNGQ5YWQ4NzQwYWRiYzBhMjhjOGQ4N2MyNzVmNWFmZmI0M2NkYzczMTE0MmI4MSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDY3ZGUzMDdiMzAxNjA4YmFiNTlmNGM2MDg1Mjc0NzFmMmYyZmUyMjMzNGMwNjUzYWI2MDU4Zjg2ZDA4NjM5NCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMmU2ZWI1NTFhZjM1MTlmNDE2Zjg3OGVlNTRjNjk1NTRiMDNiY2RiZTI4MTc4MTgyZmI4OGU0YWI5NjI4ZGRkNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjFlZGJkM2U5NzM3OWE1MDgwYmU0YjgxYWFiZjM0NzNjZDIwOWI3ODI0Mjg2NzMyZDk3YjljYzhlMTZkMzcxNiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_5fdd8cb95bf0484fbc7e26a91021848b",
+      "statement": "SSH defaults to refusing unknown hosts, while the build connection defaults to accept-new.",
+      "evidence": [
+        {
+          "resource": "repo://backend/config.py#L197-L205",
+          "version": "repo-lines-v1:sha256:0d9871040b3073948731d0ef5601b70f085aaf151b022ab5598e88af2d5e0ac7:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiODZjYTk0MzExNGVmZjY0YTQ1ZmRkNTBkYzM2Y2EwYTVkMjZhOWE5ZDcyZmY2NmJmZjI2OWM5ZGYxOTRjYjk1NyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDI2OTIzNGYwOGE2YmM1MDZhYmRhOTE3YjJjZDkyMjA4NjhkYzdjMzRlMmYwODZkYWRjNmJiNTkwMDJmYTQyNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDY0Yzk5NjYxODJiYWU3YjVjMTcxNjhkNWVhOWQyMDJkNmRiMzk4NWFjZDA2ZmIyZmRhNDIxMzZlMzUyYzdlMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZjc1MzgxNzFjYzNlNjgyMmVjNjJiMGFlMDcwZTkyYWU5OTEyZGY4ODJmNzJlYzQwYTNjNmJmNGQyN2M3ZDBjYiJ9"
+        },
+        {
+          "resource": "repo://backend/ssh_client.py#L26-L46",
+          "version": "repo-lines-v1:sha256:7f46bf4f417a109b3fb9bd220bf9d856281869a0d9242ac6f94f886e56d2207e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUzNTUyY2Q4Y2UyOTM3ODI0YzRkZDg3OGEyNjJmMzliNWVkYmEzMjgzZjFhMDdjYTQ0NzQyNDhjZjIzNjQ3Y2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRkYzRkNDliYjEzMmM3NDdjY2E1YzIwMmU5NzQxYzM5MGNiMDAyOGIwNjA1ZWE4MjViYjI2NDFiMjY5Y2I4ODgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ3ZjliNDE3ZTI2OGJkMTUyZDM2NTYzMWVlYjc0OGZkODZjZjAzODhjMTExNTY5MTBjMmFhOTY2ZGEyZWVkYzUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b7f5d054692a4bda9b542f35040a8de6",
+      "statement": "Build hosts are selected among those answering SSH, keeping repo affinity unless clearly busier.",
+      "evidence": [
+        {
+          "resource": "repo://backend/build_hosts.py#L1-L27",
+          "version": "repo-lines-v1:sha256:f3415a093a08199da99e8f0894c7525d741c9ffa2e65e195e0f43269d6cf5b2a:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImYzNmY2ZThkNjc3MTc3YTQyNmYxYTNhODUwNjY3NzhkZmI3YzliNWUzNWFhMTVjNDllMTI3NGYxMGFkNzJhNTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJmZTA0MWIzZjBiNjI5MmIxYzk0NDAxMjc3ZTNhYmMyNjkxYzUzNzJiNTI4Y2ZiN2Q2YzU3NTZmYzIzOGFiMmIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2f9fbbe9ce834ca49d8e99977f03d791",
+      "statement": "The terminal validates its query token, requires admin, checks revocation, and no longer falls back to the first host when several exist.",
+      "evidence": [
+        {
+          "resource": "repo://backend/routes/terminal.py#L26-L62",
+          "version": "repo-lines-v1:sha256:937b58130982202881ca4dcd698b99f950abd8f4c97941bed17b7e13e739d0db:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIzYTg1M2ZmNzE3NDdmODE0YjEwNTA2ODI5MjE5NWMxN2E4Mjc0MmI2YzRjMzJiOTExYjlmNDg0NTcwNTBhNWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZjZDkyMWIwMjQxM2Y4NDcwNDM0NDljYmQ0OWQ4YjkzYmEwOWQ2YTA1MDU0MmU2MjI2ZTRhNGZkZTEwYzIyNDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQzZjUyNzk4NTMyZTEyZmVjMTQ1NGI0M2IxMDg1NWM5MWVhMzIxZTlhZjFhMjE0YWRjOGE5YTA0M2YwNzU1NWIifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-06T10:52:04.857Z"
+  }
+}

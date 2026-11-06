@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:fb1f904edf08c79623506bea79c8d94325a8fbe989725d9e5b067e264e9a3ec5",
+  "claims": [
+    {
+      "id": "claim_68770d05a65640a994d12a6f98320b48",
+      "statement": "Traefik JSON lines and Coraza denial lines are converted into flat access records with distinguishing required keys.",
+      "evidence": [
+        {
+          "resource": "repo://shared/access_log.py#L1-L37",
+          "version": "repo-lines-v1:sha256:bbff6dd5e7c68c07e0bd86ea1650bff7a9335dcbe73482b5c81483ef5043d456:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNlYTRiMDgwZGQ3ZGQ1MzZlM2VmYWU5MDZlZTY2NzQ2NzdmOTA1ODJlM2M0NGJhMTg0M2ZmMjIyZjVmOTFlNjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhiNmZmYTc5ZGNiNTFjNjYyZjQ4ODBmYjMzOTRhNmU3M2M1MWQ1ZmFlMTU2NzdiYTYyZGYyM2EyNDc0YjllYjUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bc65161506b84d209efd7ffce3eb8fb3",
+      "statement": "Attack detection is pure logic with fixed thresholds such as 300 requests per minute for a flood.",
+      "evidence": [
+        {
+          "resource": "repo://backend/security_analytics.py#L1-L8",
+          "version": "repo-lines-v1:sha256:a243b64abd3db9d49aeec9f971d8cc9ab2a08cd2de82a2f1ba06774220aafd83:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDAxNmI0NDAzYTliNDI5N2M4ZTg4NmM4YzI0MzJhZTRjNzBmZGI5MTg4NDczZWFiODI4MWY2Y2Q1ODJiYmM4MyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDc1ZDQ1ODllOTFjYzhjYjk3NDg4OWRhYjAxZGUxNWRiMTU3NGNhMTBlZWM3MjkwYTEwOWJmNTg4Yzk0ZTAxYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMjk4MTQyZTZiZmYxZGMzOWJhMzc3ZmU0Y2ViMWQ3NDJlMDJjYmNmZTIyZWEzMzYxZDg3MTc5NDkxZmRhMDdhYyJ9"
+        },
+        {
+          "resource": "repo://backend/security_analytics.py#L38-L55",
+          "version": "repo-lines-v1:sha256:47a0f3acc2bda79cfbf86f3e12619765ba36ceb6f961e2235ca553f2f4ad5674:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNmNmI0ZDk0OTFmYjdmNWUxOGE5Y2NmOTIxNTQzY2Q4ZmE3NmFmZmVkNzQ2YWE3NGM0ODFiZWFmYzk1MzdkZGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY4Mjk3Mzg2MWNiYzJiNTgzYzEwMmMzNjEyNGFlMzA3ZjJmYTk0YzI2NTg3MzBiZWE2N2VhZWQyZTEyZDhmZTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg4MDlmN2ZiZDMxMjg5YWY3ODBlNWI2Nzg2ZGQ5ODczOWM3ZDQ1ZDBlZDgyNTk5YmQ5MTcxMDg5YzBjNDhlZGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM2ZjFiYmE1YmM0ZGUyZjgwYmZkYjZiMzhhNzZiYTA2ZTk5NDRmYzEyZmE2ODkzNTY1MDY4ZWU5NmQxYmEzMzMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bd0f6083aefb40ec98fa92b9ce173409",
+      "statement": "Usage attributes requests to stacks by mapping router names from service labels.",
+      "evidence": [
+        {
+          "resource": "repo://README.md#L97-L106",
+          "version": "repo-lines-v1:sha256:15af0d0e10cf212e3059ce0224fbac527a36bf96e4db1298d883863d4c13b121:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjlhOGRkZGZiYTlmOTUwZTFjMzYyM2JiN2I1ZTk5ZThjMTRiMWU4OTJkYzlkMjYwZTQzMTFmNjk2NTY2NGRhMWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNkNWJlZDZiN2E0ODA3ZmExYWYyNDQyMTgyMzc3ZmMzYmIwN2YyMmE2NmNkOGZhZmRkNTUwNGQ0YjI2MzE4NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJjOTA5YjYwOGQ5YmVmMzY3MWRjYjI5NThiY2UxZmUzMTA1OTY4NTYyNmFmN2YyNzEwYmZjNWY1OTdkNDkxZDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZkYTEzNTNhZTY3YzE3N2E2ODgwY2MyODdhZGY4NWExMjcyMmRjOTNiYTJjNThhZDk0ZjZlNTJmMmY3ZjIzMzQifQ"
+        },
+        {
+          "resource": "repo://backend/usage_analytics.py#L1-L15",
+          "version": "repo-lines-v1:sha256:9cb1cf4bc7943d6425a38818a6764258a5f6e291a8fced92ce5bf08979f36850:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU4YjQzYTYyZDI0ZWEwOTU4YTFjZDdiZmFkMmM2YWUyNGQ5OTg1MTdhYTM0NGYyM2U5OTFhZjU4Yzg3N2I3MzkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3NWQ0NTg5ZTkxY2M4Y2I5NzQ4ODlkYWIwMWRlMTVkYjE1NzRjYTEwZWVjNzI5MGExMDliZjU4OGM5NGUwMWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVlZjUyYTFmZGVlYTg3MmVkYjJiMmZjODhhYmUwYWJlZjcwY2NiMzRhNjc2ZmEwOTEyODJkMWU1MmQ3MzRhMGIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bd42212b9efc4cec8b2e17da284ae1c0",
+      "statement": "The blocklist renders HTTP and TLS routers at a priority above application routers and below ACME, with an ipAllowList acting as a deny.",
+      "evidence": [
+        {
+          "resource": "repo://backend/ip_blocklist.py#L1-L23",
+          "version": "repo-lines-v1:sha256:6ead8b3f7825d44272c71441d76a3e1bacb990820019d3881ddf9ae403bcdc7a:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVhY2RjYmNlNmVjYmQ2NDllNjk5ZjJiZDYxOWQ1YWNiZGMyMThmNmU3NTNkYWE5ZDk2MmU5ZGEwOTU1ZjUyYmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3NWQ0NTg5ZTkxY2M4Y2I5NzQ4ODlkYWIwMWRlMTVkYjE1NzRjYTEwZWVjNzI5MGExMDliZjU4OGM5NGUwMWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdmYWEwZGYwYjQ2MzMxYjY5NGM3NGQ1NGQ1YWUyMWRlMGI3YjY2N2VmODJhMjk4NWM4NTQ1OTdiMjFhNTM5ZjAifQ"
+        },
+        {
+          "resource": "repo://backend/ip_blocklist.py#L46-L50",
+          "version": "repo-lines-v1:sha256:a4e2c2fa992307864503514a7b44b2127178ff2fcd16b3fe630a3ed16c0943ae:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiODcwNWM4ZmI3NWM5YjZkNGFhZjIwNmNlNTlmYzM5MjNjZDdjNDExMjg0NzkxYmNlNzNiYTkyY2VmODU2NmQ5NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYWNjOTFiNzgxZjQyOGIwYzkwYmUyZDY5MTM2ZmMyNTEwNDljNjZmN2YwZDM3MTY4YjFmNWYyOGE5YjAyZTZiYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjcyZTMxYzE2ZDEyNGFmYmIxZDdmNGVmZjk5NWViYzk3NjVmYTdjMTEyODZjYTk3OWMyMGVlNzNkOTY1MjljNyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMzBlMzlmMmY2OTY4YzZiMmVhMDQ3NGQ5YzY5ZmMwODExOWZlMzYxZWY5MDU4MDhkMjk0ZTY5NDU0MThiZjBmYiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_42b19ada89a243ea838957b16d652cac",
+      "statement": "The blocklist has a limit of 500 entries.",
+      "evidence": [
+        {
+          "resource": "repo://backend/ip_blocklist.py#L339-L341",
+          "version": "repo-lines-v1:sha256:298b1705c3368b57e2ee35d506c37d26677e4b9cb3ef51326440ca5c46f64b21:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiM2ZhMGE4ZTQ0NWNlOWQ3M2RiYmFkYTdjMTA0OWFjMmE4ZmQ3YWFhYzQyYzYwNjc4NzY2MDM2Zjc1MmJkNjcyOCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOTVmNmU5MTFjODEwNjA5NzM1ODRhZGU4OTQyZWZkY2UyZDIxNDY4NmUwNWJhNWZhYjA4MDM0YjU0MmEzYTY2MyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTcwM2E5NTNlMGRmYTNlMjQzYmRjMmVkMzU1Yjk4OTc1MDRhYjg1Zjk2NDljNDY1MGZkODVjODUxMTI1MTUxYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMGEzM2QyNzZhNzUyODJhMzg3ZjhlNjUzYzhmYjA1MWRiMTA1MmMxY2FlZDcwYWVjOTkxNmZhZTg0M2ZlMWRjZiJ9"
+        },
+        {
+          "resource": "repo://backend/ip_blocklist.py#L65-L65",
+          "version": "repo-lines-v1:sha256:51f8c73b198ed97a021044ff02c786dd2abaf783f4ee3d2b9b7592abaa8ecf01:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNTFmOGM3M2IxOThlZDk3YTAyMTA0NGZmMDJjNzg2ZGQyYWJhZjc4M2Y0ZWUzZDJiOWI3NTkyYWJhYThlY2YwMSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTFmOGM3M2IxOThlZDk3YTAyMTA0NGZmMDJjNzg2ZGQyYWJhZjc4M2Y0ZWUzZDJiOWI3NTkyYWJhYThlY2YwMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNmIzMTM3MjVmZjQxODYyZDY5MmQ1NmJmMDg4YmZjMmI3ZGU5OWZhNmJlNzUzNmM5ZjFmMmU2MTU2M2IzZGFjNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMTFjMTU4NzY5NDBkYWRjOGUxZjc4ZjExODNiYjdlNTk4ODlhZTAxOWNjZGEzZjY5YWMzNmQ1ZjNhYjFlOTZjMyJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_1dc6cbe4b741448f8dbf51ab838bb618",
+      "statement": "Auto-ban trusts only Docker-attributed Traefik access logs rather than forwarded headers or Coraza messages.",
+      "evidence": [
+        {
+          "resource": "repo://backend/auto_ban.py#L1-L10",
+          "version": "repo-lines-v1:sha256:8be4d9e9cd0b95560998fef2f017b34e8cbbab49b01b99f79dd3fc0bdccac9b7:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYzMWRiYjQwNzc3NTM2NWM5NjkxM2M1ZWI2Yjg0NjYxMmE3YjI2ZGFkNzY5Zjk3MzMyNDVjZjE2NGQxNWYwZjAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3NWQ0NTg5ZTkxY2M4Y2I5NzQ4ODlkYWIwMWRlMTVkYjE1NzRjYTEwZWVjNzI5MGExMDliZjU4OGM5NGUwMWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdmYWEwZGYwYjQ2MzMxYjY5NGM3NGQ1NGQ1YWUyMWRlMGI3YjY2N2VmODJhMjk4NWM4NTQ1OTdiMjFhNTM5ZjAifQ"
+        },
+        {
+          "resource": "repo://backend/auto_ban.py#L197-L200",
+          "version": "repo-lines-v1:sha256:9e7a0c54bae66deff61aef65105f30dab387469c5de8566ea075ceaae17f40e2:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNjQwM2Q3MjY5OTQwNmIzZTlmMTAzNjNmNTQyYmYyMjBjMWJhZTU2OTgwZjlkZjUyOWFkYTRlZmZhNTVlYzRmYyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZjk1ZGYxODlkNzE4ZDQ4ZDRlY2NkNzBiZmIyYzMxZjk4ZDA0NmVkNTEzZDljZDExMjBhOWUyMWNhNzFkYjNkNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiODg2NmE5NWY5MTEzM2UxM2MxYjNhZThiY2M5YjFhYTIxYjU4N2U5YmU4NzdiNWY4NTcyOTkxZjYzYjJhODZmNyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiM2E4MjEyMzRjOWM2MDQyMDlhNjFlMjMyZDc5NTYxOWI4Mzk0MWVkZTY2Y2MwYzIwNmQxOGRjNTAzNjA3NmE2ZiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_d5484628651d4bf281dd2dd1555a3d4d",
+      "statement": "Probe classification applies two URL decodes and normalization to the path only.",
+      "evidence": [
+        {
+          "resource": "repo://backend/auto_ban.py#L100-L108",
+          "version": "repo-lines-v1:sha256:a02269d9ed3b5dbe7d324cee79996cab4fb13ff17be50598779eee5eab53fadc:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiN2ViNzAyNTc1OTNkYTA2ZjY4MmEzZGRkYTU0YTlkMjYwZDRmYzUxNGY2NDUyMzdmNWNhNzRiMDhmOGRhNjFhNiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTY1OWQwN2VkYmFhOTZhODI1ODhhNzIwM2VlMjU5YzI2NzM5Y2IyZTYwOTYxMDdjYTk3ZDJhNTUwM2NkODhlYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiN2M1MGU3ZDI0N2I0MTQzOTYzODA4ZmU1MDgxOTVlMmEwNzZjMTJjZTc2NTc0NmU2ZGE2MmZkMGQ4ZmJhOTE4NiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMzJlMDYzMDIxNDhlY2I4NTkzNTg3MTM5ZmMyNmQ5MzVhNzVhYzc0OTI5MmU2MjNlODg2NWMwZjcyYmYwYzc5NSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_13f2f078935c41408581ce29cc6d1784",
+      "statement": "Cloudflare ranges, configured CIDRs and recent administrator addresses are exempt, with existing automatic bans released if they become exempt.",
+      "evidence": [
+        {
+          "resource": "repo://backend/auto_ban.py#L172-L191",
+          "version": "repo-lines-v1:sha256:de2569fa43124ddf43a8aafa72529e73b7870ee9f7d66e965c118540461edcad:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExYzBjMmIyOWY1OWUzNjJlMWYzY2E0YjdkOGNjNTIyNGI4NDAxNTAyMjNkODJlOTZkNzBhNzQ0ZmJlZDBiNWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUyYzA1ODAzZGRjMmUxN2Y4YjgyMzA1OTk4ODlkMzMzOGY2NGRkMjAwODA5ZWNjYjMxYTNmN2U3YWI4M2ZiNmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUxMzhhMjJmNDkzYTA1OTY5MzA3ZDE3ZjIzYmFhOGM3N2VhZDEyYmY2NjBmMGNmMzIzNzU4ZmQwOGVlMmMzODciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgyODU5ZDhjNWI5MmFiNWUzMTY1MWQ4OGQ0MzNkMzc0MGIwYThlNWI4MDhmMjI4NzQzODVmOWE1OTIxMjhhYjQifQ"
+        },
+        {
+          "resource": "repo://backend/auto_ban.py#L33-L43",
+          "version": "repo-lines-v1:sha256:d3bee6d798d896743626457f9d5ec31fa68e705827ccaef23c55e552cf76d9da:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZlMGRlNGJmZDMzNmJlYWUwMjBkNjlhMmUzYjUyNGFlYWFmNTUzNjc3NjYyMGZhOGIwZTk0OWM3OGY1YzJhMTciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhhZDFhYzFlMGMwMGViOGM4MjJmNzM2NjNmNzViYWYwNmQxYzZiZmZhYjZlMDE1M2IwYzkyYWIyODExYjVlNjMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY3Yzg1OWIyZTEwMWU3ZDA1ZDA5MzBjYzJmM2Q5NGEyMTFmMTA3YzkzOWNhOTZlM2NmZDZjMDQ3MWEwZGVlODgifQ"
+        },
+        {
+          "resource": "repo://backend/operator_addresses.py#L1-L15",
+          "version": "repo-lines-v1:sha256:7192e1c7a2e2e94de77fddcf3c40e1ee3eb1ba3966180b6ff0abd6e0596ca2f5:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxNDIwNzA5MDBmNmM4MzhkNzYxN2VkNzY3YjkxM2MzYzQxYzU5ZTdiNTQ3ZWJmODc5NDRkOTA1YTI5ZGZmMjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3NWQ0NTg5ZTkxY2M4Y2I5NzQ4ODlkYWIwMWRlMTVkYjE1NzRjYTEwZWVjNzI5MGExMDliZjU4OGM5NGUwMWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI5MmFkYjBjNDEyNjRmMzVhOWY5NTE5NjYyNTJjOWYyNThmYWMwYWE1NWI1OGRhYWI3ODEwNzA4Mjc1OTMwMWEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f2204d57bc694277b8f3010f5b279a23",
+      "statement": "Requests already denied by the blocklist router do not refresh a ban.",
+      "evidence": [
+        {
+          "resource": "repo://backend/auto_ban.py#L208-L209",
+          "version": "repo-lines-v1:sha256:a71154e65be0bdbd16d74ddb73f77a7f7dddf676b623296c0f58d7306274a201:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZmE5NmIzN2U3ZDQ1MTJmOTkyNzJhZDg2MzQzNjNkMGI0MDBhMWM4YzQxYTgzYjJhZGUwODFiZDc3ZGE3MmY4MCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZmE5YWI4MGU4NDdmNmRhZmZkMDdlMjJlNGZiMDg5NzdlZDcyYzYwNThmMDkwNDBhODNjZDBjNDcyMzIyMWYwMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYWUyNmYxNzg1MmY5MTQxZjgyZGQxMGUzMTUzN2RmZjNjN2M4MDkwOTE0YTY0OWE4ZmFiMWYzMWQyNjkxYTkyNyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjEyODkwMTZhNzM5NWFhODAyNjJmZDNhMWQ0NTVjN2M5ODQ4ZDU2ODdmMjNiNTdjZWNjZGUyYjQ3NGI1ZWI1NyJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_ab6d57e07cbe4074a3c7512debda74cf",
+      "statement": "Auto-ban is enabled by default in the Swarm compose file while its config model defaults to off.",
+      "evidence": [
+        {
+          "resource": "repo://backend/config.py#L278-L280",
+          "version": "repo-lines-v1:sha256:0b40a471fc985d2b80fb861020e3eb58eae18218c1b0364be923720191598536:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOWRmZTZhM2ViMjcyYTNmMDNmYjkyNjdlZjIzYmUxMDFhMjgyNjhhYzNhYTVkMzA4NDk5MmM1MWI0Yzk1NDc1NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOWYyYWRkZTRiYzRiZDM2MWI0ZDc2MWQ0NTI4YTU1OGQ0ZWFkMTk2NTkxYjc3N2Q3ZjgwYTYwZTI3YTEzYjI3YSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTFmNGI1MWIwZDM2MDY5YjAyMGIzYTQzNDFiYjM0YmMwNzVkOWNjMjRkMWYyNjU4OWJhOTYxNThmMmYxNTAzZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZjM2YjU2MDJiM2I4ZjkxMWZkYjljNzJiY2RkOTQ4NDgyYWY5YWQ4YzE5ZDhmNTA0ZGM3MjFmMDcxM2UzOTNiNCJ9"
+        },
+        {
+          "resource": "repo://devops/docker-compose.swarm.yml#L210-L210",
+          "version": "repo-lines-v1:sha256:2fa4c1e7777e0ac66298028c04af116e6b3eed9f825cff2b150cb2c26cfd94bf:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMmZhNGMxZTc3NzdlMGFjNjYyOTgwMjhjMDRhZjExNmU2YjNlZWQ5ZjgyNWNmZjJiMTUwY2IyYzI2Y2ZkOTRiZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMmZhNGMxZTc3NzdlMGFjNjYyOTgwMjhjMDRhZjExNmU2YjNlZWQ5ZjgyNWNmZjJiMTUwY2IyYzI2Y2ZkOTRiZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNTFkZWYyM2UwNGQ0MDQ5OWIyMmI5YzZmMGFkY2E4ZWQ2NjI5Y2MzYzVjNDQ2MDI1OTljMzg5ODhiMGExNDUzYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMTEzMmY1YzcxMDBmOTY1YjM4OTAxN2JhM2JkN2NhYzFhMjYwYmExYzExOTZiYjY0Njg5NjM0MmU0MjJjMjI5ZCJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-06T10:52:04.857Z"
+  }
+}

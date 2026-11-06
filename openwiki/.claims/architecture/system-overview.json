@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:e15dc8df9254db8383c2cd5f274d6ac674bcbd7e2948a5d5e4337c9ddf4da075",
+  "claims": [
+    {
+      "id": "claim_cd94b0dab7cd4397abc9d803773c9a79",
+      "statement": "The backend must keep one replica because the action queue and pipeline state live in its process and data files.",
+      "evidence": [
+        {
+          "resource": "repo://README.md#L157-L168",
+          "version": "repo-lines-v1:sha256:13a0812472fd4e2013c8d161ac4a2419cdc6c4a9d6f65de79f9b47ddefeee0c7:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMyNjBjZTNlNGJmYTBkZTAwODRjZmMwZjI4YjhiYWY3ZTU3ZDk2YTEzNzFkMTQxMDkxMWNmZTFhYzQ0ZGIwMzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg3OTg0ODk4OWZiMGZhZGI2YTM4NTEzZDYyNDI2ZmVhYzAyMmYyMTgwZmY0NWU2YzhiNDIzYTRiM2NhZDkyODgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI4N2IwODYyMzFlNmUwYTM4NTQwNGFmYTI0ZjA4NzkyYjY4NGRkNjg1ZTEyOTlkNjMwZTE3M2ZhMTkwYmU4NjkifQ"
+        },
+        {
+          "resource": "repo://devops/docker-compose.swarm.yml#L285-L288",
+          "version": "repo-lines-v1:sha256:7c39faf833ecc2b63d47b1c155c82dc53cf0000829d4d910ed0fb5395cb0035a:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNjFhZWZiNGY1MGU2NjI0NDQ0MGU1YjE1OWQ3NWIxMmEzZjc2OTcwYTVmMTBjZTg3Y2ZkNWI2ODE4YTMyNjgxYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNGY2NTk4NDc4Y2QwOGNjNjI0ZmJjMDAxZWZhN2M1OWVmZGVlN2FlYTQ4NTkyYTM0NDU4YmRhYzEyZjJlNjNhZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYzFlNDZlMzA2ZTFjYzQ0ZmIxNTg5YTBhNWYyZmJjY2UyNmQwYzViMTE1MWM1ZTRmZjE4NDJlZDRjYjZjZTk1NiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMDdkM2I3YTY3MjhiYzIyYWNiMDEyNGEwMDZjOGNmNDAwMzI2ZTI5YzljYTVhZThhMTE2NDNmMDE5MTkyOTA3ZSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_7d60a0790feb47deb02acc276af3b3ae",
+      "statement": "Other modules read shared state from backend.api at call time.",
+      "evidence": [
+        {
+          "resource": "repo://backend/api.py#L1-L18",
+          "version": "repo-lines-v1:sha256:ff8d49504acce1cc354eff66fbc168910203223f71e0329ff3ee2cd9c866c238:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM5NDg0NDJkYTNmNmQxNzE1NzAyNjBlN2I1NjI1NWFlMTZiZWFjMGQ1MGRjMmJiODA5YmNlOTg5YTY4NGE4NGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3NWQ0NTg5ZTkxY2M4Y2I5NzQ4ODlkYWIwMWRlMTVkYjE1NzRjYTEwZWVjNzI5MGExMDliZjU4OGM5NGUwMWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJjZTMzN2NjNzRkNzg5MzFhN2QzNTE5YWZlYmY5YmY3NGNiZDg0MWVhZThhMTM5ZGMzODU3OTljZjEwOTY4YjgifQ"
+        },
+        {
+          "resource": "repo://backend/routes/__init__.py#L1-L14",
+          "version": "repo-lines-v1:sha256:e61ca850d9e8666bb4e6d675b6fd8b40eeabf639efb17a346ac0d4297d31c757:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcyNmI1OWIyMWM0ZjExOTBmYzVmYWRiZTVkYjI2Y2IxYjQ0ZDgzNzY4YjA2YWExZmRhNWQ5MTA1NTgwMTcwYzEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVjYWQ2N2NhMGEwMmY4YTg5ODgzYTM5Y2MwZjg3ZTQ3M2VkZDUyOTNlZGQwZDgxMmQ2NGYxMjk3MzYyMjExNzciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_461905f86e8d4133b71f8265406f7cd3",
+      "statement": "Router registration order decides matches for overlapping paths.",
+      "evidence": [
+        {
+          "resource": "repo://backend/api.py#L489-L494",
+          "version": "repo-lines-v1:sha256:17b16a4b5149832d7ddd647f9fbb6f835b18e2fddb7284d5f6ef653498127b5b:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZmRlMGVhZTA3ZGMyNzAwZGVmYmJhMWJiMjZkZWRiYThmNTJiNWEyYmQwYjI2ZDY0ZWU3OWMwMDU0MWUyZDllZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYzVkZjJjY2IzMTAzMWQ2NDdhYWM5ODQ3MmFlYzM4YzJlMDhjMGRhYWYwNjlhYzUwNzRmZDBhMTRhNTllNDU0NiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZDZjMmUwNWZmMDY1OGYyOTdlNjY1MWQzYjc4Y2NiMGQ2MmMzYmJiNWIzMmMzYWMyNmViNmQ2ZDA3MWM5MGNkMiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTczMDFkODU0YWUxMjlkMGE3ZWNkZjBmYzBiZGJmNTAzYjQzNjhkYzcxOWU4ODJkMmE5YmM1ZDZkZTk3MWRmNiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_1ca5eac65b844fdf8126c8ee32f35b95",
+      "statement": "Durable JSON writes go through a temporary file and os.replace so a crash cannot leave a truncated file.",
+      "evidence": [
+        {
+          "resource": "repo://backend/durable_json.py#L1-L30",
+          "version": "repo-lines-v1:sha256:b60ef1360dc172ee8eb140ee6c7cab3a6175295c00efdd1bd900dffcd4351cbe:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4NjNiNGRmODJiZWYzZDI2OTU5NTZhOTVlOGNjMzIzNDQxNDdiNzQ3MjJlZGFhYjI2Njg2MTU1MmVhYzA5NjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRiZDAwZjFhY2Q3ZDJlYzIxMWJhYWI2ZTM2ZmMxOGI1MWMyNjMzMmJhNjczYzkxMzhlMTNiNGNlNTYyNGRmMGIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI3NjgxMjEyMTU4MjNmY2MxZjFlZjA0YTE5NWM0ZGQzYjJjMzg0MWY3OGE2MjJhOTQ3M2RlZmQ0OTZmYzFmZTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_44c6568f71b64a0595a04b18019a5868",
+      "statement": "Unset JWT and agent keys become random values at startup, with sessions invalidated on restart.",
+      "evidence": [
+        {
+          "resource": "repo://backend/config.py#L594-L606",
+          "version": "repo-lines-v1:sha256:0af07479178cbf61b551a58f9ca158998a9909f94c4fe53eb97724271c522779:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ0ZmU5MDc1MTdkMDk0MDFiMmEwZmY5MTc2Y2Q3NWIxMDY2NzFiNWUxMTg2M2U3MmRmMmMyNGY2MjdlMTg4OGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjczMTQ2YzI1NmM3M2FlNjU0N2EzYzkwZThmNWU0YWI1ZTAyMmI3NzgzZDA2ZjgwZGViMjg3NjhiZjVjNDNmMTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiNGI2MjRiMTE5YTQwYzRmYzM2ZjNhZjJiNGFmNmFlZTVlYjMyY2I1MmE2ZmM3NzdiNmEyMGNiZmRhZGVmZDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZmYjk0MmFkMTc1ZDNjM2QxOTVkZjI5NzM0NjJjNWZmYmRlNjcyM2ExZjc2ZjlkNmZjYjhiYTg1MWU5NmVkYjUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_79ac36df947549a288c36abb6144f364",
+      "statement": "The backend runs as root with the Docker socket and SSH keys mounted, dropping capabilities except DAC_READ_SEARCH.",
+      "evidence": [
+        {
+          "resource": "repo://devops/docker-compose.swarm.yml#L58-L105",
+          "version": "repo-lines-v1:sha256:5b74995d6d142f1b174941517661df26d201febba572c30244d3c1cb92de39bd:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc3MDJjMjNiYjY0YmJiZjQzOWVhMTA3NmU4NDUyZjZlZDg3ZmRjODMyZDQ2M2E0NjZiODBiNWMxZmNiOTUxZDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc2NzEzMjcyOGZlYzY2NzliYzA2NzMxZTUyYTIyOTdlMzgxNmIwNTA1ODBjZDFkYzk1ODFiMzE1OTE0ODhmNmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY3MjkyNjFiMTBiZWJlNTFhMThlNTdjMjQ0YWRjNWVkZGEwNzAzZTQ2ZDQwMzQ5MDA2OGU0ZTc2NmY0MGY5NDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRjMThjY2ZiODg5OGQwNjRmZGE1OTJkMGI2ZGM0ZWUzNDQwOWE0NTA2NjE3MjFhZjQzMzlkOWI2OWI3Mzc3YmIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_07be369df8d3409e83988f6ffecb5b5e",
+      "statement": "Restart policy any is used because a stopped unhealthy task exits 0.",
+      "evidence": [
+        {
+          "resource": "repo://devops/docker-compose.swarm.yml#L326-L331",
+          "version": "repo-lines-v1:sha256:b300b2ebf9ae90e79bc7cc3681b8076c0bd427df886ee8a60de734826e02f5a9:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNzUzMGNiODVkZmRhODZkZDkwM2RlNzE1N2NmNTAxZmNiNzRmNTdlOWUxODhhOTg0YjQ0ZTU0MmQ4OTQ1OGM3ZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTAxOTY2ZjU3ODk2NTc0MThkZTdkNDIwZmRkZTEzNjlkOTYzM2M2ZjUzMjUwZjZiYjYxNGMyYjIxNTFiN2VhNCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjU0NjllNDk4MGY2MDdjOGY3ZTE4MGQ1YmU0ZmU3YTg0NTQ3ODE0OWQyNjA1ZTMwOTQ4ZjcwNTk3MjM1MmE2MCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTc4ZjFkOTViNjhlY2Y1MTI2ODJmNDBkYTM2ZmU0ZGFhM2I1NzM5MjVjMzNlYmJlOTAxOGRiZGY4OWU4MzAzYiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_96313c6f4c3f42ab8cc7d4b85f63e017",
+      "statement": "VictoriaLogs retention defaults to 90 days and 50 GiB, one retention for all record kinds.",
+      "evidence": [
+        {
+          "resource": "repo://devops/docker-compose.swarm.yml#L19-L30",
+          "version": "repo-lines-v1:sha256:d48a23d1911828f76464898e02f7dda27810d81e7560e6aaf4064a817c4b19ec:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRiOWQxZGNkYWI1ZTBkOTIwMDIxOGZmNjFlMzc2Yzg1MjEzZDRmOWE4OWY4YWI5NzhjYzA4MmY0MDM1Y2I4ZGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhZWQ0MjE2YzE2ZjYxMTVjZWUzZmQ4ZjBjYmQ1NDY0YTFmZWVjZTUzNWM5MDU3MWUyYTYzOGQ3YmJiMWY2NGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI4MTM3ZjM5MDlhZTIzNjJkZTZjMTQwZWY0ZTZiOWQzZTBjNzNkOWUxZmVhYzVlNThmYjVlOTFhYTI4N2ZjZTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhkNjhlYzhkYjAwMGE5NTFlOTEwYTAwYWU2MWI0ZGFhMGEwNzlkY2JiNTA2MDVmMjg5ZmQwMDIzODAxMjlhZDcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_aabd2b9dc60f4be391d8cad3128c29f6",
+      "statement": "Agents run in global mode with a read-only root filesystem and all capabilities dropped, though the socket still grants Docker API access.",
+      "evidence": [
+        {
+          "resource": "repo://devops/docker-compose.swarm.yml#L358-L378",
+          "version": "repo-lines-v1:sha256:b2229e6e1ccc6a08793945ab8294939d5ebe3cfdfb216c6beacfc2410df4ca8c:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdhOWZjYTc3YWNhMDJjNzU4MzY4OTEwMWUyYmFkNGE3ZGJjODc1YmI4YmI4YjM0NjVmYzgxYjAyNGNiZmRmNjAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU4ZDJmNmVlNThhNTliZjU3NjliNjYyNWM3MzJlMjVjMjkwZTY5NmVhMTA1OTA1YzVmYzRhNzllYzViNWVhMmQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQxYTNmN2RhNmQ0OTZhZjFiYTU4M2JkOGVmZDRlMmRkZTYyZWRjMWVhNjlkNzQ5MjEwMTM4N2E2NWIyODJlNDkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUyNzdmMjZlMjc2ZTIwYmE1YmRmYzk5MzA2NjBhYWRjNTI0Mzg2Yzc3NGUyYTFiZTk1NGE4MmM4MGUyNTIxMjUifQ"
+        },
+        {
+          "resource": "repo://devops/docker-compose.swarm.yml#L418-L418",
+          "version": "repo-lines-v1:sha256:a236ad44912f7a2c35ad946163c45d348a19917ed139253e91abaf27d10b5086:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYTIzNmFkNDQ5MTJmN2EyYzM1YWQ5NDYxNjNjNDVkMzQ4YTE5OTE3ZWQxMzkyNTNlOTFhYmFmMjdkMTBiNTA4NiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYTIzNmFkNDQ5MTJmN2EyYzM1YWQ5NDYxNjNjNDVkMzQ4YTE5OTE3ZWQxMzkyNTNlOTFhYmFmMjdkMTBiNTA4NiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjU3NWY2MjVmNjEwZWFkODJlMzhmZDVlZGFlZjNlNmNhYWMxZGMyNTAzZDg1ZTEyNmE3MjVlNjMwMjAyY2FiYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODMwMDFiY2Q0ZGI0MjQ1NmZlOGNhOTRmZjUyOTFiNTQ5MmJhZGIxODE3N2Q1N2Y1NjliNDM0ODliYWM4YjVmNiJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-06T10:52:04.857Z"
+  }
+}

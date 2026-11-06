@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:52799e79a24f360cfef0523dd8a1e854673b7bd44d4e7e05a4a796ca7b953533",
+  "claims": [
+    {
+      "id": "claim_e1c3a03825414f1995f49fde060a5098",
+      "statement": "A per-repo build lock deduplicates all pipeline triggers, and is held in process.",
+      "evidence": [
+        {
+          "resource": "repo://backend/pipeline_runner.py#L156-L176",
+          "version": "repo-lines-v1:sha256:baf6d8e8029b24c164c4f8efea91125ac804112b32c10c35ef71f308e2e7b284:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMwMzA1Mjg2ZjZmMGZiZmMzNDgzY2NiZDYyMjMzZjgyNjJmZjVhN2Y4ZGE0NDdiMzYxMWRjZmU4MzhmMzdlMjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlmMzUxOTFmNThmZWI0YzA2ZGRiYTU4NThhN2U3NDlkNjhkMTI0YWJmODg1MmI5ZTI5NDk1MzdkYTNhY2FiZDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM2YmVkZjU5NDJkMDJhYzVmYWMwOGI1ZGE2NDRlYmE3ZDc1ZGY0MWQ4MjBkODlmYmJlYTIxNDA2MTJkYzViMmIifQ"
+        },
+        {
+          "resource": "repo://backend/pipeline_runner.py#L215-L221",
+          "version": "repo-lines-v1:sha256:c4d1880ca46d434d1ba75258a37cde7b0dac778118d8d50c928fd732d4d8f2ec:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOThkMzlkZGEzYmNhZmZkM2U5YjY2YWU0YTY4OWE0NWUxNWQyYTFkNzZhMzdmMTU3YTY2NWZiM2QwMDJkMGFlNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDYwNWU0YjkzOTlkZThiYzJlNDc3ZWIwMjg1MzJmNTVjZDgzODJjYzQ1MTViNzExZDQ0NmFhNDAzMDI0OTI4ZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYWUwNjg3YzQ4NjNhNWNiMDA3NjU2MWM5Y2JiMDczNTRiNGU5Y2JiNDhkZTY4OTE1YmM4YzBlYWIwYjYxMjM2YiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNmUzMzg2YjBjMDI3YTNjODEwMjM4MGFmOWE2MDAwZDE3MmJhYWRmNDU5YzhlOGViY2M5Yjk3YjE3ODU2YzAyMSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_818062381b44478fb16dc022d7d3dc54",
+      "statement": "A repository with no build directive skips to the test stage.",
+      "evidence": [
+        {
+          "resource": "repo://backend/pipeline_runner.py#L235-L251",
+          "version": "repo-lines-v1:sha256:76861b2fd11342d7285cfcd34797407f0a6b4c4943a50fb03561a6a4b767f8bf:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMzNmJkNWUwODkxZWU0NjM3NDU2YTgwMjkwYzJkZTE3ZjA3NjA2MTQ4YWI0MmJhNjIyMmQ5Yzk3OTNiZDNiNTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ2ZDBiMmU2NDQ0ZjQ1YWUzY2NkOTUyNTNhZTI4OTBmMTlmMmExY2E3OTBjOWQ5ZWQ2ZjUxYTg2YjNmY2NlZjUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFhZjU3M2NiZmM3MjdiODljYTEzNjQ0N2MzMGRmYTNlMWI1NjJkYjAxOWE3MWQ3MWYzZGRhNDU0MDMwZjlkOTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ4M2JjNWRiODg3YTUzZTkxMmQyMTM3MGFjODVmMWIwM2EwMjZkMjNjNGMyMWJlNjhlNTMwNDk5YjMxZjA4YTkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ed3eab8fd9634793a3b3c99659f0b32d",
+      "statement": "Gate modes are auto, auto_with_success, agent and manual, with auto_with_success as the default for build and test transitions.",
+      "evidence": [
+        {
+          "resource": "repo://backend/mcp_server.py#L93-L94",
+          "version": "repo-lines-v1:sha256:6b585fb1afabc2a2282bb36027a003af51dbd69ede0d03d7b844831baba16ccf:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZmIyZWMxNGU1MGE2OWNiYWQwODk2NDdhNTYzZGM3Y2Q0MzgwYzZmZWUzYTdkYjc5ODk2ODg1YWIzYTI4NDAxYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZTQ5ZmI2OGZiM2QzZGU0ZDEzMDZjN2FkMzM0M2FmOGFjZDRhMjQ3MGY4ODFiMDU3N2FhZGU3Mzg5MWFhNTdhNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiM2NkMTFkOGM3OTFiM2FkYmJmZDZmMGFlNjEyZTc0NmZmMjllOWNjMzYzMjJkNzkxMTYyZmMwYTE1ZmQyODI0NyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNzA5NDMzMGE5OWEyMGY5ZDk0MmFkNWNjNjgzZTEwODNhOTMzMjk2Mzk3YWNmM2NhNTQxMTAwOGQyNDU0M2IxNSJ9"
+        },
+        {
+          "resource": "repo://backend/pipeline_runner.py#L308-L333",
+          "version": "repo-lines-v1:sha256:6523582ec3e714e683d3b5069ba200f9fbeb5c84b04b6564c2ad61fc37d06fec:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIzNTU3MzlhNTY1YzBjOGM2OGE2OGY3ZWFjMGEzMzZiZDUzNDA0YTUyNDFkNjI5MzU4ZDgzZWFjNzY5MTNhZDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM3ODFlMzEzMzNlNTdiNWM3YjBkZTlhZDJmMjIxNmM1YTBmNzJkY2NhNjVkNzNhMmFjZDFiMWI2ZDIyMmYxOGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI5OTc4ODllZTJkZjA2OGVmOWMwMDgyNzYxNjlhODJmNzFlYTg3Y2U3ZGMyYzdkMzY3Mjc4YTMzMzljZDNiZjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUwZWFkNjNmNDU0YjAyMGYwMmRjMjkwODY3ZjUzMTRkM2E2ODBkNmQ4N2ZiYWY2NzQyNzhlZjk5ZGNkZThhMWQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_cbe8032925704bc4b92d60c63a20fae2",
+      "statement": "The QA to deploy gate defaults to manual, and an agent gate refuses when no LLM is configured.",
+      "evidence": [
+        {
+          "resource": "repo://backend/pipeline_runner.py#L438-L455",
+          "version": "repo-lines-v1:sha256:834e27854709a396f411ef0a1c40a18c81aa3624f700335d6199849b88080f65:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU4ODliYmQ0NDFhYzljZTkyNmMxYThjNmUyZjdkMzhlMDk1ZTBjZTUzMWNiMjVjYTkwNWU4NjU0YjQ0YmNmODgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE1NTVmZWZjNWUyNWY4ZjNjODc1NzNhNWNlNWMwNTUzMTA0ZjgyYzM3NmFjZTBkOTUxOTIxN2RlNzU4NThhNjQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdlYTRkOGRjNzBjNTRkNjZkNTQwMmEyMzhlNzNiNTQ3NTVjMmE4OWEzN2E1MWQ2YTdmMDc2MDc1NzE3MWY3NjUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk1ZGIyNzRjMDkzYWRlZjkwZDM1NjEwNTQ5ODQ5MjYwY2YxZDhmOWY1MWM5ZjYxYzhmMjk3N2UyMzY5NzdjNTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_30227309a30e46e2a4856218751376d2",
+      "statement": "Build and test run on a selected build host, while QA and deploy remain on the primary.",
+      "evidence": [
+        {
+          "resource": "repo://backend/pipeline_runner.py#L264-L268",
+          "version": "repo-lines-v1:sha256:6344a3464e9770e8429fae42e86aec63ab11bfd4bb17f34344d70b3034f7d0b6:eyJzZWxlY3RlZExpbmVDb3VudCI6NSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYmIyYzZmZGQ5ZDViYTAxMDViMzIyMzkwNWU1NDFkZGUxNmJkODkwNTAxZDE5Zjk4MTAzMTA3NDMzMzY0YjM1ZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNTA1NjU4YjEwNzk4YTZkYTM0NWJlZWE4YWM2Mzc4MjAxYmZhZDU2YWQ0NjVmZTgyMDczMzkwZDMyY2FlMjYxZiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjZmYjI0MmZmYmRjNGRmM2FhODEzM2MxMzdhMzRjYjY4MDMyZjFhNmVjZGU2ZjU5NTE3MmI4NDc1NmY3YTZlYSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYmY5YjJmYzZiNjI2NjVmZDk2OTc1ODhmY2U3MTk0MzdhOGQ5ZTBjZGU5ODhiYTdlNzY1YzA5NTdmZGE1ZDAzYiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_b3931e77547f49f68be58b47c6882a27",
+      "statement": "Webhook handling verifies an HMAC signature in constant time and remembers delivery ids to block replays.",
+      "evidence": [
+        {
+          "resource": "repo://backend/github_webhook.py#L1-L14",
+          "version": "repo-lines-v1:sha256:3c7220d69cf5f2d3d572d588e7c2ce3ab3bfa202a6da24efc41dd7589546355b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE5MjNjNjllYTFkMWQ3NzBjOWMzNmE2NWE1YjNhNDkzNDVhNGYyMTgwMmFkZmFlMzFmN2YwOTUyYTZjZWRhNTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3NWQ0NTg5ZTkxY2M4Y2I5NzQ4ODlkYWIwMWRlMTVkYjE1NzRjYTEwZWVjNzI5MGExMDliZjU4OGM5NGUwMWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhjMGE2Nzk0ZWMyZDI2MGFlZjQ5Y2NiYjk0YjM4NGQ1YjIyZmUyMzdlNDIxMjJmNGIyZjcxNDE1ZmQzYzdkNjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e4c512423d7d4e36991bb1b862baea75",
+      "statement": "Convergence verification fails on new failed tasks, a paused or rolled back swarm update, or a timeout.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/verify-deploy.sh#L1-L40",
+          "version": "repo-lines-v1:sha256:1a9a07b6fe4e701317e9e8af11f2910619c6b679f540387feefbd625d99bef25:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNkMWFkNmNmZTYwOThjNTY4YjczOTVjYjhiNTY4YjBlZmM3Y2E0MjgxZDQxOTIxNmQ0NDZmYzhhYTExOTU1YmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZmYTYyNWY5ZTMwMWJkZWQyNjE5MDAzZTZhMjE2MGUyYWJkMGVjNjUwMjU3OTc4NmJjODcyODQ1ZmUyNjEwZmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY4MDc2ZmFiMzlkNmExOGRhMTU5MDdmMmNlZjA0ZWY1OTYzZjU0YzA1ZjUzZmExMzA5ZTdiZmUyODQxZWIwODgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e4495803df4d4f1cbb83c02a1b160462",
+      "statement": "Only a verification failure triggers rollback, attempted once to the last successful version of the same stage.",
+      "evidence": [
+        {
+          "resource": "repo://backend/deploy_rollback.py#L1-L15",
+          "version": "repo-lines-v1:sha256:8e21d617a0f291cb642224ba114825254297fc023f4959021f136728adabb2e1:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk4ZmNhNzEyMGMyZWFkMTQ3MjgyMjE5NDdjYWE0Y2Q5ZDA1YmQ5ZmZjZTBiN2RlZWU1MzA4YWZmOGNlN2M0MDAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3NWQ0NTg5ZTkxY2M4Y2I5NzQ4ODlkYWIwMWRlMTVkYjE1NzRjYTEwZWVjNzI5MGExMDliZjU4OGM5NGUwMWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE5NGU1NTIxNTVmODA4MDRjOTM2NTdkZDEyYzU5ZDFlN2Q1OTQwMzg3Zjc1YzI0ZTY0NDM4ZWRjMzIxYjc0N2IifQ"
+        },
+        {
+          "resource": "repo://backend/deploy_rollback.py#L27-L30",
+          "version": "repo-lines-v1:sha256:14bddae4bf87edbb29ccfb6c77852ab6cfaff4a9896df4e3592efea43ac127d4:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZThhZDNmN2IyMGJhMjY1NzgwMWQwOWJiN2NjNjZjY2NjYmJkMGVhMjFmMTM4ZmM3NDk1ZmVkOGYzODQwYzg1OSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMmY4YTA0OTgzYWQ1NWIwZjY4ZWQ1ZjY2NzkwNDJiMjViMGVhMTEzNmM5MjFjMmJlMWU2MGEzNzhiMDM0ZWJkMCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNGRjNGQ0OWJiMTMyYzc0N2NjYTVjMjAyZTk3NDFjMzkwY2IwMDI4YjA2MDVlYTgyNWJiMjY0MWIyNjljYjg4OCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiN2M4NTI3ODYzMzdmMTU5MzdiMmYyNTBlODEyNGUwYzZlMjlmYmE0MmQ1NjdhMThjYmU2NWNlNjE2NzBjNWZmYyJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_cf9f22d32c5c48c29a8ec6bc3fe7ad88",
+      "statement": "Pipeline runs do not survive a restart, and stages found running are marked failed with a reason.",
+      "evidence": [
+        {
+          "resource": "repo://backend/pipeline_state.py#L1-L11",
+          "version": "repo-lines-v1:sha256:221b39dd0ee451493de2fb06f041528bfa3e600e5f3330ff0fb793d1cd9d07cb:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxNmFkYWU1YzJhN2YxNmFiNWQxYjNjOWQ5MDlmZWIxNmRkMDFiMjk4Y2Y0ZTBkZGEzOTY3Nzc5OWMxYTAwMTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3NWQ0NTg5ZTkxY2M4Y2I5NzQ4ODlkYWIwMWRlMTVkYjE1NzRjYTEwZWVjNzI5MGExMDliZjU4OGM5NGUwMWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjdjMTdhNWM3MTQyYzIxYmIzYTc4ZTNlMjViYWVmNDBhMTg5OTE1YjQzMzc3N2ZjYWIwZGQxNGIzNjY2MDBhYmMifQ"
+        },
+        {
+          "resource": "repo://backend/pipeline_state.py#L31-L34",
+          "version": "repo-lines-v1:sha256:f3c2267f20c75effb6f23d7fe25ec8e1e539dd0fbc90cc55a8077f4f0b629e97:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMmYzNjMxZDdlYmJiNzA2NTJhZTIyNWNiODVhNjZiODEwODZkN2NlMzY2ODA4NWQ5YTU4OTY3NDQyZjVjY2IxMyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOWIzOWUwMjJlMGQ4NTQxMjAwMDNkNzkwYzI4Yjc1OTYyZWRkMzAzNzU2ZDUxMzMzZGY3NDVjZmI4NmVhMTFjZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjliNzE3MWMwN2VlOTUwNTJlMjdmMzhiYTUxNjYwMWFkN2IxZGY0Zjc3MDhiM2ZkNTc5NDJkMDFkOThhNWE2ZCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMTcyMmJlNTc2MzlkZTc3M2U5NzZkZDliOWQzOTc5YmEwZmIxYTEwYjIwMThkNjRmYTFmZDU1MTRiYTZjZGRiMSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_d3b1443d6741425cbc81d14721aed8f5",
+      "statement": "Run history is written in VictoriaLogs through fire-and-forget tasks, and logs are masked before storage.",
+      "evidence": [
+        {
+          "resource": "repo://backend/run_history.py#L1-L31",
+          "version": "repo-lines-v1:sha256:bcda3acc407c6eac353ac52b6b110866799d93b0098559b1a10640f8ceb45b61:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUwZjMyMzc0OTU4Nzc2M2IzMjE4YzYzMTQwNGYzM2M2OTYwODdmMDM5NzhjZWQxZTYwNmRiNzJkNDgwZTJlZDUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3NWQ0NTg5ZTkxY2M4Y2I5NzQ4ODlkYWIwMWRlMTVkYjE1NzRjYTEwZWVjNzI5MGExMDliZjU4OGM5NGUwMWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQzMmU5NWI0NGQwNzhiYzQzOWRjYWNkMDNiZDRlZDQxYTZkOWUwOWU0ZTcwNWU4Y2Y1YWY3ZWZkOGQ1ZmQ4MmEifQ"
+        },
+        {
+          "resource": "repo://backend/run_history.py#L92-L95",
+          "version": "repo-lines-v1:sha256:8ec7e9dc279594c9b813bfc545e1b22a6a27b70626c0eef6c3900c3f2a22e568:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZGFlNzY1NmJiZWYyMGIyOTQwMzQ1OWY1YWNjZWQxYmE4NzBmYTg0NzdiY2I2YjVmNDhlNDA2NjA0YTQxYmZhOCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOTMyZWNiZjQ4NDU0YjI4MjA2ZGNiOThiZDQyYzc1ZmM0NWZlMmFjYmYzYjBiMTIzOTQxN2QwODVhMWE2NDcxYyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMTM0NGUxZjM5ZjFmOGZjM2I2YmZiMmJiMDQyZmYwM2E3MWIwNzFhNGRkYzg1YTU4Njg1YmMwMjQyMGJjZWU1NyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjgxMDRmMjZiODEzZmVkOGUxZWNkM2Y3NGE5M2Y3NThkNGQ2NDY4OWE3MzQ0MmM0ODI0MTU0MzU0ZDhiOWY4YSJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-06T10:52:04.857Z"
+  }
+}

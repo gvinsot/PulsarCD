@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:c2ee9b77534c67ae81218bf2b7036e4ff29d65c43b0eee5bccc74062b3216318",
+  "claims": [
+    {
+      "id": "claim_6433ec009e6647ff9fbaab7cb7413068",
+      "statement": "Preview naming is a single module used by both the backend and the deploy script.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/deploy-service.sh#L364-L366",
+          "version": "repo-lines-v1:sha256:68b3e596f672911b4ff603dde7c21ed82c668cd20302d04f112b1da024bdb982:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOTZjMmQwNjY2NWY1MjhlZDhmZmI4ODk1NTIyODUyYmQ0M2VhMDllNTBhNzdhZmRiYzc5YzUxNmUwYjdiZjM0MCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMGZhY2IwYTEyNDRmOWVhMTgwNGI3YTI3MDk5MmViYWQ3MmE3YTk0ODgyNWZkZGU3OWVlZjdiNGZmYzlhM2Y5ZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNmZkYmFiZTQ0YTU1NDJhYWM2M2NhM2Q1M2NiZWQ3NDljNDJiYmExMjQ5ZDU5NDdhY2QwMTYyMWRiMDlkMDZmZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDMxOGZmNDZhOTllZmQ0NGE3ZDJjZjBlMzY0ZDE4MDMxZTkxMzRlNWJhYjM1N2Q0ZTlkMzJiZGU1NWQ4ZDZhZiJ9"
+        },
+        {
+          "resource": "repo://shared/preview_naming.py#L1-L16",
+          "version": "repo-lines-v1:sha256:b1ad6d7c9ac84be536b1905490d44f9fe0210fe2e2ab180e386dbfc913db8594:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM2MDJlMzQwYWM5MzA2YjA1MmM5MTI2MGMwY2QwNjhiMGZjODc4OTZmMzAzODcwYmNjYmI5NDljYzVjZWNkMmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjZTNjZWIzZTg5ZDFmY2ZkMDhkYmU1MzQzYWYxZmNiZmRlZDJkMWRlNmQwMmIwZjVhMTNkOTEyY2I2MjE5NTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM4YTA2M2M2YjUxODFkMDVmZDIzMDEwM2UyNmMzN2RiYjViYzFjZmRiYzViMzY5NzYyZDk1MmRiODQ1OWVjOWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c092a60993a6419d90432b95f7acc448",
+      "statement": "Unusable or reserved branch names get a hash, so distinct branches never share a stack and a preview can never claim a reserved host.",
+      "evidence": [
+        {
+          "resource": "repo://shared/preview_naming.py#L18-L33",
+          "version": "repo-lines-v1:sha256:3488ea193c3decfbaa365d75d5ece641df7f5f6003c1b3eddf5a81c9c4e867d3:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3NWQ0NTg5ZTkxY2M4Y2I5NzQ4ODlkYWIwMWRlMTVkYjE1NzRjYTEwZWVjNzI5MGExMDliZjU4OGM5NGUwMWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE1ZDU0ZTJjNzI2NzU0ZDVkZTNkMWI1ODIxMDQ3NDhiMzA5MzkyNzVjNjY3OGU4NzkwZDdiNGEzMmJjYzg0NGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM0MzBhMDhmOTllNzNjOTUwNjE0MWUyY2IwZGY2Y2RkOTM2NWVkZGE5ZjQwY2IwZWUwY2IzYTdjZGRhYTFhMjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_10b85dd1f9dd43db9b8d5131c202120f",
+      "statement": "Only a recorded preview can be torn down, and a running stack is changed only while it runs the preview's image tag.",
+      "evidence": [
+        {
+          "resource": "repo://backend/previews.py#L7-L30",
+          "version": "repo-lines-v1:sha256:39eb37136a335ef076c5002080acf402ab3a2e7f866da282605ca4a158b44fde:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExZmM5YzlmNjJjZjE3MTBkZGNlNDY3ZTU0MTQ0NDljZTFmMTVhNzEzNDA2NDM2NzA4ZDIyYzVlMzRlNzJiZTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMxMjcyZDQyYjVmMzM4N2UxODAwMDBiZjViNWQ2ZTM5OTQzNDE0Yjc3ZTYzOGRiZmE1NTU1NjE5ZTRkM2M1YjkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFiMDNiYzgwOGNjNThlNDI1MGNjZTNlNmU2NmI5MWMyYjVlMzNlYTIyMTVlNTY3MGYzMjM5MjRiNGRhMTA5ZDMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f5579a02d88b4dc2b35f71a578489b15",
+      "statement": "The deploy script refuses any preview stack that does not start with pv-.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/deploy-service.sh#L378-L384",
+          "version": "repo-lines-v1:sha256:d61622fbf852db2e6049fb02c78b042abef527692d109805139f399f6c1b6bb6:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMzc1ZDBiNWVkZGRkOWIyMGVhYWZhOWI5MmVhYTIxYjdiMmQ3YjhjNzkzOWVkN2I3ODQzODg2NTg5YzNiZWYwYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNGM5ODNmZWRmMTE5MDExYWViMzFmMGRiYWI4MTE2NWZkNjIwYjgzZDU2Y2FiMTZkODZmMTkyZGE0ZmEyZmNmNiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDMyOWFhZDc5MDAzMTkwYzYwOWFhNzBlMjBiZTNjMzg0ODY4OWMxM2I2MjY4NjM4NmVmMzY3MzFkNDhhYmE5NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMzBkZDgxMDI2MjMwN2E0MjIwYjNkZWJlZWI0ZWI2MWE3ZTdkNTlmYzA5MzA1ZWVhMTY5ODRjYTdkMzMxYmU2YiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_db58c316da424bee8743746fcacacc81",
+      "statement": "Defaults are a 72-hour TTL, a 30-minute cleanup interval and 20 active previews.",
+      "evidence": [
+        {
+          "resource": "repo://backend/config.py#L349-L360",
+          "version": "repo-lines-v1:sha256:3215373656b1dbe802975c88d297b5a3230e118f0b6c8a6f9682701b5e441862:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImM4OTk4YWRlZGIyOTEzZGI1NjQ0NTA0MjdiM2M5MjBmNDk0Yjc4ZmJiYjZmZmIwZjYyZDgxNjJlZmExYTQxMWMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBlYTg0ZWFmMDcyMTY0NDczNTcyZjJlNGMxN2NhMTE5Y2ZjZDhjODk5MjQ5MTUyMDc4YTM3OWNlNGIyYWI4YmYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA1OWNjODhlZjRlZGExNmZkNGYxOWNiOWI0OTU0MjBiODNlY2ZmOWMyYjQ4Y2JmYTUyMGU4Nzg4NWIwMTQxOTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg4ZjU0OTc4Zjc5MTY1YzE4MzBmNTU4M2ZhMzdmN2E5YmM2ZDUxZjE0ZGU4ZjM2OTA0MWU5OGE3MWE4N2ZmODgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7a760068ae8a4c4486c3533e1a9fe090",
+      "statement": "Previews share the production env plus the QA overlay, so stateful dependencies stay on production unless overridden.",
+      "evidence": [
+        {
+          "resource": "repo://README.md",
+          "version": "repo-file-v1:sha256:9a39dfc1a3ea3cdf1ae0a89b1b732f3dd9558f015b150c18c7e2b0a62b9be6d0"
+        }
+      ]
+    },
+    {
+      "id": "claim_be30b625613742759a8fe248f2b12134",
+      "statement": "A preview's build publishes only its pv tag, with no release tag and no git tag.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/build-push.sh#L14-L19",
+          "version": "repo-lines-v1:sha256:81dc09b6369c4d7361eb1c9ac8d34a280a618dc872a522ae2eb5dbb56f04a9dc:eyJzZWxlY3RlZExpbmVDb3VudCI6NiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZTYwNWM1MWZkMmRlOWI2YjQ3ZTJjYzUxN2MxMjc2ZWFmNjQ3ZWE0MWFhZDcyMTcyZmU1NzkwNGM5NzFiMWJkNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYTU5ZmY1NjRmZjgxYmZkZTgwYTY0NTFhNWUwMjdkODY1ZWJjZWJhYTRjYzkzNzA4NDZhZTZjNzgzOTM2NTkwZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMjk2MTIxZTRhZTAwMWY5ZDgwOWVlYzAxZWY2ZTEzMDQ1YTMzMTUxYzk4MmZkNDMxMWJlNmYxOGE2YzQ3ZjhmYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWZlOTZmNWUwMTI5OWM2YzU0YjI0MDdkOGRmM2EyYmM3ZmU1NGRlMTk5YzI4OWE3M2I3ZmRmYmIwYmVlZTIyZCJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-06T10:52:04.857Z"
+  }
+}

@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:59cba98b178cb99186df8aeffa2f127923f0b40487ba8e3978d87f27c7cf01da",
+  "claims": [
+    {
+      "id": "claim_56f8b4f7afef4ab587354c0009627b7b",
+      "statement": "The detector scans recent error logs and delegates confirmed recurring patterns to the LLM agent.",
+      "evidence": [
+        {
+          "resource": "repo://backend/error_detector.py#L1-L7",
+          "version": "repo-lines-v1:sha256:2ab3eacdd1a385d25e55efae6fa9c3897d34010fa8825e824eaa02f7baef2234:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNmY2MjE1NDY4NjEyNjQ4YWQ5MDUzZmNjYTgzYmI1MTRlZGFjNzZiZGZkNWM1ZWI0MTYxZjQwNmM2NjcyNDkzNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNDc1ZDQ1ODllOTFjYzhjYjk3NDg4OWRhYjAxZGUxNWRiMTU3NGNhMTBlZWM3MjkwYTEwOWJmNTg4Yzk0ZTAxYiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMTI5YjVjZjhmNTBjMzA3YzNmZWYyZGUxNmRiNGQ0ZTk3YjkwYWFlMTBiY2JjYzAzOGY4NjQ1YzNjNDk3NTQ4MSJ9"
+        },
+        {
+          "resource": "repo://backend/error_detector.py#L873-L920",
+          "version": "repo-lines-v1:sha256:6e96eca4aa34a4ff903dc48293e05dc55dbcd8037cff0fc40164ee7a0c786a2a:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA3ZTg2ZjY0MDQ5NGE5MWFlYzU1ZjlmMTkwNTNlYjRkMjg0YjI4OWMyNzc0NzNkNTU0OWRjOTQwMzIwMTRkMjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgzZWQyNTU2ZTBjMDEwYjk1NTZjMjY4NzllZjVlY2NlNzA0ODIwNjc0NTdjNTgzNzViN2Y2NjM4NmFlMDQ3ZWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFmNTZlZGJhYTE1ODU2MmY3ZmRhYmNlZDc1ZjAzODMxNTUzZGNhYTY4N2VhZTg0MjlhNzU0Y2E2MDY5MGIxYzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAxN2E4MzM0NDdmZDgxZmFlMmVlMzE0NmM4YzJjMDQ4NWVjMTNiY2IzMmFlZGNjOTI2MjY1ZDdmY2RkYjE3YTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5f4209c8bd95439c97fa3bc8a2725d86",
+      "statement": "Defaults include 60-second scans, a 12-hour initial lookback, 10 occurrences and a 0.92 similarity threshold.",
+      "evidence": [
+        {
+          "resource": "repo://backend/error_detector.py#L217-L232",
+          "version": "repo-lines-v1:sha256:9644c1fd018d094694060fc810003f39702dcde686de6aa90051958986412e2e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI5NTQ0N2U5ODViNWE5YjNhYzJlYWZlNDdlNDQxZmJjOGUxYzgxYWE2MjJhMjM2MGZhZjA1YjI1Y2IxZTgyNGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVhNmY2NmJhM2Q4YzU1MzI0MDE1Y2FhYzIyOGRjZDc4ZThmZDgyNzhkZjE4NzYxMjMwZWY0YWVhODQ2MmUwZDgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImVkMTE3MmQ3MjNkM2Q1YTExYmRhMGNiYzNmOTFlMjRiMDcyOWUzMjRlYzI1MDg2NjI2MTcwYzE4MDBjNTI2MTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjllNDNlODUwODNkYjE2ZDU0YWRiNmRjZTJlMWM0YTYxOTAzMzBlZGM4ZDNiOGUxZTU1YjlkMjJmNzJhOWEwNjIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_088b248856634c66b166e6c137f183e8",
+      "statement": "Scans after the first read only errors since the last scan to avoid double counting.",
+      "evidence": [
+        {
+          "resource": "repo://backend/error_detector.py#L338-L346",
+          "version": "repo-lines-v1:sha256:402211b7618c8970b90ad9f4d838bdc27e85dfa719f0332626093c1efeec4ff6:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMDMzYmRjOWU5Y2VhYzMzZDVhMzVmNTQwNjQ4YzU3NmFkZGM5Nzk1MjRmODViNmFjNGNjZDJiOTMzMTU0NWFmOCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMWY3YmY0Y2Q5OGFmOTllMmU5M2ZhZTMwZGFhMThmYzI3NTg3YTYzYTE0M2ZiNjk0YzQxMmFjZjliYjExNGQxMiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMGUzYWMxMjMxOWZlZjI1YjYyZjQ4OTI0NWVjMjJjZGU2NzQ3NDUyYjRkNTEwYThmN2EwNmM2ZGVjY2MxN2UyZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjM3MzljMmY3Yjc0MmJiZjFlZDFiMWU4NTE4Y2Y0MGEzZTRhYzI5YzcyM2YyOTM3M2ZhMDU3NzM1YTg5Y2RlMiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_6099814680ed4fd79c7545494e3b1f9b",
+      "statement": "zvec is optional and the detector falls back to text hashing.",
+      "evidence": [
+        {
+          "resource": "repo://backend/error_detector.py#L26-L44",
+          "version": "repo-lines-v1:sha256:3da0c82fdcd175c24f405dbd935e7f1b67b57aa303c04744a65181c345889ca3:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ3YmJmMWY3NTcyZDVhOTc3MjYwZmU0YzI4NjI1ZGJjODBjYzk1OWE2YjhkYTdkNWMxN2JhODQ3NGIyMmIzMDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRkYzRkNDliYjEzMmM3NDdjY2E1YzIwMmU5NzQxYzM5MGNiMDAyOGIwNjA1ZWE4MjViYjI2NDFiMjY5Y2I4ODgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYWY4OGY0Y2VkZDYyMTBkNWE0MjM4MGQwZDA4OTMyY2RhNDQ2NGRjNzU1NGE5NWIzZjg5MGM5ZDUyMTkzNWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_df4fe8f2dd03418cb34f23bb3abc705d",
+      "statement": "Benign filters drop only digest-shaped tag lookups and HEAD push probes, keeping real tags and GETs for absent blobs.",
+      "evidence": [
+        {
+          "resource": "repo://backend/error_detector.py#L191-L204",
+          "version": "repo-lines-v1:sha256:bdf722acbd12ea86c9be5168b5718439b15d875c79623cd5109e48e24003fcfa:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImRkMGJhY2Q1YWY4MjFhODQxZjg5NDEwYTYzMTU4NzU0ZjY0MDk5ZDVkYTYyZGFhM2I1MTMyODg4Nzc2YmFlMGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE3YWNlZDk5ODZhYTM1MWU5NGEzY2ZmYTM2YTQ3MDE2MDRkMmNmYTZhYzY5NzM0ZDU3NDZjNWVlNDNhMThmYzAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZmMzZiOGExYmUzZmM5MzdjMjY4MGUxYzRkYjNkMTM0ZGQ5MjFlNzExZGNmMWU2OTRlNjc0OGJjNTJmZWY2MmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg5ZmIxOGI4ZTk5MTYyODk2ZTAxNzE5MzM4NDJkYWU0ZGNhYjE0NDk5MjZiMTY5MzUwZDcwOTcwYTI1OWIwMTAifQ"
+        },
+        {
+          "resource": "repo://backend/error_detector.py#L540-L550",
+          "version": "repo-lines-v1:sha256:2dfebcdfadb0f14638539bed0f5e0eb37259735be4ba90a7b7dfcda5e2675696:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc1NWU0OGZhNGJhMzRkY2FjYWVmNGM4ZGUwYzg4ZjZmMTBkM2FhYzhmNWM0NjU4MjFlZDY3MzgzNjkyYzA3MDciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE0ZjFmNzE0MWNhOTQxOTAwNTRiNTQ0YTdmYzhhMGMyY2Y1MTY4OTQwMjcyOGQ3NGUwNDI1N2I1MzgxMjE3ZDYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjllZTk5Mjg3MjA4ZGE2YzI4ZjFiY2JiZDdjMWZjNDhkYzUzODBlMDcyZGEyZjdmODhiN2Q3NmI4MTgxYzYyZWMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_da16ad129b0840db8a1f85839c07fa61",
+      "statement": "Notifications are non-blocking, rate-limited, and carry no build output or env values.",
+      "evidence": [
+        {
+          "resource": "repo://backend/notifier.py#L1-L22",
+          "version": "repo-lines-v1:sha256:0b5936508a847bb20354016abbc4568313937b6eca1809c7b1222bf74b6620c5:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMzMDUxZDY3YzhlNjMwNjkzM2M3NjE1NDUzNmNmN2U3ZGFiNjhkZjFlYmFhMjVlNWNiNzdkMzc4ZWQ2OTlmMzUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3NWQ0NTg5ZTkxY2M4Y2I5NzQ4ODlkYWIwMWRlMTVkYjE1NzRjYTEwZWVjNzI5MGExMDliZjU4OGM5NGUwMWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUxNmJlNzgxOTQ4MjQ5N2IxZjY4ODEyNzdlODEzMDg4ZDdkZjgyMjdkYWEwZDUwZjhkMjg2YmU1Yjk1ZDg5ZjcifQ"
+        },
+        {
+          "resource": "repo://backend/notifier.py#L300-L324",
+          "version": "repo-lines-v1:sha256:cc20b004c2f90efaec52ba90744323047dcd469d36706b92675c16b27bffecf4:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImIwY2I1NDViY2FhYmMzMWM5YWRmMDRlNzRiZThlMzU5YWYzMzc3YjY4OTNlODc1YTY4YWZlMDgxNmQ2NzI3ZDIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImExZDI0ZTk5MmJjMGVmMjIwNTAxNTQyMTllZmNlNGI5OTdiOGI4ZWJlNTM4NjdmMzVjNmM2MjVhY2QyMWQ5NGYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ0Yzc0YzFhMTJkMTdmNzRmMmQzOTY1NDJlMWMyMjJlNTc2MzQwYzdlZDM4ZDVlN2FiZDM3MDljZGNmMWZiYTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZkZDBlZmY3OWUyZmIwN2NkM2I5MzU3ZWU1NjY5ZDNlZDViYTAyZjU5ZWRiZmNjYTdhOWYzYTYxZjFhOTk0ZmEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4ef790dadfdb4df7bdc90d96f87abf44",
+      "statement": "Each channel is disabled until configured, successful deploy notifications are opt-in, and samples are off by default.",
+      "evidence": [
+        {
+          "resource": "repo://backend/config.py#L299-L345",
+          "version": "repo-lines-v1:sha256:49bdb929a03503f7e9cdd8cd5c4ac667c079c443f802c45f95dcb6dabe360997:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjEwZmNkNzNmMDBlYjFkMGY5ZjQyY2E4MTFjN2QzMjc2MDZlYmNlODE5ZTVlZWU0Y2E1ZDU3NjlhZWQ0MGFhZDYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBiMmE1NTNmMGZiYWM3NTExMmU0ZTQzNDIwMDI0ZjFmOTIzZTRiN2M5ODVlYzYxNDQ2N2Y0MGZhZDk4M2E0ZjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAyZTQwYTQ5MWExMTZkMWMwZmI1YTc0ODQyNzlkMjI3MTJkNDE1OThlNmRjMzA3ZWM1ZmI0ZjQ0N2M1NDE0NzMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA1OWNjODhlZjRlZGExNmZkNGYxOWNiOWI0OTU0MjBiODNlY2ZmOWMyYjQ4Y2JmYTUyMGU4Nzg4NWIwMTQxOTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_fcdfe20a36444050adec6c6026b03379",
+      "statement": "Notification admin endpoints sit under /api/admin and return no secrets.",
+      "evidence": [
+        {
+          "resource": "repo://backend/notifications_api.py#L1-L20",
+          "version": "repo-lines-v1:sha256:c651b3f3f0a4cef435ede255ab8af85be5c502d6e40a6dccd4ed622764533944:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjljMWJhZWVjOWYxMzE3YjdmOGUwYTRkNzI1OGFmZDdjNmZjNmNkMzE3ZjlmZmZkNTUyNzlkMDQyNjllZDc5MTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE2ODEzMWY1M2NmOGI0MDg0YmFhY2VmZjQ2YWM3MDY2OGYwZTYwNjU5OTZlMjcxMDE4OTE2NDE5MGNiN2Q3MDIifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-06T10:52:04.857Z"
+  }
+}

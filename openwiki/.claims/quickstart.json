@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:a0852419283de0b326c189c4bb45fbd9bd1e0b00b3c1ba28b752188eda64d95e",
+  "claims": [
+    {
+      "id": "claim_7cba9dd4274945679d3454344e63b779",
+      "statement": "PulsarCD uses an agent per host, a backend coordination layer and VictoriaLogs for storage.",
+      "evidence": [
+        {
+          "resource": "repo://README.md#L150-L165",
+          "version": "repo-lines-v1:sha256:eaa6bb7177a92a8e68cf2133d3938c7739e4723bfbbc809c179716d242cdd812:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4MzdiZGM4ZWViYWYxZDEzNDBiMzMwNWQ5MWYwNDgyYTZhZmJkZjZlMWE4YjE4ZDk2YTg5Y2FjYzU0Njg5NzgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ1ZDIzYzdmMzIzOGE1NTYzMjBmMjhhMGU4MWM4MjY1NTkwOWFkNGU0NzZkMmQyNWFmMjUzMTMzYjA5NzIxY2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM3NzA0MWNkNmIxNWRiYmE0NGQ5ZTE0NGJjNWVkYzExZjU0NWFlY2YzYTMxMTliNjUwNWY5ODg0YWUwMzE1ODMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjI0NmJkNzRjYTQ1YjcxNWM1N2ExOTExMTdlYzM2MjI2ZTAyNTU2NmYyZWMxYzBhZmY2NzM3ZGMyZmMxZmU1OWUifQ"
+        },
+        {
+          "resource": "repo://devops/docker-compose.swarm.yml#L1-L14",
+          "version": "repo-lines-v1:sha256:e11750f0ef2e0042565da73cbd1ccf77e67bb16bac8ac95000c90f9baf30d10a:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY1MzdkYjgzYmNlOGEyNWZkZjZkYzk2ODVmYTRlNmM5Y2YwNjAzNGI5ZTQxMDhlZmFmMGY2ZTQ5ZDFiYzE3ZmIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY1MzdkYjgzYmNlOGEyNWZkZjZkYzk2ODVmYTRlNmM5Y2YwNjAzNGI5ZTQxMDhlZmFmMGY2ZTQ5ZDFiYzE3ZmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjEwOTc0ODkxMTYyYWRjMzc4MDA1NTAxNWMzZDA3OGQ4M2E1MTA5NDA2ZjRjMWY2NjA3MTg1OTNjZWIwZTNmNzcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_a94116331a8a4fec89f0a354116bcdd8",
+      "statement": "A push to a starred repository's default branch triggers an automatic build through the shared auto-build path.",
+      "evidence": [
+        {
+          "resource": "repo://backend/pipeline_runner.py#L544-L560",
+          "version": "repo-lines-v1:sha256:f95d59aa30d67384f7b4147bd77e38b71eafa1dd9b9553d844b16664c811a0e9:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkzNTIyNDQyYWVmNWRiZTkwNTA2OTRhMDM2NTczZmJjYTQ2MjY3YmI3YTM0MzdhNDQzYTc1ZTlkNDJkZTExMzIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1MGJlMGJjZTMwMWZhNmJkM2U0MmNjNDMwMWY2YzhmNWI4YTNmZjhhYjJjOWVmMmZmNWMxZTc1Zjg0MTAzNWEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ1ZjA0NTNiZTA2MDkyNzRiNjFmOGNmMmVkZWM1ZjJlNTY3NTRkOWRjNThiNmYxNzJjYzdkZTUwM2E0NzA5NjEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ3NmE4MmUwZjNhYTk4NzhjZmZhYmMwNTNlOGJkMTI0NzIzODZiMzBkNWNhZGIxN2Q1NzM4MzkxNDhlYWQ1YjgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_daa89f0665b04aacbff93a44545bfacf",
+      "statement": "scripts/dev.sh is the local check runner and never deploys or checks out code.",
+      "evidence": [
+        {
+          "resource": "repo://scripts/dev.sh#L1-L3",
+          "version": "repo-lines-v1:sha256:523561f94ddd417e72e488a5f8abef33bed47a98078e47ed07a3ca2aaf2d2b78:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiY2QxYWQ2Y2ZlNjA5OGM1NjhiNzM5NWNiOGI1NjhiMGVmYzdjYTQyODFkNDE5MjE2ZDQ0NmZjOGFhMTE5NTViYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYmQ3ZjJkNDAxOWM1NTcwN2M2ZmU0MWFkMDQ1ZTNhZWRkNmM4YWE0M2FhODk5YWQwZDc0YWI4ZDAzNjhlZGY0YyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjAsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNzBjNWMwMzA5NDU2NTkxNWMxZDQzNmM2MTdjMjdmYzFiZDExZDFjMGM5YzE3MDE0NTZmYTJkYzVkMmRlNWRmZSJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-06T10:52:04.857Z"
+  }
+}

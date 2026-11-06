@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:8e9c17aac1cc3ed3432f0044fc8156156749eefeb9c177cf09e09116b49e5a1d",
+  "claims": [
+    {
+      "id": "claim_1c0a1202f0904befb4a9a6368a06921f",
+      "statement": "The UI is classic scripts sharing a global scope, loaded in the order set by index.html.",
+      "evidence": [
+        {
+          "resource": "repo://frontend/AGENTS.md",
+          "version": "repo-file-v1:sha256:72e3d6e252281a231fbffff226e50a4cf8c4a2d8e621e92e612e236950d9fe18"
+        },
+        {
+          "resource": "repo://frontend/index.html#L2110-L2141",
+          "version": "repo-lines-v1:sha256:90f88a27ba9d92875d212b805bd9260578189b711525e8354129314649e6b9f9:eyJzZWxlY3RlZExpbmVDb3VudCI6MzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlZDgwMGU2YmYyODM3YmMwNzg1MTQzZjcyNWE5NjJlM2I5N2ZhYjUyYzA2MzMxZjVmMTA1ZjA3N2M5NGFlYjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE2MzA0MzhkMTE0Y2RjMjdkZTM0YjYyYzg4MWE2N2RlYjM2ZTIzZGQwM2JiNzA2ZDBiMDdlN2VlYjQxMDY0OTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZmMTQyMmYxYjI4NDBhZTg4ODEyNGQ1N2YzMDg2ZmVjM2Q1NTcyNGUzNDY2NjllNzA5ZGQyYjhmMGNmNWI1NTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRmYzdkYjE4NzBkMmZkMTEwNmIzYzExZDhhODI4ZWJmZWI1N2JjNmMxM2M2NWNiOTM0ZGE1MjM1ZDgzNjBlYTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4ad8ecb361db4757bc551aa00738196b",
+      "statement": "The CSP allows no inline script or style, with sources kept in sync with index.html.",
+      "evidence": [
+        {
+          "resource": "repo://backend/security_headers.py#L16-L39",
+          "version": "repo-lines-v1:sha256:4c6fcc9de6e8b91f7e82220fbb61b5eb0cbabc6ac6b242a1af322da1d80b114b:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjkwNzcwZTIxZGU0YTc0MWMzM2M5ZTc0MjFhZDc0NDVhZjk1MjU3NjBlYzRhMDkzOGFkZTU3N2Q1Y2YwODhjN2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk4M2Q4ODNkMDkxOGIwZTJmZmQ5MWM3ODE1NmRkNzUwNWE2Y2U5MTUzNDdmMDRhY2E4NDhhYmI5MzY4MWY3ZDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZjMWRlYzE1MjcwOWMyMGRjN2E3MGQyZjI3MzgzMmNlNWUzMDI0MDQ0NmJmYTk4MDJlZDVjNWQ0Njc3ODg5OTMifQ"
+        },
+        {
+          "resource": "repo://frontend/static/js/core/csp.js#L8-L11",
+          "version": "repo-lines-v1:sha256:6348ae1447c92383bbf6cdc9a6ec94a5ac9248e09eb0f14bbbd47c2ccd7570bf:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMjYwMWIyNTczZWU5NTQ2OGIyYjkyZWY1ODdiYzFkZTk5ZGU5YTliOTI1NmYzNjUyYWE3ZDBkNzcwZDUxZDEzZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjk3OTY5NjE1ODEwZDc5ZmIxOGY3M2YwMDg4YzdmZTQ0N2ZkZTBlOTRjNmVlZmNiM2EwY2QzNGY2OTVjMTAzZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMDI2YWFhNzMxMjRlYzhmYWFiZThlZDRjZWExYzI1NGRmZGY1ZTk4N2NkMDRmZjBhMmVhNTQ3MTRjNDZkODQwYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOTE2NTRhNDE2YTY3ZDI5YTI0ZGNlOTJlYWVlODg4OTgwY2E5OTEzYjhkNTExYTNiMWZmMWE2NjJhOWRkZjNkMiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_3cce8e708aa144109a0fcb24709e7477",
+      "statement": "Event dispatch resolves names against UI_HANDLERS only, never window.",
+      "evidence": [
+        {
+          "resource": "repo://frontend/static/js/app.js#L145-L145",
+          "version": "repo-lines-v1:sha256:f9ed83b516e0217ec905dc043921262deb82d3208c1c447a77ef5e6eba3219d7:eyJzZWxlY3RlZExpbmVDb3VudCI6MSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjllZDgzYjUxNmUwMjE3ZWM5MDVkYzA0MzkyMTI2MmRlYjgyZDMyMDhjMWM0NDdhNzdlZjVlNmViYTMyMTlkNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZjllZDgzYjUxNmUwMjE3ZWM5MDVkYzA0MzkyMTI2MmRlYjgyZDMyMDhjMWM0NDdhNzdlZjVlNmViYTMyMTlkNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMGJmZmU4NTY1MmU1NGVhOTdjMDI4MzU1ODFiNmU3NTM3ODc4NTMyNGE3YzEyODQ0NmYzNGFjY2NlYThiNDM1YiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTcwMTc2Yjk5Nzc0MDVhNTc4NmE4MmMwN2NjYzE2ZDlhNmQ3MDI2MDZhOGNmMmFlNThlNWQ0MzBkNTJkNjkzMyJ9"
+        },
+        {
+          "resource": "repo://frontend/static/js/app.js#L62-L64",
+          "version": "repo-lines-v1:sha256:d948d76e3095be951a74d396b7997ac3064b93ce780734f743daeda84c370972:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNzcyMjhhYjM5NDRkYzVkMjcyZmQ4MWE1NWY3ZmE2Mzc1YTcyNjQ5NzZjMDRmNGUzYjAxMDQ1NzNlZGZlMGM4ZSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMWVjN2E1MzBmOGIzZTA4MDI3MTUzZWVlNTI5Y2M2ZWZlNDE2NTM3ZjE5OWExYTE1ODNlZTJhZWYxM2MzZWY4ZSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNWI2N2IwNjJmNmJlOTNlNTg3MmE3YzNkYWU1OGNjOTk0ZjBiZGM5ZWYzMGJiMTZlZmM0OWYyNDUwMWE2NmYxNyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYWY1YjhhYjMzNDVmMzAxNjVhODQ0ZTliM2I4NWZlYzQ0YTUyMGU3NDhmYzMxMzBiYjk4ZGFjYjUzODMyZDdjOSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_5685d0b9c0df47a78b2084444512a4a4",
+      "statement": "withStyleNonce stamps style elements with the page nonce because xterm's DOM renderer offers no way to pass one.",
+      "evidence": [
+        {
+          "resource": "repo://frontend/static/js/core/csp.js#L36-L50",
+          "version": "repo-lines-v1:sha256:513ab96eb445447a663d6639273f462ad2ce3fe94c3263a05211a7f82f69d25d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2MzdlZDMyODYzNjMwMGMwZDM0ZDg5MjkzYmVmOGZjMjJjZDZhZjQxM2EyNDY2N2EwNTBiM2M1ZjY1ODQ2ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMzZmYyMmRhZTk2ZTk0OTVlZTIwNGZlOTEzM2FmM2QwYjBlNGM2NjBhNjI4MmQ1MTgxMWM0NmM2ZDU1MmEzZWIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg2MzYzYjkzODlkNGM2OTQ1NTU2YjdjMGU0Y2YxNjljN2ZhYjFlZGU5OTNlZmJlMTZlMjNiZGM5ZTExY2NhODYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE2NTZiMmIwMzhhNDczOWU3OTYxZjllZTJlYTZmNTMwZjAzOGFkYmM4NTJmNDBmZDlkMTgyNDcxYjhhNTBjOGMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_148c2ac69982444097c8552a1a824bd3",
+      "statement": "The JWT is stored in localStorage and sent as a Bearer header.",
+      "evidence": [
+        {
+          "resource": "repo://frontend/static/js/core/auth.js#L8-L14",
+          "version": "repo-lines-v1:sha256:e6ce67871359509e0f3210512fced4c6ab4918893cce5a28d36a0e94103b7cda:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNmYwMWNlMWYyYjQxMWUyNDE5OGUyNDI3MjYxYWE2ZGVlZjQ1MGMxOTAzOWE2Y2UzMDg2MTMyNGUyMGE0OTBkZiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYzAyY2QzOWU2ZjA2ZWY3NDEzMzVlOTFiNTUwZDFiZTk4OGU2ZDJjOGYzZTc3YjgyZDk5NmQ2MDgyY2I1ZGNlMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNTUxMTliNDNhNGQ2NzM3MWZmOGZmZThiN2MwZjIyZDk5ZWQ0MjQxMTk1OGZiMzE2N2E0ZjA5MWI5ZDU1ZGVhYSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMjQ2MDgzNjY4YzBjYjNlMGUwZGE5MzJlNGU4OTY4NGUzOThlZmQ1MGQ5NWY4NTU0NzE2ZjZhZGUxOGI1ODM3OSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_a5c8f6d0a3ca41e0a98ab46c5d1c3714",
+      "statement": "apiGet collapses failures to null, while apiGetOrError returns an explicit error.",
+      "evidence": [
+        {
+          "resource": "repo://frontend/static/js/core/api.js#L8-L50",
+          "version": "repo-lines-v1:sha256:31c0af8c211369db9bf601faa7b774cc1c60af318af1ed586cfab4d97741f100:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUzMmY1NWEyNDRlNDgyZjhkMjZjM2I3YzgwMGZmNjlhZWE2ZjBkMGNiZWU3ODQyNjkxYzBjM2NjMWY3MWZlYzAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUyMmZhYTUzNWJkMmVhM2Q1MmU3NDFlZDQ1NDQzNWI3ZmU0OWU4MzU4NmU5NDNkOThkODJiYmZiMjRkMWY1YzUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjUyYjE1NDgwZjk0MzdjODMyYjZmOTM0OGRmYjlmYWM4ZjQ2MWI1Njg3YzRhYThjYjAyNjZjYmRjN2ZkZDU5NmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZiOTI5ZWQ3Y2E4OTY1MjY2NzI3MzEyNTg3N2NjNGZiMjJhYjBlM2E2ZjEzOWZlNGNiODU4YjY4OTMxNWU2NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1680bbc4bf8245b294f6f56af82f4b10",
+      "statement": "Frontend tests load script source into a vm context with fake DOM elements.",
+      "evidence": [
+        {
+          "resource": "repo://tests/test_security_view.cjs#L1-L20",
+          "version": "repo-lines-v1:sha256:8d45ef59a55b785e444736e0ef9df536ddc2580812dcfab5a5534f5e328e4066:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjliZTFhODVjY2FkZjBhMzE0OWMxOWNhMTA2YjAzNjdhZTkzZGM2Y2ZkMjkyMjVjMjNlYjMzMjhiYjA5NzA0ZDQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZmM2NiODI2ZTE0Njk4ZDEzMDZlNjc2YmEwYzRlZWE3NjE0MDc0Y2Y1NjllOTRiM2Q3Yzg3NjYxYTAwYTg4YmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFlM2FlZTgxMGI4Y2RjYTY5YzRmNzM5ZGVjNjg5NTdmZWVmZmI2NjAxMGFmMzY4NTFmYWJkMjExZDI3MTQzYjgifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-06T10:52:04.857Z"
+  }
+}

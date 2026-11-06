@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:c1a40c37b09140305d477f43c4d0453a34c95bb70b2d98924f9b42a79000c86c",
+  "claims": [
+    {
+      "id": "claim_c34fa463d1d54ea59ffc25d54b8e5a8c",
+      "statement": "PulsarCD exposes a read MCP server at /ai and an actions MCP server at /ai/actions that requires admin.",
+      "evidence": [
+        {
+          "resource": "repo://backend/api.py#L510-L511",
+          "version": "repo-lines-v1:sha256:4de7d3a54f358bf27190e9e41f91a3b81dfa28eaa8be4d89b7e68c28d49e2b75:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiOGIzNzA5NTc2NWRkZDY3NWJkMDljZDQ3YTU3ZTJiMzliMTdiMTE0ZDQ1ZTYwYzYwNDZhZmRhZGJhYjk5YWI0YyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNGEzZmI1ZjU4Yjc4OTRiMWE3MTJkODZiYjg0YWI1NDY5NjFhOTMwNTNkMWVkZTk4YjkxYTM0YjM1YTBiOTY4YyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiM2NmODQzNTU0NzQ0NDgzNWFjZmQyNjRlNDVmMDdjMTgzMjEzYjMwODNlMGJiZGI5NjNjNmY0YWE2OWU1YzU0NiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYTczNjZhNjViZTE0MDY0ZTIwMDA0ZmI4NWI0YmY3MDRlZDFkYzY0OGQ5NWY1YzNjNTBjODMxNjg3ZGY3NjRjYiJ9"
+        },
+        {
+          "resource": "repo://backend/mcp_server.py#L22-L88",
+          "version": "repo-lines-v1:sha256:9af0a51f58c8e3d615b1578230287ede4ee08f7558f3ac3c77065e071670fdfb:eyJzZWxlY3RlZExpbmVDb3VudCI6NjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxYzM5NjIyMDhiMmYwNjllZjZkZTVlNTVkOGI5NmQ3NTM5YjFkMDEzNDUxMTIwMmNmMDUyOWI2ZTBjOTBhOGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBjN2E2NDYxMjEwZjNiMDJjMmQzMmY3ODI4M2ZjMDA3ODZlODVkYWI0MjFhYTA3ODE4NzljOTY5OGVjNzIyNDYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRkYzRkNDliYjEzMmM3NDdjY2E1YzIwMmU5NzQxYzM5MGNiMDAyOGIwNjA1ZWE4MjViYjI2NDFiMjY5Y2I4ODgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk0N2QyY2E5MWVlZDY4MTZhYTE3MmIzMDJjODg5ZWViNWNhZTcxYjJlZDBkZWJlYmZiMzZkMDE2ZDA2NTJhYWUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_0f21e737ada042f8a3ad1b8bc24ebe82",
+      "statement": "The actions server deliberately has no shell tool, and prefers trigger_pipeline.",
+      "evidence": [
+        {
+          "resource": "repo://backend/mcp_server.py#L57-L77",
+          "version": "repo-lines-v1:sha256:a77716c55a8400524467698f2b2e89c917a22681c10281198c77c5132c051f17:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc2ZWQxZTFjYTRhNjFkNjBmNGJkZGE5MTU4YWJhYWZmZDQ2ZDMyZjdmN2U1MTk1MWY1ODkwNDY2MGQwYTM5ZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUzZmFjNjVlNWVlNmVhMDg3YzdmZmFiYWJjZTVlMDQ3NjNiNmZhMzc4MmQ3ODMwM2UxNGQxZmVkYWUwNjAwNjYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRjN2I3ZjE3YjE1NWNiNjFlY2ZhZDk3Nzk2NmZiMTcxN2U3MDgyMmY3MzhiOGMyNTJjMDI0NzUyZjM5MmMwNzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjEzODU2MTdkNjI0MjkxNzQ3NTIzOGY0YTIwMTdkMGE1MDExYmQ1MWY2NDVhNTQ5ZDk0MDM1YzQ5MTAwNmI0Y2EifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c97537628f3447c08f00d8aef5737fcf",
+      "statement": "repo_name is resolved against starred repositories and a mismatched ssh_url is rejected.",
+      "evidence": [
+        {
+          "resource": "repo://backend/mcp_server.py#L97-L129",
+          "version": "repo-lines-v1:sha256:887dd4e867818a2b5bb77ac7b5d6c6dc25af169d2f4aa9ffd6e2de90a9d36a89:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJmMTk4NTY3YmQ4MzBmNDZmNzcxNTEzOTJlYzNjMTY5ODIzMGJlNWU1YTA4ZWFhZjhmYWJiZmEzZTUzYjA5YjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUwY2JjMDQwZThlMmEzN2Y3MmQ4MjhkMmI2MmQzMDAxMWY1ZTgwZGM2YjcyNDMyYTVkNWE4NWQzYjE5OWIxZjIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNmMzc5NmQ5YWUwMDA0YTE3ZmYxM2EzMDBkZGRmOWIyYjdlYjdjYzlmYjhjYzhhNzY3MjVkZTY4YTM4ZDk1MWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE0MGMxM2RlNzMyNGU2N2E2ZjFmMmMxZjE5ZGI4M2NhODFmMGVmMzFkNmY4NWYwOTJkYzJkNzE3OGQ5NjBjNWUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_1143a245eac540738078f553d2a0ad0b",
+      "statement": "MCP authentication accepts only a Bearer header, and the API key has full privilege without the role check.",
+      "evidence": [
+        {
+          "resource": "repo://backend/mcp_auth.py#L1-L22",
+          "version": "repo-lines-v1:sha256:d9fd10e26462c1b66e387fd061d9b799817a9d7264a196b0fcaeeffc1355589b:eyJzZWxlY3RlZExpbmVDb3VudCI6MjIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYzOTg4NzVlODQ2ODRjNDNhY2NiYzY5ZTljMzZlN2UwZGExZTgwNjEyMDBiYTBhNmMxMGM4ODViNTllMWE5YTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYzZjA4MzRkZGQyZTQ4N2I5YmE0NzRhZGRhNGJhYTQxMTAxYmY0OGI3YWNjZDYyN2Y5YWM0MmM0OTI5MzBmMDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY2NWI1YmNhNzY5Y2E0ZjgxOGJmZjliZDkyZmEzYmZmYmY3OTkyMjcxZDIzNTYxZTE0MzM1NDQ4Y2JjM2U5ZWQifQ"
+        },
+        {
+          "resource": "repo://backend/mcp_auth.py#L44-L52",
+          "version": "repo-lines-v1:sha256:b7b42d65a596b2e38abd2811bb5f4d2873257025fd78b708366b01f52fe3e3ae:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiN2ViNzAyNTc1OTNkYTA2ZjY4MmEzZGRkYTU0YTlkMjYwZDRmYzUxNGY2NDUyMzdmNWNhNzRiMDhmOGRhNjFhNiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOWY4NzNlOGVkMDU3ZGJmYzlkYmRlMDc1YjVlNDcyZTk1YTcyMzNmYmM4MGJjNjg0Mjc5MmEyZDIxYmJmY2ZmYSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjI0ZjZhMGFhMTYxZjkxYTdiN2VkNTM4MmE3ZWFkYjZlOWFiM2NiYThjZDNjYTAwZjczNzE2YWM1YWNlYWE2NCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiOWNjOWYyY2VlNTFjZDVlOGI2MGQxMjI2YzlmMGNkYWQ4MDNhNWIwZmM0M2FmMmI1MWZkNGUzM2ZiYzhhMGE4OCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_0efba3b452bb4236aa6d170bac0a0ecf",
+      "statement": "An unset MCP API key becomes a random value at startup, and the lifespan logs only that MCP is enabled.",
+      "evidence": [
+        {
+          "resource": "repo://backend/api.py#L329-L331",
+          "version": "repo-lines-v1:sha256:b70769a3cc6f3ca44f8f7108fef13e37b00dc01d02b78bd267c487c0622fdce4:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMzYzZDRkYjZmYmMzZWI4MDkzYTZiOTNkYjY3MGVjZTE4MDhiNDQyNGJlNzk2Y2NiMjVmODg1MGRmZGJhY2IwOCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYTc3MmRmOTk4ZjI4MmU4NWRhMzNjMjhlNGJkNjQwODVhMzc5MDFlZDMwYzM1YjM5ZjAwNTQzYjBlOTQxODAwNCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiY2Q1ZjRlNTlmNGViY2MwNTJlMTBlNDYxZDE0ZDI1YTRhZWUzYWVlMDYwZWZiZTg2NTJhNTFmNzQ2OTVjYTI4MyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZWQ5MmQ5NWZmNmM0MWU1ZTY5NWVhYTk3ZmI5ZjJiNzdjYjhmYTc0MGI5OThmNjg2YjU5YjM3MjAzOGE0ODNjNiJ9"
+        },
+        {
+          "resource": "repo://backend/config.py#L611-L612",
+          "version": "repo-lines-v1:sha256:0e788733e0dc88a580ec94aecd402622de26b809c9dae076a3f572e568980b97:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiYjdlZTg0ZTE4NGFkOTE3ZWY2ZDRlYTkwNjMyYzlhMDJmMTRhNTg4YzEwNTVmMTY0NWU1MGI5ZjM1MzU5MmJkNyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYzFlMDIxMzE4Y2ExN2YxNDU3MWY3Y2I2NWZiNWU2ZjViYmY5NWNjMTAzYWIwZjI1NjRhZDJmNGFjMjljMzA0MSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZjg4MmY3OGZiMDBjN2UwN2M5NmZjZjMzNjQ1YWE4NWVlOGYyODcxYjc4YWU2OGQ5NmZlZDVmZjgyYmE3OWM1NyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMGY3ZDFmZmJlOWM0YTNkMWVjYTdjNGRjZWU3MDE2OGQ1ZmQzZTc2YjgxYjA5ZDNiYTYyODVjMmI5NWIyNTRlOSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_7a702cea9f5b451bbed8e881bc9ab2ed",
+      "statement": "get_stack_env returns redacted values with lengths.",
+      "evidence": [
+        {
+          "resource": "repo://backend/mcp_server.py#L1491-L1521",
+          "version": "repo-lines-v1:sha256:e50fcbe06f449c24d0cffb91e6ec014aaa4a29f8a776e8106065f5a529d9ce8c:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAwNTJiNWE1Y2ZmZDEzYjhkYzZjZGY1OGJkNzZiY2RjNDZhMDk2YTA1OTU0N2ZhMTJiYzY2ZGI2ZDA4ZTkxY2QiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI1YjI5MDIwM2E4NzJmYmZhM2MzMzcwMDg0NDBmMTlhZGFjNGMxYTIyN2Q3MjkxMjg1NTAwMzUyYzI2NzkxMzQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc2NGFjYWFhODYxYTM3ZWMwM2U0MWM4MTY5NmZjMDM0YmEyNjA3NmE2MjE0ODE0NjYyYmEyODBiOGJlZmJjNTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjFkZDMyM2UyMjlkMTkzZDQzNzBiZjlhYjkxZDRjYzdhMTVhOTJiZTcxY2VlODg3YTM2YmIyNjk4NTY2NGUyMGUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f0adea5e9de94c329ee8cd96fde4738e",
+      "statement": "The LLM agent runs a bounded tool loop with a one-hour cooldown per dedup key.",
+      "evidence": [
+        {
+          "resource": "repo://backend/llm_agent.py#L1137-L1140",
+          "version": "repo-lines-v1:sha256:e139984971537c58672f82eca24af4431f07e36c8b12a5b74c6cc40415f90aff:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZDM3OTFhZWRkYjE4ZTgwNjAwOTM2NjY0NzhkNjY1M2JiNjcwZDM3ZmQwNGVlNmFlMjFjYzk5MTc3ZTNmZDk0NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZmE5NmIzN2U3ZDQ1MTJmOTkyNzJhZDg2MzQzNjNkMGI0MDBhMWM4YzQxYTgzYjJhZGUwODFiZDc3ZGE3MmY4MCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmJlOGVkNTY0NWJmODI4ZDVmNjY1YzY2MThiOTQ3ZmQ5OTQ1YmFkY2YzOGQwM2Y5Yzg1Yzk3OWE5NTFhZTRkNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNjkzYWI0NjRlNmI1MDMyZmZmYTcwOTk4NDg3MmQyYTI3MjA3ZTc4NzMyMGE2NjhmZTRkNThiZTFjNGE5ZGM5MSJ9"
+        },
+        {
+          "resource": "repo://backend/llm_agent.py#L56-L57",
+          "version": "repo-lines-v1:sha256:fe1573cb7f4048d0e6207045cf2798502ccc3eeb4f61ae0e8233792994d5e7ba:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNDFkYjg4Nzk0ZmE5M2NmNTIzZTZkODcyMDNmZWRmNjY2MDIyZTIxOTRiZTQyNWRiN2YyNWFhNThlMGQwNjM5MSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMmI1ZjRmMzIyNjlmNmRmN2M1NDFjNjc0YzNiNWJkZDRmNmI5MTIxN2QwNzA2NjI4MmQ4MTNmMTFmZjc4YzkyMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNGRjNGQ0OWJiMTMyYzc0N2NjYTVjMjAyZTk3NDFjMzkwY2IwMDI4YjA2MDVlYTgyNWJiMjY0MWIyNjljYjg4OCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZjA5ZDVjMTIzYzNmMTc1YTA3OTdmMmYzZjQzMTA2YTc0Y2Q0NmJjOWUxYTBkYzM5NmFkNWRjZjgwZjYxMWVhMSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_89494697fbf1440a9decdfefb392df26",
+      "statement": "Tools on the dangerous list are refused unless allow_dangerous_tools is set, even when listed in allowed_tools.",
+      "evidence": [
+        {
+          "resource": "repo://backend/config_file.py#L121-L153",
+          "version": "repo-lines-v1:sha256:fa3e034db00ac14a8eb1f62c0ff4a01e5f35f72eb2e6f10fb3c2dda86651bb52:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVkNTJmNjVjNmFkYWNjZWM1NzExZGE1Y2MwOGZjYTYyZmM2N2ZkN2QxZmM5MDg5OTE1N2ZjNWFkY2E2YzJlYzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ3ODFmY2E0MjA5YTEyZDMxM2MzM2FkMGI2ZGM3MDE1MTM1N2M1YWU3OTI2MmVlZmUxNzRmZWFiYThhMTBkZDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNkZjNlZDMyNDkwMzMxYWZiZDY1NzJkMmU1NWI3YmNlYzczYTVmNjRiYzIzYjFkNDI3NGNmMWViZWEwYzU5OWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjhkYzFhYWEzYmYxZjk3ZTdmNDE4MDE4NmYwNTE0YTc3NWJmOThkZDQzOGMxMmQxMzBjNGNkMzRkZGJjNTA4NGYifQ"
+        },
+        {
+          "resource": "repo://backend/config_file.py#L39-L40",
+          "version": "repo-lines-v1:sha256:8818b8a756c7f0c01d8c30ec95dd87f22650a56b629e8ee45188237f686ec610:eyJzZWxlY3RlZExpbmVDb3VudCI6MiwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZjRhYzdkOGFjM2Y5YTNkYzZjNjFmZGZjYTIzOTU1YjVlYmNjMGMzMzg4OTVjNTk0NDIxY2FmMDUzNWEyNGI0NyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiNGUwNzQ0Yzk0YjNkNzIwMDVkYjEzN2JiNWE3ZjljNzgxZDkxMTMzOTFkZjBkOWE4NDM4OWZhZDE1ZDE5NTAxMSIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjg3N2NhYzExYjg2ZjhhMjE2ZWQ4MWY5OGIxZGJlMTRiZjM1ZTkzZDZjYzMzODUxYWEwZjdjNzI0NzY2NzM2YiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYjE5MDExNmVkMzZiNmQ0YWFhZDAyMjY3YjJjYmM0MjIyM2YyYjZhZjZlNGIxNmUwYjQ4NmZlNGViYmRmODJmNCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_9c3234de4b9d4a05afc2fcfe22816bfc",
+      "statement": "Untrusted content is fenced and marker lookalikes are stripped so content cannot escape or impersonate policy.",
+      "evidence": [
+        {
+          "resource": "repo://backend/llm_agent.py#L92-L125",
+          "version": "repo-lines-v1:sha256:e37928927103ba2595500a661a5795932bc42d72d653daf2bb818d9c5969c089:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdlYjcwMjU3NTkzZGEwNmY2ODJhM2RkZGE1NGE5ZDI2MGQ0ZmM1MTRmNjQ1MjM3ZjVjYTc0YjA4ZjhkYTYxYTYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjZhZWVkNTAyODM2NWViM2RkYjA0MGUzMDFiNzhmNjFiNGM5MWExNDBlYzY3OTVlNTk3OTRkMDdiNGU4YTE2MGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE3Y2NkNTU5OGFlMGEzN2Y4M2JlZWQ4MDA2YmU5MTY1OWRmYjg4ODI2NjIzNDFkODZlZjYyYjMwMTQ1NGU4NWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bc01554388c944ba9a2929520faff07c",
+      "statement": "AI search turns questions into filters with a fallback parser.",
+      "evidence": [
+        {
+          "resource": "repo://backend/ai_service.py#L204-L267",
+          "version": "repo-lines-v1:sha256:455c76efcffbcfcd948d20281ad45f9949eccc15ccb207a4237dde5e6acbcb8b:eyJzZWxlY3RlZExpbmVDb3VudCI6NjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQzY2JjZjUyYzU0ODc5YTljMTNlODdlMWVmYjlkZjkzODQxODBlMzY3Y2JiMTYxMTVmZDI5Njk1OGUyNjI2M2QiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE4NDc2OTM1YmYxZDU2Mjg0MjhhZjVhY2VlOGU2MDI0MDZmMTQwNThlYjdmNzAwNzA1NDVmOTBmMjcyZTE1YmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImRkNGYwNjQwZTE5MDQ3MWM0MzQ0ZDhhYjMxODk1NjFlNzRkYmU0NTkyMjdjMDY4ZGU4YzI3YTI4Nzg1MTg1YWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM5NmVmN2NlMmUzNzRjNTEwZGRiNzQ3NjE2ZTg0YjdhMjQ3ZGQxZTBiNDEyYmYzOTZlNmMzY2FlYmI1MmZjOTAifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.9.0",
+    "at": "2026-11-06T10:52:04.857Z"
+  }
+}
