@@ -1188,7 +1188,32 @@ class TestStackSecrets:
         deployer, rec = _deployer()
         ok, message = await deployer.remove_stack_secret("my-app", "qa-my-app_DB_PASSWORD", env="qa")
         assert ok and "qa-my-app_DB_PASSWORD" in message
-        assert rec.commands == ["docker secret rm qa-my-app_DB_PASSWORD"]
+        assert rec.commands[0].startswith("docker service ls -q | xargs -r docker service inspect")
+        assert rec.commands[1:] == ["docker secret rm qa-my-app_DB_PASSWORD"]
+
+    async def test_detaches_the_secret_from_its_services_before_removing_it(self):
+        deployer, rec = _deployer([("docker service inspect", (True,
+            "my-app_web my-app_DB_PASSWORD my-app_API_TOKEN\n"
+            "my-app_worker my-app_DB_PASSWORD\n"
+            "my-app_cron my-app_API_TOKEN\n"
+            "other_web\n"))])
+        ok, message = await deployer.remove_stack_secret("my-app", "my-app_DB_PASSWORD")
+        assert ok
+        assert rec.commands[1:] == [
+            "docker service update --detach --secret-rm my-app_DB_PASSWORD my-app_web",
+            "docker service update --detach --secret-rm my-app_DB_PASSWORD my-app_worker",
+            "docker secret rm my-app_DB_PASSWORD",
+        ]
+        assert "detached from my-app_web, my-app_worker" in message
+
+    async def test_failed_detach_stops_before_removing(self):
+        deployer, rec = _deployer([
+            ("docker service inspect", (True, "my-app_web my-app_DB_PASSWORD\n")),
+            ("docker service update", (False, "service not found")),
+        ])
+        ok, message = await deployer.remove_stack_secret("my-app", "my-app_DB_PASSWORD")
+        assert not ok and "my-app_web" in message and "service not found" in message
+        assert not any(c.startswith("docker secret rm") for c in rec.commands)
 
     @pytest.mark.parametrize("env,name", [
         ("prod", "other_DB_PASSWORD"),        # another stack

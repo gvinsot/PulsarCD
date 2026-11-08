@@ -364,7 +364,7 @@ function _stackEnvSecretRow(secret) {
     const remove = document.createElement('button');
     remove.className = 'btn btn-danger btn-sm';
     remove.textContent = 'Delete on cluster';
-    remove.title = 'docker secret rm: the next deploy recreates it from this file';
+    remove.title = 'Detach from its services, then docker secret rm: the next deploy recreates it from this file';
     remove.setAttribute('data-click', 'deleteStackEnvSecret');
     remove.setAttribute('data-args', JSON.stringify([secret.name]));
     row.append(key, name, remove);
@@ -404,8 +404,8 @@ async function deleteStackEnvSecret(name) {
     const file = state.files[env];
     if (!file?.secrets?.list) return;
     if (!confirm(`Delete the Docker secret "${name}" from the cluster?\n\n`
-        + 'The next deploy recreates it from the current file value. Docker refuses '
-        + 'while a running service still uses it.')) return;
+        + 'It is first detached from the services that use it: they restart without '
+        + 'it until the next deploy, which recreates it from the current file value.')) return;
     try {
         const result = await apiDelete(
             `/stacks/${encodeURIComponent(state.repo)}/env/secrets/${encodeURIComponent(name)}?env=${env}`);

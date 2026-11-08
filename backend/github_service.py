@@ -1839,8 +1839,11 @@ class StackDeployer:
         """Remove one Docker secret belonging to the stack (``docker secret rm``).
 
         Refuses any name outside the stack's own prefix, so the editor of one
-        stack cannot delete another stack's secrets. Docker itself refuses to
-        remove a secret still used by a service; that message is returned.
+        stack cannot delete another stack's secrets. Docker refuses to remove
+        a secret still referenced by a service ("rpc error ... in use"), so
+        the secret is first detached from every service that mounts it
+        (``docker service update --secret-rm``, which rolls those services
+        without it); the next deploy recreates and re-attaches it.
         """
         try:
             repo_name = _validate_repo_name(repo_name)
@@ -1852,11 +1855,43 @@ class StackDeployer:
         if (not isinstance(name, str) or not self._SECRET_NAME_RE.match(name)
                 or not name.startswith(prefix) or len(name) <= len(prefix)):
             return False, f"Secret name must start with '{prefix}'"
+        success, users = await self._services_using_secret(name)
+        if not success:
+            return False, users
+        detached = []
+        for service in users:
+            ok, output = await self._run_command(
+                f"docker service update --detach --secret-rm {shlex.quote(name)} {shlex.quote(service)}")
+            if not ok:
+                return False, (f"Could not detach {name} from service {service}: "
+                               + (output or "docker service update failed").strip())[:500]
+            detached.append(service)
         success, output = await self._run_command(f"docker secret rm {shlex.quote(name)}")
         if not success:
             return False, (output or "docker secret rm failed").strip()[:500]
-        logger.info("Removed stack secret", repo=repo_name, env=env, secret=name)
-        return True, f"Secret {name} removed from the cluster"
+        logger.info("Removed stack secret", repo=repo_name, env=env, secret=name,
+                    detached_from=detached)
+        message = f"Secret {name} removed from the cluster"
+        if detached:
+            message += (f" (detached from {', '.join(detached)};"
+                        " redeploy to recreate and re-attach it)")
+        return True, message
+
+    _SERVICE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+
+    async def _services_using_secret(self, name: str) -> tuple[bool, list[str] | str]:
+        """Names of the Swarm services whose spec mounts the secret ``name``."""
+        success, output = await self._run_command(
+            "docker service ls -q | xargs -r docker service inspect --format "
+            "'{{.Spec.Name}}{{range .Spec.TaskTemplate.ContainerSpec.Secrets}} {{.SecretName}}{{end}}'")
+        if not success:
+            return False, (output or "docker service inspect failed").strip()[:500]
+        users = []
+        for line in output.splitlines():
+            parts = line.split()
+            if len(parts) > 1 and name in parts[1:] and self._SERVICE_NAME_RE.match(parts[0]):
+                users.append(parts[0])
+        return True, users
 
     async def save_env_file(self, repo_name: str, content: str, actor: str = "operator",
                             env: str = "prod") -> tuple[bool, str]:
