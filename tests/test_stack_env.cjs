@@ -33,7 +33,8 @@ function editor(apiGetOrError, apiPut = async () => ({ success: true })) {
     const context = vm.createContext({
         document: { getElementById: get, querySelectorAll: () => [], createElement: fakeElement },
         isAdmin: () => true, apiGetOrError,
-        apiPut, showNotification(type, message) { notifications.push({ type, message }); },
+        apiPut, apiDelete: async () => ({ success: true }), confirm: () => true,
+        showNotification(type, message) { notifications.push({ type, message }); },
     });
     vm.runInContext(source, context);
     return { context, get, notifications, status: () => get('stack-env-storage').textContent };
@@ -63,7 +64,9 @@ test('the build secrets tab is offered without QA and edits .env.build', async (
     await e.context.editStackEnv('repo', false);
     assert.equal(e.get('stack-env-tab-qa').style.display, 'none');
     await e.context.switchStackEnvTab('build');
-    assert.deepEqual(urls, ['/stacks/repo/env?env=prod', '/stacks/repo/env?env=build']);
+    // The build file deploys no cluster secret: only .env asks for them.
+    assert.deepEqual(urls, ['/stacks/repo/env?env=prod', '/stacks/repo/env/secrets?env=prod',
+        '/stacks/repo/env?env=build']);
     assert.match(e.get('stack-env-title').textContent, /Edit \.env\.build: repo/);
     assert.match(e.get('stack-env-help').textContent, /never deployed/);
 });
@@ -254,4 +257,86 @@ test('partial replication failure preserves the editor and allows the same conte
     ]);
     assert.equal(e.notifications.at(-1).type, 'success');
     assert.equal(e.get('stack-env-modal').classList.contains('active'), false);
+});
+
+function withSecrets(secrets, content = 'DB_PASSWORD=x\nAPI_TOKEN=y\n# OLD_KEY=z\n') {
+    const calls = [];
+    const e = editor(async url => {
+        calls.push(url);
+        if (url.includes('/env/secrets')) {
+            return typeof secrets === 'string' ? { error: secrets } : { data: { secrets } };
+        }
+        return { data: { content, storage: { node: 'server-b', exists: true } } };
+    });
+    return { ...e, calls, panel: () => e.get('stack-env-secrets') };
+}
+
+test('each variable with a secret on the cluster offers to delete it', async () => {
+    const e = withSecrets([
+        { name: 'repo_API_TOKEN', key: 'API_TOKEN' },
+        { name: 'repo_DB_PASSWORD', key: 'DB_PASSWORD' },
+        { name: 'repo_OLD_KEY', key: 'OLD_KEY' },   // commented out: not offered
+    ]);
+    await e.context.editStackEnv('repo');
+    assert.ok(e.calls.includes('/stacks/repo/env/secrets?env=prod'));
+    assert.equal(e.panel().style.display, '');
+    const rows = e.panel().children;
+    assert.deepEqual(rows.map(r => r.children[0].textContent), ['API_TOKEN', 'DB_PASSWORD']);
+    assert.equal(rows[1].children[2].attributes['data-click'], 'deleteStackEnvSecret');
+    assert.equal(rows[1].children[2].attributes['data-args'], '["repo_DB_PASSWORD"]');
+});
+
+test('no panel when no variable of the file has a cluster secret, nor on the build tab', async () => {
+    const e = withSecrets([{ name: 'repo_OTHER_KEY', key: 'OTHER_KEY' }]);
+    await e.context.editStackEnv('repo');
+    assert.equal(e.panel().style.display, 'none');
+    await e.context.switchStackEnvTab('build');
+    assert.equal(e.panel().style.display, 'none');
+    assert.ok(!e.calls.includes('/stacks/repo/env/secrets?env=build'));
+});
+
+test('qa tab lists the qa- secrets and the panel follows the tab', async () => {
+    const e = withSecrets([{ name: 'qa-repo_DB_PASSWORD', key: 'DB_PASSWORD' }]);
+    await e.context.editStackEnv('repo', true);
+    await e.context.switchStackEnvTab('qa');
+    assert.ok(e.calls.includes('/stacks/repo/env/secrets?env=qa'));
+    assert.equal(e.panel().children[0].children[1].textContent,
+        'exists on the cluster as qa-repo_DB_PASSWORD');
+});
+
+test('deleting a secret calls the API and removes its row', async () => {
+    const e = withSecrets([{ name: 'repo_DB_PASSWORD', key: 'DB_PASSWORD' }]);
+    const deletes = [];
+    e.context.apiDelete = async url => { deletes.push(url); return { success: true, message: 'removed' }; };
+    await e.context.editStackEnv('repo');
+    await e.context.deleteStackEnvSecret('repo_DB_PASSWORD');
+    assert.deepEqual(deletes, ['/stacks/repo/env/secrets/repo_DB_PASSWORD?env=prod']);
+    assert.equal(e.panel().style.display, 'none');
+    assert.deepEqual(e.notifications.at(-1), { type: 'success', message: 'removed' });
+});
+
+test('a refused deletion keeps the row and reports Docker message', async () => {
+    const e = withSecrets([{ name: 'repo_DB_PASSWORD', key: 'DB_PASSWORD' }]);
+    e.context.apiDelete = async () => { throw new Error('secret is in use by service repo_web'); };
+    await e.context.editStackEnv('repo');
+    await e.context.deleteStackEnvSecret('repo_DB_PASSWORD');
+    assert.equal(e.panel().children.length, 1);
+    assert.deepEqual(e.notifications.at(-1), { type: 'error', message: 'secret is in use by service repo_web' });
+});
+
+test('cancelled confirmation deletes nothing', async () => {
+    const e = withSecrets([{ name: 'repo_DB_PASSWORD', key: 'DB_PASSWORD' }]);
+    let called = false;
+    e.context.apiDelete = async () => { called = true; };
+    e.context.confirm = () => false;
+    await e.context.editStackEnv('repo');
+    await e.context.deleteStackEnvSecret('repo_DB_PASSWORD');
+    assert.equal(called, false);
+});
+
+test('cluster listing failure is shown without blocking the editor', async () => {
+    const e = withSecrets('not a swarm manager');
+    await e.context.editStackEnv('repo');
+    assert.equal(e.panel().children[0].textContent, 'Cluster secrets unavailable: not a swarm manager');
+    assert.equal(e.get('stack-env-save').disabled, false);
 });

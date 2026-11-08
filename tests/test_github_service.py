@@ -1149,3 +1149,60 @@ class TestDeployedTags:
         deployer = self._deployer("", success=False)
         prod, qa = await deployer.get_all_deployed_stack_tags_with_qa(["app"])
         assert prod == {"app": None} and qa == {"app": None}
+
+
+# ---------------------------------------------------------------------------
+# StackDeployer: cluster secrets of the env files
+# ---------------------------------------------------------------------------
+
+class TestStackSecrets:
+    async def test_lists_only_the_stack_own_secrets(self):
+        deployer, rec = _deployer([("docker secret ls", (True,
+            "my-app_DB_PASSWORD\nmy-app_API_TOKEN\nqa-my-app_DB_PASSWORD\nmy-app-other_X_KEY\nmy-app_\n"))])
+        ok, result = await deployer.list_stack_secrets("My_App", env="prod")
+        assert ok
+        assert result["prefix"] == "my-app_"
+        assert result["secrets"] == [
+            {"name": "my-app_API_TOKEN", "key": "API_TOKEN"},
+            {"name": "my-app_DB_PASSWORD", "key": "DB_PASSWORD"},
+        ]
+        assert rec.commands == ["docker secret ls --format '{{.Name}}' --filter name=my-app_"]
+
+    async def test_qa_secrets_use_the_qa_prefix(self):
+        deployer, _ = _deployer([("docker secret ls", (True,
+            "my-app_DB_PASSWORD\nqa-my-app_DB_PASSWORD\n"))])
+        ok, result = await deployer.list_stack_secrets("my-app", env="qa")
+        assert ok and result["secrets"] == [{"name": "qa-my-app_DB_PASSWORD", "key": "DB_PASSWORD"}]
+
+    async def test_build_file_has_no_cluster_secrets(self):
+        deployer, rec = _deployer()
+        ok, result = await deployer.list_stack_secrets("my-app", env="build")
+        assert ok and result["secrets"] == [] and rec.commands == []
+
+    async def test_listing_failure_is_reported(self):
+        deployer, _ = _deployer([("docker secret ls", (False, "not a swarm manager"))])
+        ok, result = await deployer.list_stack_secrets("my-app")
+        assert not ok and "swarm manager" in result
+
+    async def test_removes_a_stack_secret(self):
+        deployer, rec = _deployer()
+        ok, message = await deployer.remove_stack_secret("my-app", "qa-my-app_DB_PASSWORD", env="qa")
+        assert ok and "qa-my-app_DB_PASSWORD" in message
+        assert rec.commands == ["docker secret rm qa-my-app_DB_PASSWORD"]
+
+    @pytest.mark.parametrize("env,name", [
+        ("prod", "other_DB_PASSWORD"),        # another stack
+        ("prod", "qa-my-app_DB_PASSWORD"),    # the QA secret from the prod tab
+        ("prod", "my-app_"),                  # the bare prefix
+        ("prod", "my-app_X;rm -rf /"),        # shell metacharacters
+        ("build", "my-app_DB_PASSWORD"),      # build file deploys no secret
+    ])
+    async def test_refuses_secrets_outside_the_stack(self, env, name):
+        deployer, rec = _deployer()
+        ok, _ = await deployer.remove_stack_secret("my-app", name, env=env)
+        assert not ok and rec.commands == []
+
+    async def test_docker_refusal_is_returned(self):
+        deployer, _ = _deployer([("docker secret rm", (False, "secret is in use by service my-app_web"))])
+        ok, message = await deployer.remove_stack_secret("my-app", "my-app_DB_PASSWORD")
+        assert not ok and "in use" in message

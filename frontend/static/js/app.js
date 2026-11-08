@@ -70,6 +70,7 @@ const UI_HANDLERS = Object.freeze({
     closeRecurringErrorModal, closeSecurityIpModal, closeServiceDeployModal,
     closeServiceLogsModal, closeServiceStatusModal, closeSettingsModal, closeStackEnvModal,
     closeStackOutputModal, closeTestModal, containerAction, createUser, deleteRecentQuery,
+    deleteStackEnvSecret,
     deleteUser, editStackEnv, executeGeneratedQuery, exportLogs, filterContainerEnv,
     filterContainerLogs, filterContainers, filterServiceLogs, hostAction, loadAgentHistory,
     loadContainerMetrics, loadSecurity, loadStackEnvVersion, loadUsage, logout, nextPage,

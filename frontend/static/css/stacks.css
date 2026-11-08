@@ -678,6 +678,40 @@
     overflow-wrap: anywhere;
 }
 
+.env-secrets {
+    margin: 0 0 12px 0;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--bg-primary);
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+.env-secret-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 12px;
+    border-top: 1px solid var(--border-color);
+    font-size: 0.8rem;
+}
+
+.env-secret-row:first-of-type {
+    border-top: none;
+}
+
+.env-secret-key {
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+}
+
+.env-secret-name {
+    flex: 1;
+    min-width: 0;
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+}
+
 .modal-lg {
     max-width: 800px;
 }

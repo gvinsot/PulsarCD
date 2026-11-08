@@ -1,5 +1,5 @@
 /**
- * PulsarCD frontend: API helpers (GET/POST/PUT with auth) and notification toasts.
+ * PulsarCD frontend: API helpers (GET/POST/PUT/DELETE with auth) and notification toasts.
  * Classic script sharing the page's globals; index.html sets the load order.
  */
 
@@ -96,6 +96,24 @@ async function apiPut(endpoint, data) {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
             body: JSON.stringify(data)
+        });
+        if (response.status === 401) { showLogin(); return null; }
+        if (response.status === 403) { await _reportForbidden(response, endpoint); return null; }
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `HTTP ${response.status}`);
+        }
+        return await response.json();
+    } catch (error) {
+        console.error(`API Error (${endpoint}):`, error);
+        throw error;
+    }
+}
+
+async function apiDelete(endpoint) {
+    try {
+        const response = await fetch(`${API_BASE}${endpoint}`, {
+            method: 'DELETE', headers: { ...authHeaders() },
         });
         if (response.status === 401) { showLogin(); return null; }
         if (response.status === 403) { await _reportForbidden(response, endpoint); return null; }

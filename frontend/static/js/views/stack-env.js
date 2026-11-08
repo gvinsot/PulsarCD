@@ -123,6 +123,7 @@ async function switchStackEnvTab(env) {
         `Edit ${STACK_ENV_FILES[env].name}: ${state.repo}`;
     document.getElementById('stack-env-help').textContent = STACK_ENV_FILES[env].help;
     renderStackEnvStorage(state.files[env]);
+    renderStackEnvSecrets();
 
     if (!state.files[env]) {
         textarea.value = 'Loading...';
@@ -156,6 +157,7 @@ async function switchStackEnvTab(env) {
     textarea.disabled = false;
     saveBtn.disabled = false;
     textarea.focus();
+    await loadStackEnvSecrets(state, env);
 }
 
 async function saveStackEnv() {
@@ -180,7 +182,10 @@ async function saveStackEnv() {
             const savedMessage = result.message || `${STACK_ENV_FILES[env].name} saved successfully.`;
             file.content = file.saved = content;
             if (file.storage) file.storage.exists = true;
-            if (stackEnvState === state && state.active === env) renderStackEnvStorage(file);
+            if (stackEnvState === state && state.active === env) {
+                renderStackEnvStorage(file);
+                renderStackEnvSecrets();
+            }
             // Stay open while the other tab still holds unsaved edits.
             const unsaved = Object.entries(state.files).find(
                 ([name, f]) => name !== env && !f.error && f.content !== f.saved);
@@ -213,6 +218,7 @@ async function saveStackEnv() {
 function closeStackEnvModal() {
     stackEnvState = null;
     document.getElementById('stack-env-history').style.display = 'none';
+    document.getElementById('stack-env-secrets').style.display = 'none';
     document.getElementById('stack-env-modal').classList.remove('active');
 }
 
@@ -311,4 +317,103 @@ async function loadStackEnvVersion(revision) {
     textarea.value = state.files[env].content = data.content;
     textarea.focus();
     showNotification('success', `Version loaded in the editor. Save to restore it as ${STACK_ENV_FILES[env].name}.`);
+}
+
+// ── Cluster secrets ────────────────────────────────────────────────────────
+// Deploying turns the sensitive variables of .env / .env.qa into Docker
+// secrets ("<stack>_<VAR>", "qa-<stack>_<VAR>") and then reuses them as they
+// are: a changed value only takes effect once the old secret is removed. For
+// each variable of the file that already has a secret on the cluster, the
+// editor offers to delete that secret; the next deploy recreates it from the
+// file. The build file never becomes cluster secrets.
+
+const STACK_ENV_KEY_RE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/;
+
+function _stackEnvKeys(content) {
+    const keys = new Set();
+    for (const line of (content || '').split('\n')) {
+        const match = STACK_ENV_KEY_RE.exec(line);
+        if (match) keys.add(match[1]);
+    }
+    return keys;
+}
+
+async function loadStackEnvSecrets(state, env) {
+    const file = state.files[env];
+    if (env === 'build' || !file || file.error || file.secrets) {
+        renderStackEnvSecrets();
+        return;
+    }
+    file.secrets = { loading: true };
+    const { data, error } = await apiGetOrError(
+        `/stacks/${encodeURIComponent(state.repo)}/env/secrets?env=${env}`);
+    if (stackEnvState !== state) return;
+    file.secrets = error ? { error } : { list: data.secrets || [] };
+    if (state.active === env) renderStackEnvSecrets();
+}
+
+function _stackEnvSecretRow(secret) {
+    const row = document.createElement('div');
+    row.className = 'env-secret-row';
+    const key = document.createElement('span');
+    key.className = 'env-secret-key';
+    key.textContent = secret.key;
+    const name = document.createElement('span');
+    name.className = 'env-secret-name';
+    name.textContent = `exists on the cluster as ${secret.name}`;
+    const remove = document.createElement('button');
+    remove.className = 'btn btn-danger btn-sm';
+    remove.textContent = 'Delete on cluster';
+    remove.title = 'docker secret rm: the next deploy recreates it from this file';
+    remove.setAttribute('data-click', 'deleteStackEnvSecret');
+    remove.setAttribute('data-args', JSON.stringify([secret.name]));
+    row.append(key, name, remove);
+    return row;
+}
+
+function renderStackEnvSecrets() {
+    const panel = document.getElementById('stack-env-secrets');
+    const state = stackEnvState;
+    const file = state?.files[state.active];
+    const secrets = file?.secrets;
+    if (!secrets || secrets.loading || file.error || state.active === 'build') {
+        panel.style.display = 'none';
+        panel.replaceChildren();
+        return;
+    }
+    if (secrets.error) {
+        panel.style.display = '';
+        panel.replaceChildren(_stackEnvNote(`Cluster secrets unavailable: ${secrets.error}`));
+        return;
+    }
+    const keys = _stackEnvKeys(file.saved);
+    const matching = secrets.list.filter(secret => keys.has(secret.key));
+    if (!matching.length) {
+        panel.style.display = 'none';
+        panel.replaceChildren();
+        return;
+    }
+    panel.style.display = '';
+    panel.replaceChildren(...matching.map(_stackEnvSecretRow));
+}
+
+async function deleteStackEnvSecret(name) {
+    const state = stackEnvState;
+    if (!state) return;
+    const env = state.active;
+    const file = state.files[env];
+    if (!file?.secrets?.list) return;
+    if (!confirm(`Delete the Docker secret "${name}" from the cluster?\n\n`
+        + 'The next deploy recreates it from the current file value. Docker refuses '
+        + 'while a running service still uses it.')) return;
+    try {
+        const result = await apiDelete(
+            `/stacks/${encodeURIComponent(state.repo)}/env/secrets/${encodeURIComponent(name)}?env=${env}`);
+        if (!result) return; // 403 already reported.
+        file.secrets.list = file.secrets.list.filter(secret => secret.name !== name);
+        if (stackEnvState === state && state.active === env) renderStackEnvSecrets();
+        showNotification('success', result.message || `Secret ${name} removed from the cluster`);
+    } catch (e) {
+        showNotification('error', e.message || `Failed to delete secret ${name}`);
+    }
 }

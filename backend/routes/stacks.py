@@ -360,6 +360,39 @@ async def save_stack_env(repo_name: str, request: Request, env: str = _ENV_QUERY
     return {"success": True, "message": message, "repo": repo_name, "env": env}
 
 
+# Docker secrets created on the cluster from devops/.env (prod) or .env.qa.
+_SECRET_ENV_QUERY = Query("prod", pattern="^(prod|qa)$")
+
+
+@router.get("/api/stacks/{repo_name}/env/secrets")
+async def get_stack_env_secrets(repo_name: str, env: str = _SECRET_ENV_QUERY):
+    """List the stack's Docker secrets on the cluster (names only)."""
+    if not api.github_service.is_configured():
+        raise HTTPException(status_code=400, detail="GitHub integration not configured")
+
+    deployer = StackDeployer(api.settings.github, None)
+    success, result = await deployer.list_stack_secrets(repo_name, env=env)
+    if not success or not isinstance(result, dict):
+        raise HTTPException(status_code=500, detail=result)
+    return {**result, "repo": repo_name, "env": env}
+
+
+@router.delete("/api/stacks/{repo_name}/env/secrets/{secret_name}")
+async def delete_stack_env_secret(repo_name: str, secret_name: str, request: Request,
+                                  env: str = _SECRET_ENV_QUERY):
+    """Remove one of the stack's Docker secrets so the next deploy recreates it."""
+    if not api.github_service.is_configured():
+        raise HTTPException(status_code=400, detail="GitHub integration not configured")
+
+    deployer = StackDeployer(api.settings.github, None)
+    success, message = await deployer.remove_stack_secret(repo_name, secret_name, env=env)
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+    logger.info("Stack secret removed via env editor", repo=repo_name, env=env,
+                secret=secret_name, actor=getattr(request.state, "user", "operator"))
+    return {"success": True, "message": message, "repo": repo_name, "env": env}
+
+
 _deployed_tags_cache = None
 _deployed_tags_cache_time = None
 _DEPLOYED_TAGS_CACHE_TTL = 10  # seconds

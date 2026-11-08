@@ -1176,6 +1176,8 @@
                             <p id="stack-env-help" class="env-help-text">Edit the environment variables for this stack. Each line should be in KEY=VALUE format.</p>
                             <!-- Backed-up versions of the file shown (encrypted backup). -->
                             <div id="stack-env-history" class="env-history start-hidden" aria-live="polite"></div>
+                            <!-- Cluster secrets created from this file's variables (.env / .env.qa). -->
+                            <div id="stack-env-secrets" class="env-secrets start-hidden" aria-live="polite"></div>
                             <textarea id="stack-env-content" class="env-editor" placeholder="# Environment variables&#10;KEY=value&#10;ANOTHER_KEY=another_value" spellcheck="false"></textarea>
                         </div>
                         <div class="modal-footer">

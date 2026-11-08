@@ -71,6 +71,7 @@ MUTATING_ROUTES = [
     ("put", "/api/stacks/victim/env?env=qa"),
     ("put", "/api/stacks/pipeline/victim/transition/build"),
     ("delete", "/api/stacks/victim/env"),
+    ("delete", "/api/stacks/victim/env/secrets/victim_DB_PASSWORD"),
     ("patch", "/api/stacks/victim/env"),
 ]
 
@@ -80,6 +81,8 @@ SENSITIVE_GET_ROUTES = [
     "/api/config/test",
     "/api/stacks/victim/env",
     "/api/stacks/victim/env?env=qa",
+    "/api/stacks/victim/env/secrets",
+    "/api/stacks/victim/env/secrets?env=qa",
     "/api/containers/somehost/deadbeef/env",
 ]
 

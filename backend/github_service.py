@@ -1798,6 +1798,66 @@ class StackDeployer:
         except (BackupError, UnicodeError):
             return False, "Unable to read the environment file"
 
+    # Docker secret names: deploy-service.sh / process_secrets.py create
+    # "<stack>_<VAR>" (prod) and "qa-<stack>_<VAR>" (QA). The build file never
+    # becomes a cluster secret (BuildKit secrets only).
+    _SECRET_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+    def _secret_prefix(self, repo_name: str, env: str) -> str:
+        stack = self._repo_to_stack_name(repo_name)
+        return f"qa-{stack}_" if env == "qa" else f"{stack}_"
+
+    async def list_stack_secrets(self, repo_name: str, env: str = "prod") -> tuple[bool, dict | str]:
+        """List the Docker secrets of the stack deployed from this env file.
+
+        Returns ``{"prefix": ..., "secrets": [{"name": ..., "key": ...}]}``
+        where ``key`` is the env variable the secret was created from. Only
+        names are read: Docker never discloses a secret's value.
+        """
+        try:
+            repo_name = _validate_repo_name(repo_name)
+        except ValueError as e:
+            return False, str(e)
+        if env not in ("prod", "qa"):
+            return True, {"prefix": "", "secrets": []}
+        prefix = self._secret_prefix(repo_name, env)
+        success, output = await self._run_command(
+            "docker secret ls --format '{{.Name}}'"
+            f" --filter name={shlex.quote(prefix)}")
+        if not success:
+            return False, (output or "docker secret ls failed").strip()[:500]
+        secrets = []
+        for line in output.splitlines():
+            name = line.strip()
+            # The name filter is a substring match: keep exact prefixes only.
+            if name.startswith(prefix) and len(name) > len(prefix):
+                secrets.append({"name": name, "key": name[len(prefix):]})
+        secrets.sort(key=lambda s: s["name"])
+        return True, {"prefix": prefix, "secrets": secrets}
+
+    async def remove_stack_secret(self, repo_name: str, name: str, env: str = "prod") -> tuple[bool, str]:
+        """Remove one Docker secret belonging to the stack (``docker secret rm``).
+
+        Refuses any name outside the stack's own prefix, so the editor of one
+        stack cannot delete another stack's secrets. Docker itself refuses to
+        remove a secret still used by a service; that message is returned.
+        """
+        try:
+            repo_name = _validate_repo_name(repo_name)
+        except ValueError as e:
+            return False, str(e)
+        if env not in ("prod", "qa"):
+            return False, "Only the .env and .env.qa files deploy cluster secrets"
+        prefix = self._secret_prefix(repo_name, env)
+        if (not isinstance(name, str) or not self._SECRET_NAME_RE.match(name)
+                or not name.startswith(prefix) or len(name) <= len(prefix)):
+            return False, f"Secret name must start with '{prefix}'"
+        success, output = await self._run_command(f"docker secret rm {shlex.quote(name)}")
+        if not success:
+            return False, (output or "docker secret rm failed").strip()[:500]
+        logger.info("Removed stack secret", repo=repo_name, env=env, secret=name)
+        return True, f"Secret {name} removed from the cluster"
+
     async def save_env_file(self, repo_name: str, content: str, actor: str = "operator",
                             env: str = "prod") -> tuple[bool, str]:
         """Save the content of the .env file for a repository.

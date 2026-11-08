@@ -83,6 +83,7 @@ _ADMIN_ONLY_GET_RE = re.compile(
     r"^/api/(?:"
     r"config(?:/test)?"                # infrastructure and connectivity details
     r"|stacks/[^/]+/env"               # stack .env file content (secrets)
+    r"|stacks/[^/]+/env/secrets"       # names of the stack's cluster secrets
     r"|containers/[^/]+/[^/]+/env"     # container environment variables (secrets)
     r"|stacks/test-permissions/.*"     # probes the deployment's GitHub token
     r"|github/check-access"            # ditto, across every starred repository
