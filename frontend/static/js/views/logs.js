@@ -23,6 +23,44 @@ async function checkAIStatus() {
     }
 }
 
+// ============== Query panel collapse ==============
+
+// The query panel (AI search, recent queries, generated filters) can be folded
+// away to give the results table the full height. The choice survives reloads.
+const LOGS_QUERY_COLLAPSED_KEY = 'pulsarcd_logs_query_collapsed';
+
+function isLogsQueryCollapsed() {
+    try {
+        return localStorage.getItem(LOGS_QUERY_COLLAPSED_KEY) === '1';
+    } catch {
+        return false;  // storage unavailable (private mode)
+    }
+}
+
+function applyLogsQueryCollapsed(collapsed) {
+    const panel = document.getElementById('ai-search-panel');
+    if (panel) panel.classList.toggle('collapsed', collapsed);
+    const toggle = document.getElementById('logs-query-toggle');
+    if (toggle) {
+        toggle.classList.toggle('collapsed', collapsed);
+        toggle.setAttribute('aria-expanded', String(!collapsed));
+        toggle.title = collapsed
+            ? 'Show the query panel'
+            : 'Hide the query panel to give more room to the logs';
+        const label = toggle.querySelector('.logs-query-toggle-label');
+        if (label) label.textContent = collapsed ? 'Show query' : 'Hide query';
+    }
+}
+
+function toggleLogsQueryPanel() {
+    const collapsed = !isLogsQueryCollapsed();
+    try {
+        localStorage.setItem(LOGS_QUERY_COLLAPSED_KEY, collapsed ? '1' : '0');
+    } catch { /* private mode: the toggle still applies for this page */ }
+    applyLogsQueryCollapsed(collapsed);
+    if (!collapsed) document.getElementById('ai-query')?.focus();
+}
+
 // ============== Recent Queries ==============
 
 const RECENT_QUERIES_KEY = 'pulsarcd_recent_queries';

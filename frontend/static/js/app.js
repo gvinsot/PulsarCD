@@ -77,7 +77,7 @@ const UI_HANDLERS = Object.freeze({
     onPipelineBranchChange,
     openActionLogs, openAgentModal, openContainer, openHostInfo,
     openCreateTaskModal, openSecurityIp, openServiceDeploy, openServiceLogs, openServiceStatus,
-    openTransitionConfig, pipelineStepClick, prevPage, quickAction, reconnectTerminal,
+    openTransitionConfig, pipelineStepClick, toggleLogsQueryPanel, prevPage, quickAction, reconnectTerminal,
     refreshContainerEnv, refreshContainerLogs, refreshContainers, refreshDashboard,
     refreshLogsSearch, refreshServiceLogs, refreshServiceStatus, refreshStacks,
     removeDeployedStack, removeMCPServer, removeSecurityRequestFilter, removeService,

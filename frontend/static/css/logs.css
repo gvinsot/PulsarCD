@@ -8,6 +8,19 @@
     flex-shrink: 0;
 }
 
+/* Query panel folded away to give the results the full height */
+.search-panel.collapsed {
+    display: none;
+}
+
+#logs-query-toggle svg {
+    transition: transform 0.2s ease;
+}
+
+#logs-query-toggle.collapsed svg {
+    transform: rotate(180deg);
+}
+
 .search-row {
     display: flex;
     gap: 12px;

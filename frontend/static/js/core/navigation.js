@@ -86,6 +86,7 @@ function switchView(view, skipHash) {
             if (totalLogs === 0) {
                 loadDefaultLogs();
             }
+            applyLogsQueryCollapsed(isLogsQueryCollapsed());
             checkAIStatus();
             renderRecentQueries();
             break;
