@@ -94,6 +94,23 @@ async def get_pipeline_status():
     return {"pipelines": api.pipeline_state.get_all_legacy()}
 
 
+@router.post("/api/stacks/pipeline/{repo_name}/reset")
+async def reset_pipeline_statuses(repo_name: str):
+    """Reset every pipeline stage status of a stack to idle (grey in the UI).
+
+    Transition configs are kept. Refused while a stage is still running so the
+    reset cannot hide an in-flight build, test or deploy.
+    """
+    entry = api.pipeline_state.get(repo_name)
+    if entry is not None and (
+        entry.overall_status == "running"
+        or any(s.status == "running" for s in entry.stages.values())
+    ):
+        raise HTTPException(status_code=409, detail=f"Pipeline running for {repo_name}")
+    reset = api.pipeline_state.reset_stage_statuses(repo_name)
+    return {"success": True, "repo": repo_name, "reset": reset}
+
+
 @router.get("/api/stacks/pipeline/{repo_name}/transition/{transition}")
 async def get_transition_config(repo_name: str, transition: str):
     """Get per-project transition config for a specific transition."""

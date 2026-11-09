@@ -643,6 +643,23 @@ class TestTransitionEndpoints:
     def test_get_rejects_invalid_transition(self, client, auth_headers, env):
         assert client.get(self._url("nope"), headers=auth_headers).status_code == 400
 
+    def test_reset_endpoint_clears_statuses(self, client, auth_headers, env):
+        env.state.set_transition_config("app", "build_to_test", {"mode": "manual"})
+        env.state.set_pipeline("app", "build", "failed", "1.0.0")
+        resp = client.post("/api/stacks/pipeline/app/reset", headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"success": True, "repo": "app", "reset": True}
+        entry = env.state.get("app")
+        assert entry.overall_status == "idle"
+        assert all(s.status == "idle" for s in entry.stages.values())
+        assert env.state.get_transition_config("app", "build_to_test") == {"mode": "manual"}
+
+    def test_reset_endpoint_refuses_running_pipeline(self, client, auth_headers, env):
+        env.state.set_pipeline("app", "build", "running", "1.0.0")
+        resp = client.post("/api/stacks/pipeline/app/reset", headers=auth_headers)
+        assert resp.status_code == 409
+        assert env.state.get("app").stages["build"].status == "running"
+
     def test_status_endpoint_lists_pipelines(self, client, auth_headers, env):
         env.state.set_pipeline("app", "build", "running", "1.0.0")
         data = client.get("/api/stacks/pipeline/status", headers=auth_headers).json()

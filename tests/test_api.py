@@ -647,6 +647,7 @@ class TestRoleBasedAccess:
         ("post", "/api/stacks/actions/abc123/cancel"),
         ("put", "/api/stacks/myrepo/env"),
         ("put", "/api/stacks/pipeline/myrepo/transition/build"),
+        ("post", "/api/stacks/pipeline/myrepo/reset"),
     ]
 
     # Read-only routes that leak secrets or infrastructure details.

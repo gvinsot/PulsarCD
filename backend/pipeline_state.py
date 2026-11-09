@@ -584,6 +584,28 @@ class PipelineStateManager:
         entry.last_rollback = None
         self._save()
 
+    def reset_stage_statuses(self, repo_name: str) -> bool:
+        """Clear every stage result (build included) of an undeployed stack.
+
+        Unlike :meth:`reset`, project settings survive: transition configs,
+        ``skip_build`` and the project/stack names. Returns False when the
+        repo has no pipeline state (nothing to reset).
+        """
+        entry = self.get(repo_name)
+        if entry is None:
+            return False
+        for stage in entry.STAGES:
+            entry.stages[stage] = StageState()
+        entry.current_stage = None
+        entry.overall_status = "idle"
+        entry.gates = []
+        entry.last_deployed_at = None
+        entry.status_reason = None
+        entry.last_rollback = None
+        self._save()
+        logger.info("Pipeline stage statuses reset", repo=repo_name)
+        return True
+
     def find_repo_by_stack(self, stack_name: str) -> Optional[str]:
         """Reverse-lookup: find repo_name from a Docker stack name."""
         for repo_name, entry in self._state.items():

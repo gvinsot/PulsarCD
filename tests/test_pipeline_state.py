@@ -214,6 +214,28 @@ class TestPersistence:
         assert mgr.get("repo").overall_status == "idle"
         assert _reload(data_dir).get("repo").stages["deploy"].current_version is None
 
+    def test_reset_stage_statuses_keeps_settings(self, mgr, data_dir):
+        mgr.set_transition_config("repo", "test_to_deploy", {"mode": "manual"})
+        mgr.set_skip_build("repo", True)
+        mgr.set_stage("repo", "build", "failed", "1.0.1", action_id="b1")
+        mgr.set_pipeline("repo", "test", "failed", "1.0.1")
+        mgr.record_gate("repo", "test_to_deploy", False, "nope")
+
+        assert mgr.reset_stage_statuses("repo") is True
+
+        for entry in (mgr.get("repo"), _reload(data_dir).get("repo")):
+            assert entry.overall_status == "idle"
+            assert entry.current_stage is None
+            assert entry.gates == []
+            assert all(s.status == "idle" and s.action_id is None
+                       for s in entry.stages.values())
+            assert entry.skip_build is True
+            assert entry.transition_configs["test_to_deploy"]["mode"] == "manual"
+
+    def test_reset_stage_statuses_unknown_repo(self, mgr, data_dir):
+        assert mgr.reset_stage_statuses("ghost") is False
+        assert "ghost" not in mgr
+
     def test_reset_unknown_repo_is_a_noop(self, mgr, data_dir):
         mgr.reset("ghost")
         assert "ghost" not in mgr

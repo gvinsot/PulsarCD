@@ -70,6 +70,7 @@ MUTATING_ROUTES = [
     ("put", "/api/stacks/victim/env"),
     ("put", "/api/stacks/victim/env?env=qa"),
     ("put", "/api/stacks/pipeline/victim/transition/build"),
+    ("post", "/api/stacks/pipeline/victim/reset"),
     ("delete", "/api/stacks/victim/env"),
     ("delete", "/api/stacks/victim/env/secrets/victim_DB_PASSWORD"),
     ("patch", "/api/stacks/victim/env"),
