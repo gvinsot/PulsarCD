@@ -1032,6 +1032,14 @@
                 <header class="view-header">
                     <h1>Stacks</h1>
                     <div class="header-actions">
+                        <div class="filter-group">
+                            <label for="stacks-sort">Sort:</label>
+                            <select id="stacks-sort" data-change="changeStacksSort">
+                                <option value="default">Starred order</option>
+                                <option value="last_deployed">Last deployment</option>
+                                <option value="name">Name (A→Z)</option>
+                            </select>
+                        </div>
                         <button class="btn btn-sm btn-secondary" id="stacks-hide-undeployed" data-click="toggleHideUndeployedStacks" aria-pressed="false" title="Hide stacks that are not deployed">Hide undeployed</button>
                         <button class="btn btn-sm btn-secondary" data-run-history="open" title="Pipeline run history">History</button>
                         <button class="btn btn-icon btn-secondary" data-click="refreshStacks" title="Refresh">

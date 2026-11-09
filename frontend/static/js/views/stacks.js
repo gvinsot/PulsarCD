@@ -617,9 +617,63 @@ function isRepoDeployed(repo) {
         || Object.keys(stacksContainers['qa-' + stackName] || {}).length > 0;
 }
 
+// ============== Stack list order ==============
+
+const STACKS_SORT_KEY = 'pulsarcd_stacks_sort';
+const STACKS_SORT_MODES = ['default', 'last_deployed', 'name'];
+
+function getStacksSort() {
+    try {
+        const stored = localStorage.getItem(STACKS_SORT_KEY);
+        return STACKS_SORT_MODES.includes(stored) ? stored : 'default';
+    } catch {
+        return 'default';
+    }
+}
+
+// data-change handler of the #stacks-sort select (`this` is the select).
+function changeStacksSort() {
+    const mode = STACKS_SORT_MODES.includes(this.value) ? this.value : 'default';
+    try { localStorage.setItem(STACKS_SORT_KEY, mode); } catch { /* private mode */ }
+    renderStacksList();
+}
+
+/**
+ * Return a sorted copy of the repos. 'default' keeps the API (starred) order;
+ * 'name' is case-insensitive A→Z; 'last_deployed' puts the most recent
+ * production deployment first, then deployed stacks without a known date,
+ * then undeployed ones — each group alphabetically.
+ */
+function sortStacksRepos(repos, mode) {
+    const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    if (mode === 'name') return [...repos].sort(byName);
+    if (mode !== 'last_deployed') return repos;
+    const rank = (repo) => {
+        const pipeline = stacksPipelineState[repo.name];
+        const at = pipeline && pipeline.last_deployed_at ? Date.parse(pipeline.last_deployed_at) : NaN;
+        const deployed = !!((pipeline && pipeline.deployed_version) || stacksDeployedTags[repo.name]);
+        return { at: Number.isNaN(at) ? null : at, deployed };
+    };
+    const ranks = new Map(repos.map(r => [r, rank(r)]));
+    return [...repos].sort((a, b) => {
+        const ra = ranks.get(a), rb = ranks.get(b);
+        if (ra.at !== null || rb.at !== null) {
+            if (ra.at === null) return 1;
+            if (rb.at === null) return -1;
+            if (ra.at !== rb.at) return rb.at - ra.at;
+        } else if (ra.deployed !== rb.deployed) {
+            return ra.deployed ? -1 : 1;
+        }
+        return byName(a, b);
+    });
+}
+
 function renderStacksList() {
     const listEl = document.getElementById('stacks-list');
     const expandedStacks = getExpandedStacks();
+    const sortMode = getStacksSort();
+    const sortEl = document.getElementById('stacks-sort');
+    if (sortEl) sortEl.value = sortMode;
     
     // Update stacks count in topbar
     const deployedCount = Object.keys(stacksDeployedTags).length;
@@ -631,7 +685,8 @@ function renderStacksList() {
 
     const hideUndeployed = isHideUndeployedStacks();
     applyHideUndeployedButton(hideUndeployed);
-    const visibleRepos = hideUndeployed ? stacksRepos.filter(isRepoDeployed) : stacksRepos;
+    const visibleRepos = sortStacksRepos(
+        hideUndeployed ? stacksRepos.filter(isRepoDeployed) : stacksRepos, sortMode);
     if (visibleRepos.length === 0) {
         listEl.innerHTML = '<div class="empty-placeholder">No deployed stacks. Use "Show undeployed" to list every repository.</div>';
         return;

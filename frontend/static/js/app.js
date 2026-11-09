@@ -81,7 +81,7 @@ const UI_HANDLERS = Object.freeze({
     refreshContainerEnv, refreshContainerLogs, refreshContainers, refreshDashboard,
     refreshLogsSearch, refreshServiceLogs, refreshServiceStatus, refreshStacks,
     removeDeployedStack, removeMCPServer, removeSecurityRequestFilter, removeService,
-    resetSecurityRequestFilters, resetStackPipeline, saveSettings, saveSettingsFromAgent,
+    resetSecurityRequestFilters, resetStackPipeline, changeStacksSort, saveSettings, saveSettingsFromAgent,
     saveStackEnv, saveTransitionConfig, searchHttpErrors, selectBuildTag, selectDeployTag,
     selectPipelineCommit, selectPipelineTag, selectServiceDeployTag, selectTestTag, selectUsageStack,
     sendLLMTest,
