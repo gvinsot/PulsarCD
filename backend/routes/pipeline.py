@@ -107,8 +107,8 @@ async def reset_pipeline_statuses(repo_name: str):
         or any(s.status == "running" for s in entry.stages.values())
     ):
         raise HTTPException(status_code=409, detail=f"Pipeline running for {repo_name}")
-    reset = api.pipeline_state.reset_stage_statuses(repo_name)
-    return {"success": True, "repo": repo_name, "reset": reset}
+    api.pipeline_state.reset_stage_statuses(repo_name)
+    return {"success": True, "repo": repo_name}
 
 
 @router.get("/api/stacks/pipeline/{repo_name}/transition/{transition}")

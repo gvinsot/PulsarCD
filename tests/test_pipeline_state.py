@@ -221,7 +221,7 @@ class TestPersistence:
         mgr.set_pipeline("repo", "test", "failed", "1.0.1")
         mgr.record_gate("repo", "test_to_deploy", False, "nope")
 
-        assert mgr.reset_stage_statuses("repo") is True
+        mgr.reset_stage_statuses("repo")
 
         for entry in (mgr.get("repo"), _reload(data_dir).get("repo")):
             assert entry.overall_status == "idle"
@@ -232,9 +232,13 @@ class TestPersistence:
             assert entry.skip_build is True
             assert entry.transition_configs["test_to_deploy"]["mode"] == "manual"
 
-    def test_reset_stage_statuses_unknown_repo(self, mgr, data_dir):
-        assert mgr.reset_stage_statuses("ghost") is False
-        assert "ghost" not in mgr
+    def test_reset_stage_statuses_creates_idle_entry(self, mgr, data_dir):
+        """A repo that never ran still needs an idle entry to render grey."""
+        mgr.reset_stage_statuses("fresh")
+        entry = _reload(data_dir).get("fresh")
+        assert entry is not None
+        assert entry.overall_status == "idle"
+        assert all(s.status == "idle" for s in entry.stages.values())
 
     def test_reset_unknown_repo_is_a_noop(self, mgr, data_dir):
         mgr.reset("ghost")

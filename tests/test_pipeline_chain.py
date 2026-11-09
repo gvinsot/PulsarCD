@@ -648,11 +648,16 @@ class TestTransitionEndpoints:
         env.state.set_pipeline("app", "build", "failed", "1.0.0")
         resp = client.post("/api/stacks/pipeline/app/reset", headers=auth_headers)
         assert resp.status_code == 200, resp.text
-        assert resp.json() == {"success": True, "repo": "app", "reset": True}
+        assert resp.json() == {"success": True, "repo": "app"}
         entry = env.state.get("app")
         assert entry.overall_status == "idle"
         assert all(s.status == "idle" for s in entry.stages.values())
         assert env.state.get_transition_config("app", "build_to_test") == {"mode": "manual"}
+
+    def test_reset_endpoint_creates_state_for_unknown_repo(self, client, auth_headers, env):
+        resp = client.post("/api/stacks/pipeline/fresh/reset", headers=auth_headers)
+        assert resp.status_code == 200, resp.text
+        assert env.state.get("fresh").overall_status == "idle"
 
     def test_reset_endpoint_refuses_running_pipeline(self, client, auth_headers, env):
         env.state.set_pipeline("app", "build", "running", "1.0.0")

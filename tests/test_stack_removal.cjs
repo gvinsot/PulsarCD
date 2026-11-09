@@ -81,3 +81,31 @@ test('failed removal leaves the current display intact', async () => {
     await context.removeDeployedStack('app');
     assert.deepEqual(calls, ['error']);
 });
+
+test('undeployed stack offers a reset button instead of delete', () => {
+    const { context, elements } = view();
+    context.renderStacksList();
+    const html = elements['stacks-list'].innerHTML;
+    assert.match(html, /data-click="resetStackPipeline"/);
+    assert.doesNotMatch(html, /data-click="removeDeployedStack"/);
+});
+
+test('reset idle entry turns pending (blue) steps of a never-run repo grey', () => {
+    const { context, elements } = view();
+    // No pipeline state + untagged commits: every step renders as pending.
+    vm.runInContext(`stacksPipelineState = {};`, context);
+    context.renderStacksList();
+    assert.match(elements['stacks-list'].innerHTML, /pipeline-step step-pending/);
+
+    // State returned by POST /stacks/pipeline/app/reset.
+    vm.runInContext(`stacksPipelineState = {app: {
+        stage: 'idle', status: 'idle', version: null, transition_configs: {},
+        stages: {build: {status: 'idle'}, test: {status: 'idle'}, qa: {status: 'idle'}, deploy: {status: 'idle'}},
+    }};`, context);
+    context.renderStacksList();
+    const html = elements['stacks-list'].innerHTML;
+    assert.doesNotMatch(html, /pipeline-step step-(pending|running|success|failed|warning|gate_rejected)/);
+    for (const title of ['Latest available', 'Build', 'Test', 'Deploy \\(prod\\)']) {
+        assert.match(html, new RegExp(`pipeline-step step-idle[^>]*title="${title}`));
+    }
+});
