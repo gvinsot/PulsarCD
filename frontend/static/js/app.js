@@ -92,7 +92,7 @@ const UI_HANDLERS = Object.freeze({
     testMCPServer,
     toggleBuildSource, toggleDeploySource, toggleMobileMenu, togglePasswordLogin,
     toggleServiceDeploySource, toggleServiceLogsAutoRefresh, toggleServiceStatusAutoRefresh,
-    toggleStackEnvHistory, toggleStackExpand, toggleStackSubSection, toggleTaskPreview, toggleTestSource,
+    toggleHideUndeployedStacks, toggleStackEnvHistory, toggleStackExpand, toggleStackSubSection, toggleTaskPreview, toggleTestSource,
     toggleUserMenu, updateTaskPreview, useRecentQuery,
 
     // Handlers that use the element, or make more than one call

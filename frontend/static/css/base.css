@@ -386,6 +386,11 @@ body {
     border-color: var(--accent-primary);
 }
 
+.btn-secondary[aria-pressed="true"] {
+    border-color: var(--accent-primary);
+    color: var(--accent-primary);
+}
+
 .btn-success {
     background: var(--status-success);
     color: white;

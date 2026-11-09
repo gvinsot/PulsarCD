@@ -10,7 +10,11 @@ function view() {
     const elements = {};
     const context = vm.createContext({
         console,
-        document: { getElementById: id => elements[id] ||= {} },
+        document: { getElementById: id => elements[id] ||= {
+            attributes: {},
+            setAttribute(name, value) { this.attributes[name] = String(value); },
+            classList: { toggle() {} },
+        } },
         localStorage: { getItem: () => null },
         escapeHtml: String,
         uiArgs: (...args) => args.join(','),

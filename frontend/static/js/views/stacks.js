@@ -156,6 +156,10 @@ async function updateStacksContainerStates() {
         if (!containersData) return;
         if (hostMetrics) stacksHostMetrics = hostMetrics;
 
+        // Deployed set before the update: with "Hide undeployed" on, a stack
+        // appearing or disappearing needs a full re-render.
+        const deployedBefore = stacksRepos.filter(isRepoDeployed).map(r => r.name).join('\n');
+
         // Update version + pipeline data if fetched
         let needsRerender = false;
         if (tagsData) {
@@ -205,6 +209,11 @@ async function updateStacksContainerStates() {
                 if (oldQaKeys !== newQaKeys) needsRerender = true;
                 stacksContainers[qaStackName] = newQaStackContainers;
             }
+        }
+
+        if (isHideUndeployedStacks()
+            && stacksRepos.filter(isRepoDeployed).map(r => r.name).join('\n') !== deployedBefore) {
+            needsRerender = true;
         }
 
         if (needsRerender) {
@@ -566,6 +575,48 @@ function toggleStackSubSection(stackName, section) {
     }
 }
 
+// Hide stacks deployed neither in production nor in QA (persisted per browser).
+const STACKS_HIDE_UNDEPLOYED_KEY = 'pulsarcd_stacks_hide_undeployed';
+
+function isHideUndeployedStacks() {
+    try {
+        return localStorage.getItem(STACKS_HIDE_UNDEPLOYED_KEY) === '1';
+    } catch {
+        return false;
+    }
+}
+
+function applyHideUndeployedButton(hidden) {
+    const btn = document.getElementById('stacks-hide-undeployed');
+    if (!btn) return;
+    btn.setAttribute('aria-pressed', String(hidden));
+    btn.classList.toggle('active', hidden);
+    btn.textContent = hidden ? 'Show undeployed' : 'Hide undeployed';
+    btn.title = hidden ? 'Show stacks that are not deployed' : 'Hide stacks that are not deployed';
+}
+
+function toggleHideUndeployedStacks() {
+    const hidden = !isHideUndeployedStacks();
+    try {
+        localStorage.setItem(STACKS_HIDE_UNDEPLOYED_KEY, hidden ? '1' : '0');
+    } catch (e) {
+        console.error('Failed to save stacks filter:', e);
+    }
+    applyHideUndeployedButton(hidden);
+    if (stacksRepos && stacksRepos.length > 0) renderStacksList();
+}
+
+/** A stack counts as deployed when it has a production or QA deployment. */
+function isRepoDeployed(repo) {
+    const pipelineData = stacksPipelineState[repo.name];
+    if ((pipelineData && pipelineData.deployed_version) || stacksDeployedTags[repo.name]) return true;
+    const qaStage = pipelineData && pipelineData.stages && pipelineData.stages.qa;
+    if ((qaStage && qaStage.current_version) || stacksQaDeployedTags[repo.name]) return true;
+    const stackName = repoToStackName(repo.name);
+    return Object.keys(stacksContainers[stackName] || {}).length > 0
+        || Object.keys(stacksContainers['qa-' + stackName] || {}).length > 0;
+}
+
 function renderStacksList() {
     const listEl = document.getElementById('stacks-list');
     const expandedStacks = getExpandedStacks();
@@ -577,8 +628,16 @@ function renderStacksList() {
 
     // Use containers-grouped class for similar styling to Computers view
     listEl.className = 'containers-grouped';
-    
-    listEl.innerHTML = stacksRepos.map(repo => {
+
+    const hideUndeployed = isHideUndeployedStacks();
+    applyHideUndeployedButton(hideUndeployed);
+    const visibleRepos = hideUndeployed ? stacksRepos.filter(isRepoDeployed) : stacksRepos;
+    if (visibleRepos.length === 0) {
+        listEl.innerHTML = '<div class="empty-placeholder">No deployed stacks. Use "Show undeployed" to list every repository.</div>';
+        return;
+    }
+
+    listEl.innerHTML = visibleRepos.map(repo => {
         const pipelineData = stacksPipelineState[repo.name];
         const deployedTag = (pipelineData && pipelineData.deployed_version) ? pipelineData.deployed_version : stacksDeployedTags[repo.name];
         const latestBuilt = stacksLatestBuilt[repo.name];
